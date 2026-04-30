@@ -1,0 +1,1806 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — From-scratch Developer Installation Guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(13% 0.012 240)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(72% 0.15 215);
+      --brand-2:      oklch(66% 0.16 235);
+      --brand-soft:   oklch(28% 0.07 215);
+      --brand-fg:     oklch(15% 0.02 240);
+      --brand-ring:   oklch(72% 0.15 215 / 0.40);
+      --accent:       oklch(80% 0.15 70);   --accent-soft: oklch(28% 0.06 70);
+      --good:         oklch(72% 0.16 145);  --good-soft:   oklch(28% 0.06 145);
+      --warn:         oklch(82% 0.16 80);   --warn-soft:   oklch(28% 0.06 80);
+      --danger:       oklch(70% 0.20 28);   --danger-soft: oklch(28% 0.06 28);
+      --info:         oklch(72% 0.15 215);  --info-soft:   oklch(28% 0.07 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(74% 0.16 290); --win-soft: oklch(28% 0.07 290);
+
+      --bg:           oklch(13% 0.012 240);
+      --bg-soft:      oklch(17% 0.015 240);
+      --bg-elev:      oklch(20% 0.018 240);
+      --line:         oklch(28% 0.018 240);
+      --line-soft:    oklch(23% 0.014 240);
+      --line-strong:  oklch(35% 0.022 240);
+      --grid-dot:     oklch(100% 0 0 / .05);
+      --code-bg:      oklch(15% 0.012 240);
+      --code-border:  oklch(28% 0.018 240);
+
+      --fg:    oklch(95% 0.008 240);
+      --fg-2:  oklch(82% 0.012 240);
+      --muted: oklch(68% 0.014 240);
+      --faint: oklch(52% 0.016 240);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(72% 0.15 215);
+    --brand-2:      oklch(66% 0.16 235);
+    --brand-soft:   oklch(28% 0.07 215);
+    --brand-fg:     oklch(15% 0.02 240);
+    --brand-ring:   oklch(72% 0.15 215 / 0.40);
+    --accent:       oklch(80% 0.15 70);   --accent-soft: oklch(28% 0.06 70);
+    --good:         oklch(72% 0.16 145);  --good-soft:   oklch(28% 0.06 145);
+    --warn:         oklch(82% 0.16 80);   --warn-soft:   oklch(28% 0.06 80);
+    --danger:       oklch(70% 0.20 28);   --danger-soft: oklch(28% 0.06 28);
+    --info:         oklch(72% 0.15 215);  --info-soft:   oklch(28% 0.07 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(74% 0.16 290); --win-soft: oklch(28% 0.07 290);
+
+    --bg:           oklch(13% 0.012 240);
+    --bg-soft:      oklch(17% 0.015 240);
+    --bg-elev:      oklch(20% 0.018 240);
+    --line:         oklch(28% 0.018 240);
+    --line-soft:    oklch(23% 0.014 240);
+    --line-strong:  oklch(35% 0.022 240);
+    --grid-dot:     oklch(100% 0 0 / .05);
+    --code-bg:      oklch(15% 0.012 240);
+    --code-border:  oklch(28% 0.018 240);
+
+    --fg:    oklch(95% 0.008 240);
+    --fg-2:  oklch(82% 0.012 240);
+    --muted: oklch(68% 0.014 240);
+    --faint: oklch(52% 0.016 240);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    /* graticule background — top-faded so it doesn't overwhelm */
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar (sticky nav + theme toggle) ────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── OS cards (Linux / macOS / Windows) ────────────────────────────── */
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  /* ── numbered step ─────────────────────────────────────────────────── */
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── checklist ─────────────────────────────────────────────────────── */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  // pre-paint theme — prevents FOUC
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">Installation guide</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · onboarding · installation guide</div>
+  <h1>From-scratch developer installation guide</h1>
+  <p class="small">Everything a new developer needs to set up a working <strong>edevkit</strong> environment on Linux, macOS, or Windows — from a fresh OS install to building firmware, host tools, hardware artifacts, and the enclosure. The current product is <strong>edevkit1</strong> (RP2350B + Zephyr); the install steps below set you up for it, and the same env will carry forward to future generations. Cross-references the edevkit1 design spec at <a href="edevkit1.html">edevkit1.html</a>.</p>
+  <p class="small"><strong>Estimated total time:</strong> 1.5–3 hours of mostly-unattended downloads, depending on your network and CPU. About 25–35 GB of disk usage when fully provisioned (Zephyr workspace + SDK + Rust + KiCad + libraries).</p>
+  <p class="small"><strong>You'll be ready to:</strong> build &amp; sign the firmware via west sysbuild, flash it via SWD or BOOTSEL, build the Tauri host GUI and Rust CLI, run KiCad ERC/DRC, regenerate enclosure STLs, and run the unit-test suite.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Before you start</span>
+  <ol>
+    <li><a href="#about">What is edevkit1, and what does this guide install?</a></li>
+    <li><a href="#hardware">Physical hardware you'll need</a></li>
+    <li><a href="#os-choice">Pick your OS path</a></li>
+    <li><a href="#assumptions">Assumptions and conventions in this guide</a></li>
+  </ol>
+  <span class="heading">Core install steps (do in order)</span>
+  <ol>
+    <li><a href="#step1">Step 1 — System prerequisites</a></li>
+    <li><a href="#step2">Step 2 — Clone the repository</a></li>
+    <li><a href="#step3">Step 3 — Python environment (venv + west)</a></li>
+    <li><a href="#step4">Step 4 — Zephyr workspace</a></li>
+    <li><a href="#step5">Step 5 — Zephyr SDK (toolchains)</a></li>
+    <li><a href="#step6">Step 6 — pioasm (RP2350 PIO assembler)</a></li>
+    <li><a href="#step7">Step 7 — Rust + Tauri (host CLI &amp; GUI)</a></li>
+    <li><a href="#step8">Step 8 — KiCad 9 + KiBot (hardware)</a></li>
+    <li><a href="#step9">Step 9 — Enclosure CAD (CadQuery / FreeCAD)</a></li>
+    <li><a href="#step10">Step 10 — Slicer (OrcaSlicer)</a></li>
+    <li><a href="#step11">Step 11 — Bench tools (sigrok, mcumgr, serial)</a></li>
+    <li><a href="#step12">Step 12 — Editor / IDE setup</a></li>
+    <li><a href="#step13">Step 13 — Shell helpers</a></li>
+  </ol>
+  <span class="heading">Verification</span>
+  <ol>
+    <li><a href="#smoke">Step 14 — Smoke tests (firmware + host + hw)</a></li>
+    <li><a href="#checklist">Step 15 — Final checklist</a></li>
+  </ol>
+  <span class="heading">When things break</span>
+  <ol>
+    <li><a href="#trouble-linux">Troubleshooting — Linux</a></li>
+    <li><a href="#trouble-mac">Troubleshooting — macOS</a></li>
+    <li><a href="#trouble-win">Troubleshooting — Windows</a></li>
+    <li><a href="#udev">USB permissions (Linux udev rules)</a></li>
+    <li><a href="#wsl-usb">USB passthrough on WSL2</a></li>
+  </ol>
+  <span class="heading">After install</span>
+  <ol>
+    <li><a href="#next">Where to go next</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="about">What is edevkit1, and what does this guide install?</h2>
+
+<p><strong>edevkit1</strong> is an open-source, USB-powered single-board embedded development tool that combines an ARM + RISC-V debug probe (CMSIS-DAP v2), SWO trace, two UART bridges, an I²C protocol tester, an SPI/DSPI/QSPI tester, a YAML-driven device emulator, a Tauri GUI + Rust CLI on the host, and OTA firmware updates over MCUboot. The full v1 spec lives at <a href="edevkit1.html">documents/edevkit1.html</a>; this guide does not assume you've read it, but you'll want to skim it before writing code.</p>
+
+<p>Hardware platform: <strong>RP2350B</strong> (Cortex-M33 dual-core, 12 PIO state machines, QFN-80, 48 GPIO) running <strong>Zephyr RTOS 4.x</strong> with <strong>MCUboot</strong>. The host is <strong>Tauri</strong> (Rust + web view) plus a <strong>Rust CLI</strong>. Hardware is designed in <strong>KiCad 9</strong>; enclosure in <strong>CadQuery</strong> or <strong>FreeCAD 1.x</strong>. Open-source tools only — no proprietary CAD or closed-source toolchains anywhere in the build path.</p>
+
+<p>This guide installs everything you need for all five of those subsystems (firmware, host, hardware, enclosure, tools) on a fresh OS. You can skip the steps for subsystems you won't touch: see the <a href="#step-coverage">step-coverage table</a> at the start of step 1.</p>
+
+<div class="callout info">
+  <span class="label">Greenfield note</span>
+  As of writing, the <code>edevkit/</code> repo is mostly the design spec — <code>firmware/</code>, <code>host/</code>, <code>hardware/</code>, <code>enclosure/</code> are placeholders or empty. This install guide brings the <em>environment</em> to a state where, when those subsystems land, you can build them immediately. If a step references a file that doesn't yet exist (e.g. <code>firmware/west.yml</code>), the install still completes — you just won't be able to <em>use</em> that subsystem until the code lands.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="hardware">Physical hardware you'll need</h2>
+
+<p>You don't need all of this on day 1, but plan for what's coming. The development cycle for embedded work always faster with the hardware in hand than with simulators.</p>
+
+<table>
+  <tr><th>Item</th><th>When you need it</th><th>Notes</th></tr>
+  <tr><td>Computer with USB-A or USB-C ports (4 GB+ RAM, 50 GB+ free disk)</td><td>Day 1</td><td>Apple Silicon, Intel x86_64, AMD x86_64 all fine. ARM Linux works; ARM Windows is not currently supported by the Zephyr SDK.</td></tr>
+  <tr><td>USB-C cable (data, not charge-only)</td><td>Day 1</td><td>Many USB-C cables only carry power. Use one you've used to mount a USB drive successfully.</td></tr>
+  <tr><td>edevkit1 PCB <em>or</em> a Raspberry Pi Pico 2 (RP2350) for early testing</td><td>From firmware bring-up</td><td>The Pico 2 has the same RP2350 silicon as edevkit1, so most firmware work can be developed against it before the custom PCB exists.</td></tr>
+  <tr><td>A second RP2350 board (Pico 2 or another edevkit1)</td><td>From SWD/JTAG work</td><td>One acts as your dev probe, the other as the target. Trying to debug the only unit you have is masochism.</td></tr>
+  <tr><td>USB-FX2 8-channel logic analyzer (~$20)</td><td>From PIO + SWD work</td><td>Sigrok-compatible. Search "Saleae clone 24 MHz". Non-negotiable for serious protocol debugging.</td></tr>
+  <tr><td>Breadboard, jumpers, header pins, soldering iron</td><td>Bench setup</td><td>Standard maker bench.</td></tr>
+  <tr><td>Target boards for validation (STM32 Nucleo, nRF52840 DK, etc.)</td><td>Multi-target validation</td><td>Roadmap milestone, not day 1.</td></tr>
+</table>
+
+<!-- =========================================================== -->
+<h2 id="os-choice">Pick your OS path</h2>
+
+<p>This guide supports the three major OS families. Pick one — the rest of the guide branches on this choice. Recommendations are based on what's most-tested in the embedded Zephyr / Tauri / KiCad ecosystem, not on personal taste.</p>
+
+<table>
+  <tr><th>OS</th><th>Recommendation</th><th>Why</th></tr>
+  <tr><td><strong>Linux</strong> (Ubuntu 24.04 LTS or Debian 12)</td><td><span class="badge ok">first-class</span></td><td>Zephyr is developed primarily on Linux. KiCad, sigrok, openocd, probe-rs all native. Easiest USB device permissions story (udev rules).</td></tr>
+  <tr><td><strong>macOS</strong> (Sonoma 14+ / Sequoia 15+, Apple Silicon or Intel)</td><td><span class="badge ok">first-class</span></td><td>Homebrew makes most installs trivial. No driver work for USB CDC/HID devices. probe-rs and pyOCD work fine.</td></tr>
+  <tr><td><strong>Windows 11</strong> (with WSL2 + Ubuntu)</td><td><span class="badge ok">recommended</span></td><td>Run all the Zephyr/host tooling inside WSL2 (Ubuntu); use <code>usbipd-win</code> to forward USB devices to WSL2 for flashing. KiCad runs natively on Windows.</td></tr>
+  <tr><td><strong>Windows 11</strong> (native, no WSL2)</td><td><span class="badge part">supported with caveats</span></td><td>Zephyr SDK and west work natively, but several smaller tools (sigrok-cli, smpclient builds) are smoother on Linux/WSL2. Documented in step 1 below.</td></tr>
+  <tr><td>Linux Fedora / Arch / openSUSE</td><td><span class="badge part">supported</span></td><td>Substitute the package manager (dnf / pacman / zypper). Most package names are identical or near-identical to the Ubuntu list.</td></tr>
+  <tr><td>Linux on ARM (e.g. Raspberry Pi 5)</td><td><span class="badge part">supported</span></td><td>Zephyr SDK ships <code>aarch64</code> host toolchains. KiCad runs (slowly).</td></tr>
+  <tr><td>Windows on ARM</td><td><span class="badge no">not supported</span></td><td>Zephyr SDK doesn't currently ship Windows-ARM host toolchains. Use WSL2-on-ARM with the Linux SDK instead.</td></tr>
+</table>
+
+<div class="callout">
+  <span class="label">Windows users</span>
+  We strongly recommend WSL2 + Ubuntu over native Windows for the firmware and host work. Native Windows is documented for completeness, but you'll fight more environmental quirks. The single thing you'll launch natively even on a WSL2 box is KiCad (it's faster as a native Windows app than through WSL2's GUI forwarding).
+</div>
+
+<!-- =========================================================== -->
+<h2 id="assumptions">Assumptions and conventions in this guide</h2>
+
+<p>Different developers organise their disks differently. To keep this guide copy-pasteable for everyone, every command below references <strong>five environment variables</strong> that you set <em>once</em> at the start. Pick the layout that fits your habits, set the vars, and the rest of the guide works without further adjustment.</p>
+
+<h3 id="env-vars">The five path variables</h3>
+
+<table>
+  <tr><th>Variable</th><th>What it points at</th><th>Why it's separate</th></tr>
+  <tr><td><code>EDEV_HOME</code></td><td>The "wrapper" directory that holds everything project-related on your machine. Optional in flatter layouts; convenient when you want one folder to back up or move.</td><td>Convenience root only — never referenced by tools, only used to compose the other vars below.</td></tr>
+  <tr><td><code>EDEVKIT_REPO</code></td><td>Your local clone of the <code>edevkit</code> git repo (this is the dir that contains <code>firmware/</code>, <code>hardware/</code>, <code>host/</code>, <code>tools/</code>).</td><td>The only "tracked" path. Everything else is gitignored or lives outside.</td></tr>
+  <tr><td><code>EDEV_VENV</code></td><td>The Python virtual environment that holds <code>west</code>, <code>pyocd</code>, <code>kibot</code>, etc.</td><td>Hundreds of MB of pip packages — must stay outside the repo so it doesn't pollute <code>git status</code>.</td></tr>
+  <tr><td><code>ZEPHYR_WORKSPACE</code></td><td>The west workspace (<code>zephyr/</code>, <code>modules/</code>, <code>bootloader/</code>, etc.).</td><td>6–10 GB of upstream code; outside the repo so it never lands in <code>git status</code> and can be shared across multiple Zephyr projects on the machine.</td></tr>
+  <tr><td><code>ZEPHYR_SDK_INSTALL_DIR</code></td><td>The Zephyr SDK toolchains (<code>arm-zephyr-eabi-gcc</code> and friends).</td><td>One install per machine, shared across all Zephyr projects. Standard env var that Zephyr's CMake auto-detects.</td></tr>
+</table>
+
+<h3 id="layout-pick">Pick a layout</h3>
+
+<p>Three patterns are all valid. The relationships are what matter (venv and workspace OUTSIDE the repo); the exact paths are user choice. <strong>Layout A is recommended</strong> if you don't have a preference — it keeps everything project-related under one wrapper folder, and matches what's actually used on the maintainer's machine.</p>
+
+<div class="os-card linux">
+  <span class="os-tag">Layout A · wrapper-dir <span class="pill" style="margin-left:6px;">recommended</span></span>
+  <p>One wrapper directory holds the venv + the cloned repo as siblings. The Zephyr workspace lives at a sibling location (one level higher). Easy to back up, easy to move, easy to find everything.</p>
+  <pre><code>~/projects/temp/edevkit/        ← EDEV_HOME (wrapper)
+├── edev/                       ← EDEV_VENV     (Python venv)
+└── edevkit/                    ← EDEVKIT_REPO  (git repo)
+~/projects/temp/zephyrproject/  ← ZEPHYR_WORKSPACE
+~/zephyr-sdk-1.0.1/             ← ZEPHYR_SDK_INSTALL_DIR</code></pre>
+  <p class="small"><strong>Set the env vars (Linux / macOS / WSL2):</strong></p>
+  <pre><code>export EDEV_HOME="$HOME/projects/temp/edevkit"
+export EDEVKIT_REPO="$EDEV_HOME/edevkit"
+export EDEV_VENV="$EDEV_HOME/edev"
+export ZEPHYR_WORKSPACE="$HOME/projects/temp/zephyrproject"
+export ZEPHYR_SDK_INSTALL_DIR="$HOME/zephyr-sdk-1.0.1"</code></pre>
+  <p class="small"><strong>Windows PowerShell equivalent:</strong></p>
+  <pre><code>$env:EDEV_HOME              = "$HOME\projects\temp\edevkit"
+$env:EDEVKIT_REPO           = "$env:EDEV_HOME\edevkit"
+$env:EDEV_VENV              = "$env:EDEV_HOME\edev"
+$env:ZEPHYR_WORKSPACE       = "$HOME\projects\temp\zephyrproject"
+$env:ZEPHYR_SDK_INSTALL_DIR = "$HOME\zephyr-sdk-1.0.1"</code></pre>
+</div>
+
+<div class="os-card mac">
+  <span class="os-tag">Layout B · flat siblings</span>
+  <p>Repo, venv, and Zephyr workspace are all parallel folders directly under <code>~/projects/</code>. No wrapper dir. Simple, but loses the "everything in one place" property of Layout A.</p>
+  <pre><code>~/projects/
+├── edevkit/                    ← EDEVKIT_REPO  (git repo)
+├── edev/                       ← EDEV_VENV
+└── zephyrproject/              ← ZEPHYR_WORKSPACE
+~/zephyr-sdk-1.0.1/             ← ZEPHYR_SDK_INSTALL_DIR</code></pre>
+  <p class="small"><strong>Set the env vars (Linux / macOS / WSL2):</strong></p>
+  <pre><code>export EDEV_HOME="$HOME/projects"
+export EDEVKIT_REPO="$EDEV_HOME/edevkit"
+export EDEV_VENV="$EDEV_HOME/edev"
+export ZEPHYR_WORKSPACE="$EDEV_HOME/zephyrproject"
+export ZEPHYR_SDK_INSTALL_DIR="$HOME/zephyr-sdk-1.0.1"</code></pre>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Layout C · fully separate</span>
+  <p>Venv and workspace go directly into <code>$HOME</code>; the repo lives wherever you keep code. Useful if you already have a Zephyr workspace at <code>~/zephyrproject/</code> from another project and want to reuse it.</p>
+  <pre><code>~/edev/                         ← EDEV_VENV
+~/zephyrproject/                ← ZEPHYR_WORKSPACE
+~/projects/edevkit/             ← EDEVKIT_REPO  (or anywhere else)
+~/zephyr-sdk-1.0.1/             ← ZEPHYR_SDK_INSTALL_DIR</code></pre>
+  <p class="small"><strong>Set the env vars (Linux / macOS / WSL2):</strong></p>
+  <pre><code>export EDEVKIT_REPO="$HOME/projects/edevkit"
+export EDEV_VENV="$HOME/edev"
+export ZEPHYR_WORKSPACE="$HOME/zephyrproject"
+export ZEPHYR_SDK_INSTALL_DIR="$HOME/zephyr-sdk-1.0.1"
+# EDEV_HOME unused in this layout</code></pre>
+</div>
+
+<div class="callout warn">
+  <span class="label">Persist the variables</span>
+  <code>export</code> only lasts for the current shell. To keep them across new terminals, append the same lines to <code>~/.bashrc</code> (bash), <code>~/.zshrc</code> (zsh), or your PowerShell <code>$PROFILE</code>. Step 13 covers a more complete shell-helpers block that includes these.
+</div>
+
+<h3 id="other-conventions">Other conventions</h3>
+
+<ul>
+  <li><strong>Path constraints:</strong> avoid spaces, non-ASCII characters, or paths that exceed Windows MAX_PATH (260 chars). On Windows native, prefer <code>C:\proj\edevkit</code> over <code>C:\Users\Your Name\Documents\edevkit</code> — Zephyr/CMake/west compose paths several levels deep and bump into MAX_PATH limits.</li>
+  <li><strong>Shell:</strong> bash or zsh on Linux/macOS; PowerShell 7 (not 5.x) for native Windows. Inside WSL2, your default Ubuntu bash.</li>
+  <li><strong>Privilege:</strong> any command starting with <code>sudo</code> needs administrator/root; everything else runs as your normal user. On Windows, "Run PowerShell as Administrator" when noted.</li>
+  <li><strong>Code blocks:</strong> when a step has different commands per OS, you'll see three colored cards labeled <span class="os-card linux" style="display:inline-block; padding:2px 10px; margin:0;"><span class="os-tag">Linux</span></span> <span class="os-card mac" style="display:inline-block; padding:2px 10px; margin:0;"><span class="os-tag">macOS</span></span> <span class="os-card win" style="display:inline-block; padding:2px 10px; margin:0;"><span class="os-tag">Windows</span></span>. Run the one that matches your OS.</li>
+  <li><strong>Variables vs. literal paths:</strong> every command below uses <code>$EDEVKIT_REPO</code> / <code>$EDEV_VENV</code> / <code>$ZEPHYR_WORKSPACE</code> instead of hard-coded paths. If you forgot to <code>export</code>, the command will fail with a confusing "no such file"; <code>echo $EDEVKIT_REPO</code> first to confirm it's set.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="step-coverage">Step coverage by subsystem</h2>
+
+<p>If you're only working on one subsystem, you can skip the steps that don't apply. Recommended unless you're set up as a full-stack maintainer.</p>
+
+<table>
+  <tr><th>Subsystem</th><th>Required steps</th><th>Skip these</th></tr>
+  <tr><td>Firmware only</td><td>1, 2, 3, 4, 5, 6, 11, 12, 13, 14a</td><td>7, 8, 9, 10</td></tr>
+  <tr><td>Host (CLI / GUI) only</td><td>1, 2, 7, 12, 14b</td><td>3, 4, 5, 6, 8, 9, 10, 11</td></tr>
+  <tr><td>Hardware only</td><td>1, 2, 8, 12, 14c</td><td>3–7, 9, 10, 11</td></tr>
+  <tr><td>Enclosure only</td><td>1, 2, 9, 10</td><td>3–8, 11</td></tr>
+  <tr><td>Full-stack maintainer</td><td>All steps 1–15</td><td>—</td></tr>
+</table>
+
+<!-- =========================================================================== -->
+<h2 id="step1">Step 1 — System prerequisites</h2>
+
+<div class="step">
+  <span class="num">1</span><span class="est">~10–25 min · network-bound</span>
+  <h3>Install the OS-level toolchain (compilers, build tools, Python, git)</h3>
+  <p>These are the base tools every later step depends on. Most OSes ship some of them; we install the missing ones now in a single batch.</p>
+</div>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux · Ubuntu / Debian</span>
+  <pre><code>sudo apt update
+sudo apt install -y \
+    git curl wget xz-utils file ca-certificates \
+    build-essential cmake ninja-build gperf ccache dfu-util device-tree-compiler \
+    python3 python3-dev python3-venv python3-pip python3-setuptools python3-tk \
+    qemu-system-arm qemu-system-misc \
+    libsdl2-dev libmagic1 \
+    libusb-1.0-0-dev libudev-dev pkg-config \
+    unzip zip</code></pre>
+  <p class="small"><strong>Fedora equivalent:</strong> <code>sudo dnf install -y git curl wget xz file ca-certificates @development-tools cmake ninja-build gperf ccache dfu-util dtc python3 python3-devel python3-pip python3-tkinter qemu-system-arm SDL2-devel file-libs libusbx-devel systemd-devel pkgconf-pkg-config</code></p>
+  <p class="small"><strong>Arch equivalent:</strong> <code>sudo pacman -S --needed git curl wget xz file ca-certificates base-devel cmake ninja gperf ccache dfu-util dtc python python-pip tk qemu-arch-extra sdl2 file libusb pkgconf</code></p>
+</div>
+
+<div class="os-card mac">
+  <span class="os-tag">macOS</span>
+  <p>Install the Xcode Command Line Tools and Homebrew first (skip if already installed):</p>
+  <pre><code># 1) Xcode Command Line Tools (clang, make, git)
+xcode-select --install        # GUI installer pops up; takes ~5 min
+
+# 2) Homebrew
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# 3) make sure brew is on the PATH (Apple Silicon vs Intel paths differ)
+#    On Apple Silicon:
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' &gt;&gt; ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+#    On Intel:
+echo 'eval "$(/usr/local/bin/brew shellenv)"' &gt;&gt; ~/.zprofile
+eval "$(/usr/local/bin/brew shellenv)"</code></pre>
+
+  <p>Now the system deps:</p>
+  <pre><code>brew install \
+    cmake ninja gperf ccache qemu dtc libmagic libusb \
+    python3 \
+    git curl wget xz</code></pre>
+  <p class="small">macOS ships Python 3 with the Command Line Tools, but the Homebrew Python is the one Zephyr's tooling expects to find on <code>PATH</code>. Don't fight it — let brew win.</p>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows · WSL2 (recommended)</span>
+  <p>Enable WSL2 and install Ubuntu:</p>
+  <pre><code># In an elevated PowerShell:
+wsl --install -d Ubuntu-24.04
+
+# Then reboot. After reboot, an Ubuntu terminal will pop up and ask you to
+# create a username + password. From this point on, run all Linux commands
+# from inside this Ubuntu shell — exactly as in the Linux card above.</code></pre>
+  <p class="small">After Ubuntu starts, follow the <strong>Linux · Ubuntu/Debian</strong> instructions above for the package install. Everything except step 8 (KiCad) and step 10 (OrcaSlicer) is done from inside WSL2.</p>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows · native (no WSL2)</span>
+  <p>Install the package manager <strong>scoop</strong> (no admin required, easier than Chocolatey for our needs):</p>
+  <pre><code>Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+scoop bucket add main
+scoop bucket add extras
+scoop bucket add versions</code></pre>
+  <p>Then the system deps:</p>
+  <pre><code>scoop install git curl wget 7zip
+scoop install cmake ninja gperf dtc python python311
+# python311 ensures you have a 3.11+ interpreter even if scoop's default 'python'
+# moves on. Zephyr supports 3.10+; we lock at 3.11 for predictability.
+
+# Visual C++ Build Tools (for Rust later, and for Zephyr host builds)
+# Open https://visualstudio.microsoft.com/visual-cpp-build-tools/ and install
+# "Desktop development with C++" — about 6 GB. No way around it for native
+# Windows.</code></pre>
+  <p class="small"><strong>Why scoop over Chocolatey:</strong> scoop installs to your user dir, doesn't need admin, and updates atomically. Chocolatey is fine if you already use it — substitute <code>choco install</code> for the package names.</p>
+</div>
+
+<h4>Verify step 1</h4>
+<pre><code>git --version           # ≥ 2.30
+python3 --version       # 3.10+, 3.11 or 3.12 ideal
+cmake --version         # ≥ 3.20
+ninja --version         # any
+gperf --version         # any
+dtc --version           # any
+ccache --version        # any (optional speedup)</code></pre>
+
+<!-- =========================================================================== -->
+<h2 id="step2">Step 2 — Clone the repository</h2>
+
+<div class="step">
+  <span class="num">2</span><span class="est">~1 min</span>
+  <h3>Get the source tree</h3>
+  <p>Clone via HTTPS (or SSH if you have keys configured). The path matters less than the lack of spaces and special characters.</p>
+</div>
+
+<p>Make sure <code>$EDEVKIT_REPO</code> (and <code>$EDEV_HOME</code> if your layout uses one) are exported — see <a href="#layout-pick">Pick a layout</a>.</p>
+
+<pre><code># create the parent dir, then clone into $EDEVKIT_REPO
+mkdir -p "$(dirname "$EDEVKIT_REPO")"
+git clone https://github.com/&lt;org&gt;/edevkit.git "$EDEVKIT_REPO"
+cd "$EDEVKIT_REPO"
+ls -la
+# expected top-level layout (per design spec §2):
+#   hardware/    enclosure/    firmware/    host/    documents/
+#   tools/       docs/         README.md     CLAUDE.md (locally — not committed)</code></pre>
+
+<p class="small"><strong>Windows PowerShell:</strong> substitute <code>$env:EDEVKIT_REPO</code> for <code>$EDEVKIT_REPO</code> and use <code>New-Item -ItemType Directory -Force ...</code> instead of <code>mkdir -p</code>.</p>
+
+<div class="callout warn">
+  <span class="label">Path constraint</span>
+  Avoid paths with <strong>spaces</strong>, non-ASCII characters, or that exceed Windows MAX_PATH (260 chars). On Windows native, prefer <code>C:\proj\edevkit</code> over <code>C:\Users\Your Name\Documents\edevkit</code> — Zephyr/CMake/west compose paths several levels deep and bump into MAX_PATH limits.
+</div>
+
+<!-- =========================================================================== -->
+<h2 id="step3">Step 3 — Python environment (venv + west)</h2>
+
+<div class="step">
+  <span class="num">3</span><span class="est">~3 min</span>
+  <h3>Create an isolated Python environment, then install <code>west</code> into it</h3>
+  <p>Zephyr's tooling is mostly Python (west, twister, the build infrastructure). Installing into a venv keeps Zephyr's pinned package versions away from any other Python projects on the machine. <strong>Do not install west globally — always use a venv.</strong></p>
+</div>
+
+<div class="callout info">
+  <span class="label">One command does it all</span>
+  Use the <code>tools/setup_venv.sh</code> helper. It (1) creates the venv at <code>$EDEV_VENV</code>, (2) installs <code>west</code> + the docs-hub deps, (3) appends a guarded <code>source</code> line to the venv's <code>activate</code> so the shell helpers (<code>edev_*</code> commands) load automatically every time you enter the venv, and (4) runs <code>west zephyr-export</code> if your workspace is initialised. Idempotent — safe to re-run.
+</div>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux · macOS · WSL2</span>
+  <pre><code># layout vars must already be exported (see "Pick a layout"):
+bash "$EDEVKIT_REPO/tools/setup_venv.sh"
+
+# now activate — helpers come along for the ride:
+source "$EDEV_VENV/bin/activate"
+
+# verify:
+edev_help</code></pre>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows · native</span>
+  <pre><code>&amp; "$env:EDEVKIT_REPO\tools\setup_venv.ps1"
+
+# activate:
+. "$env:EDEV_VENV\Scripts\Activate.ps1"
+
+# verify:
+edev_help</code></pre>
+  <p class="small">If <code>Activate.ps1</code> fails with an execution-policy error, run <code>Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser</code> once.</p>
+</div>
+
+<div class="callout info">
+  <span class="label">One venv for everything</span>
+  The setup script installs <code>west</code> AND the docs-hub server's deps (<code>fastapi</code>, <code>uvicorn</code>, <code>jinja2</code>) into the same <code>$EDEV_VENV</code>. After step 4 finishes (<code>west packages pip --install</code>), this venv will also hold <code>pyocd</code>, <code>imgtool</code>, <code>pyelftools</code>, and ~100 other Zephyr dependencies — about 750 MB total. One activation, every Python tool the project needs.
+</div>
+
+<div class="callout">
+  <span class="label">Helper-loading model — Pattern C</span>
+  The setup script appends a <strong>single guarded line</strong> to the venv's <code>activate</code> file:
+  <pre><code>if [ -n "${EDEVKIT_REPO:-}" ] &amp;&amp; [ -f "$EDEVKIT_REPO/tools/env_helpers.sh" ]; then
+    source "$EDEVKIT_REPO/tools/env_helpers.sh"
+fi</code></pre>
+  The actual helpers stay in the repo, so <code>git pull</code> always updates them without re-touching <code>activate</code>. If you ever <code>rm -rf "$EDEV_VENV"</code> and re-create it, just re-run <code>setup_venv.sh</code>. The full reference for every <code>edev_*</code> helper lives at <a href="shell_helpers.html"><strong>shell_helpers.html</strong></a>.
+</div>
+
+<h4>Manual fallback (if you'd rather not run the helper script)</h4>
+<details>
+  <summary class="small" style="cursor: pointer; color: var(--brand);">Show manual steps →</summary>
+  <pre><code># Linux / macOS / WSL2:
+mkdir -p "$(dirname "$EDEV_VENV")"
+python3 -m venv "$EDEV_VENV"
+"$EDEV_VENV/bin/pip" install --upgrade pip wheel
+"$EDEV_VENV/bin/pip" install west
+"$EDEV_VENV/bin/pip" install -r "$EDEVKIT_REPO/tools/web/requirements.txt"
+
+# Manually wire the helpers into activate (Pattern C):
+cat &gt;&gt; "$EDEV_VENV/bin/activate" &lt;&lt;'EOF'
+
+# --- edevkit helpers ---
+if [ -n "${EDEVKIT_REPO:-}" ] &amp;&amp; [ -f "$EDEVKIT_REPO/tools/env_helpers.sh" ]; then
+    source "$EDEVKIT_REPO/tools/env_helpers.sh"
+fi
+EOF</code></pre>
+</details>
+
+<h4>Always re-activate the venv in new terminals</h4>
+<p>The venv only "exists" inside a shell that's sourced its activate script. Every new terminal needs:</p>
+<pre><code># Linux / macOS / WSL2:
+source "$EDEV_VENV/bin/activate"
+
+# Windows native:
+&amp; "$env:EDEV_VENV\Scripts\Activate.ps1"</code></pre>
+<p>You can shorten this to one word — <code>edev_activate</code> — once you've added a tiny shim in your shell rc that sets the layout vars and calls activate. Step 13 covers the rc setup.</p>
+
+<h4>Verify step 3</h4>
+<pre><code>which west             # ~/projects/.../edev/bin/west  (Windows: where west)
+west --version         # ≥ 1.2
+echo "$EDEV_VENV"
+python -c "import fastapi, uvicorn, jinja2; print('docs-hub deps OK')"
+edev_help              # all edev_* helpers should be defined now</code></pre>
+
+<h4>Optional: serve the docs hub locally</h4>
+<p>With the venv activated, the helper <code>edev_doc</code> launches the local hub at <a href="http://127.0.0.1:8765/">http://127.0.0.1:8765/</a> in your default browser:</p>
+<pre><code>edev_doc       # boots the hub if not already running, opens browser
+
+# Or run it manually:
+cd "$EDEVKIT_REPO/tools/web"
+python server.py</code></pre>
+<p class="small">The hub auto-discovers any <code>.html</code> file dropped into <code>tools/web/pages/</code>. Details and conventions in <a href="shell_helpers.html">shell_helpers.html</a> and <code>tools/web/README.md</code>.</p>
+
+<!-- =========================================================================== -->
+<h2 id="step4">Step 4 — Zephyr workspace</h2>
+
+<div class="step">
+  <span class="num">4</span><span class="est">~20–60 min · 6–10 GB · network-bound</span>
+  <h3>Initialize the Zephyr west workspace and pull all modules</h3>
+  <p>The Zephyr workspace contains Zephyr itself, third-party HALs (Pico-SDK, MCUboot, MbedTLS, etc.), and Zephyr's Python build helpers. The <code>west.yml</code> at the top of <code>firmware/</code> pins exact revisions of everything. <strong>This step is the largest single download in the whole install.</strong></p>
+</div>
+
+<div class="callout warn">
+  <span class="label">Workspace lives OUTSIDE the project repo</span>
+  Do <strong>not</strong> run <code>west init</code> inside <code>$EDEVKIT_REPO</code>. The Zephyr workspace is a multi-GB tree of unrelated upstream code (Zephyr itself, MCUboot, HALs, MbedTLS) that does not belong in the project's git history. The project's CMake files locate Zephyr at build time via the <code>ZEPHYR_BASE</code> environment variable that <code>west zephyr-export</code> sets; the workspace can sit anywhere on disk.
+</div>
+
+<pre><code># ensure the venv is activated (step 3) so `west` is on PATH
+
+# initialise the workspace at the location you exported in $ZEPHYR_WORKSPACE:
+west init "$ZEPHYR_WORKSPACE"
+
+# pull every module. The --narrow / --depth=1 trick keeps the clone shallow.
+# Trade-off: shallow clones save ~3 GB but lose git history of HALs.
+cd "$ZEPHYR_WORKSPACE"
+west update --narrow -o=--depth=1
+
+# expose Zephyr's CMake package so out-of-tree apps (like this project) can find it:
+west zephyr-export
+
+# install Zephyr's Python deps (pyelftools, anytree, pykwalify, etc.) into the venv:
+west packages pip --install</code></pre>
+
+<div class="callout info">
+  <span class="label">Sharing with other Zephyr projects</span>
+  If you already have a Zephyr workspace from another project on this machine, <strong>skip <code>west init</code></strong> and reuse it — just point <code>$ZEPHYR_WORKSPACE</code> at the existing path. Make sure <code>west zephyr-export</code> has been run in that workspace and that <code>ZEPHYR_BASE</code> resolves to its <code>zephyr/</code> subdir. One workspace per machine saves ~6–10 GB across projects.
+</div>
+
+<div class="callout">
+  <span class="label">If the project later ships its own west manifest</span>
+  When <code>$EDEVKIT_REPO/firmware/west.yml</code> lands (pinning Zephyr revision + project-specific HALs), reinit the workspace pointed at that manifest:
+  <pre><code>rm -rf "$ZEPHYR_WORKSPACE"                       # or move it aside
+west init -l "$EDEVKIT_REPO/firmware"            # uses the project's west.yml
+cd "$EDEVKIT_REPO/firmware"
+west update --narrow -o=--depth=1
+west zephyr-export</code></pre>
+  Even with a project-local manifest, the bulk of the workspace (zephyr/, modules/, etc.) still lives outside the repo via west's <code>topdir</code> mechanism — only the <code>west.yml</code> file itself sits in the repo.
+</div>
+
+<h4>Verify step 4</h4>
+<pre><code>cd "$ZEPHYR_WORKSPACE"
+west list                              # should print zephyr, mcuboot, hal_rpi_pico, mbedtls, …
+west boards | grep -i rpi_pico2        # rpi_pico2 (with /rp2350a/m33 etc. variants) should appear
+echo "$ZEPHYR_BASE"                    # set by `west zephyr-export` — should be $ZEPHYR_WORKSPACE/zephyr</code></pre>
+
+<!-- =========================================================================== -->
+<h2 id="step5">Step 5 — Zephyr SDK (toolchains)</h2>
+
+<div class="step">
+  <span class="num">5</span><span class="est">~10 min · 2–10 GB</span>
+  <h3>Install the cross-compilers Zephyr uses to build for ARM (and other targets)</h3>
+  <p>The Zephyr SDK is a self-contained bundle of cross-compilers, GDB, and host tools. We use <strong>SDK 1.0.1</strong> at the time of writing; any 0.17.x or newer 1.x release that's compatible with your Zephyr version will work. The SDK is not Python — install once per machine, share across projects.</p>
+</div>
+
+<p>The full SDK is ~10 GB across all architectures. You only need <code>arm-zephyr-eabi</code> for edevkit1, which is ~700 MB. Use the <code>-t</code> flag to filter.</p>
+
+<p class="small">You already exported <code>$ZEPHYR_SDK_INSTALL_DIR</code> in the <a href="#layout-pick">layout step</a> (e.g. <code>$HOME/zephyr-sdk-1.0.1</code>). The install command below points <code>west sdk</code> at the parent dir of that target via the <code>-b</code> flag, so the SDK lands exactly where the env var expects.</p>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux · WSL2</span>
+  <pre><code># west sdk handles the download and unpack:
+west sdk install -b "$(dirname "$ZEPHYR_SDK_INSTALL_DIR")" -t arm-zephyr-eabi
+# ~700 MB; drop the `-t` flag to install all archs (~10 GB)
+
+# Persist the env var across new shells:
+echo 'export ZEPHYR_SDK_INSTALL_DIR="'"$ZEPHYR_SDK_INSTALL_DIR"'"' &gt;&gt; ~/.bashrc</code></pre>
+</div>
+
+<div class="os-card mac">
+  <span class="os-tag">macOS</span>
+  <pre><code>west sdk install -b "$(dirname "$ZEPHYR_SDK_INSTALL_DIR")" -t arm-zephyr-eabi
+
+echo 'export ZEPHYR_SDK_INSTALL_DIR="'"$ZEPHYR_SDK_INSTALL_DIR"'"' &gt;&gt; ~/.zprofile</code></pre>
+  <p class="small">On Apple Silicon, the SDK ships native arm64 binaries (no Rosetta required). If you see "cannot be opened because Apple cannot check it for malicious software" on first run, allow it once via <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>.</p>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows · native</span>
+  <pre><code># In PowerShell, with the venv activated:
+west sdk install -b (Split-Path $env:ZEPHYR_SDK_INSTALL_DIR) -t arm-zephyr-eabi
+
+# Persist the env var for your user (adjust the path if you used a different location):
+[Environment]::SetEnvironmentVariable(
+    "ZEPHYR_SDK_INSTALL_DIR",
+    $env:ZEPHYR_SDK_INSTALL_DIR,
+    "User")
+# Restart any terminals after this for the new var to be picked up.</code></pre>
+</div>
+
+<h4>Verify step 5</h4>
+<pre><code>ls "$ZEPHYR_SDK_INSTALL_DIR/gnu/arm-zephyr-eabi/bin/"
+# should list arm-zephyr-eabi-gcc, -gdb, -objdump, etc.
+
+"$ZEPHYR_SDK_INSTALL_DIR/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc" --version
+# should print "13.2.0" or similar</code></pre>
+
+<!-- =========================================================================== -->
+<h2 id="step6">Step 6 — pioasm (RP2350 PIO assembler)</h2>
+
+<div class="step">
+  <span class="num">6</span><span class="est">~5 min</span>
+  <h3>Build the RP2350 PIO assembler from source</h3>
+  <p>The RP2350's <strong>PIO</strong> blocks (12 state machines) are what make it a viable debug probe + protocol tester at speeds the M33 cores can't bit-bang. PIO source files (<code>.pio</code>) are written in a small assembly language and compiled to a C array embedded in firmware. <strong>Zephyr does not bundle the assembler.</strong> No package manager (brew/apt/scoop) ships it as a standalone binary — we build from source.</p>
+</div>
+
+<pre><code>cd "$EDEVKIT_REPO/tools"
+git clone --depth 1 https://github.com/raspberrypi/pico-sdk-tools.git
+cd pico-sdk-tools/pioasm
+mkdir -p build &amp;&amp; cd build
+cmake .. -G Ninja
+ninja
+# resulting binary: $EDEVKIT_REPO/tools/pico-sdk-tools/pioasm/build/pioasm
+
+# add it to PATH for your venv. Append to your shell rc OR to step 13's helpers file:
+echo 'export PATH="$EDEVKIT_REPO/tools/pico-sdk-tools/pioasm/build:$PATH"' \
+    &gt;&gt; ~/.bashrc       # zsh: ~/.zshrc
+source ~/.bashrc</code></pre>
+
+<p class="small">On Windows native, build the same way using the "x64 Native Tools Command Prompt for VS" (so MSBuild + Ninja can find the C++ compiler), then add <code>$env:EDEVKIT_REPO\tools\pico-sdk-tools\pioasm\build</code> to <code>PATH</code> via System Properties → Environment Variables.</p>
+
+<h4>Verify step 6</h4>
+<pre><code>which pioasm                # …/pico-sdk-tools/pioasm/build/pioasm
+pioasm -h                   # should print usage
+echo "" | pioasm /dev/stdin /dev/stdout    # should error gracefully on empty input</code></pre>
+
+<!-- =========================================================================== -->
+<h2 id="step7">Step 7 — Rust + Tauri (host CLI &amp; GUI)</h2>
+
+<div class="step">
+  <span class="num">7</span><span class="est">~10–20 min · 1–2 GB</span>
+  <h3>Install Rust, then Tauri's native dependencies</h3>
+  <p>The host side is a Cargo workspace at <code>host/</code> with three crates: <code>core/</code> (shared library — probe-rs integration, mcumgr/SMP client, etc.), <code>cli/</code> (the <code>edevkit</code> binary), and <code>gui/</code> (the Tauri app). Tauri needs OS-specific native libraries to render its WebView.</p>
+</div>
+
+<h4>7a. Install rustup (the Rust toolchain manager)</h4>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux · macOS · WSL2</span>
+  <pre><code>curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Press 1 (default) when prompted. The installer puts cargo, rustc on $PATH
+# in ~/.cargo/bin/ and adds it to your shell rc.
+
+# Reload the shell or:
+source "$HOME/.cargo/env"
+
+rustup update                # pull latest stable
+rustup default stable</code></pre>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows · native</span>
+  <pre><code>scoop install rustup
+rustup-init.exe              # accept defaults
+# Restart PowerShell so the new PATH is picked up.
+
+rustup update
+rustup default stable</code></pre>
+</div>
+
+<h4>7b. Tauri native prerequisites</h4>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux · Ubuntu / Debian</span>
+  <pre><code>sudo apt install -y \
+    libwebkit2gtk-4.1-dev \
+    build-essential curl wget file \
+    libxdo-dev \
+    libssl-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    libgtk-3-dev \
+    pkg-config</code></pre>
+  <p class="small">On Debian-based distros where <code>libwebkit2gtk-4.1-dev</code> isn't available yet, fall back to <code>libwebkit2gtk-4.0-dev</code>. Check with <code>apt-cache search libwebkit2gtk</code>.</p>
+</div>
+
+<div class="os-card mac">
+  <span class="os-tag">macOS</span>
+  <p>Already covered by the Xcode Command Line Tools you installed in step 1. No additional dependencies — Tauri uses the system WKWebView.</p>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows · native</span>
+  <p>Tauri needs <strong>WebView2 Runtime</strong> (typically pre-installed on Windows 11) and <strong>Visual C++ Build Tools</strong> (installed in step 1). Verify:</p>
+  <pre><code>Get-AppxPackage -Name "Microsoft.WebView2*"     # should list one entry
+# If it doesn't, download from https://developer.microsoft.com/microsoft-edge/webview2</code></pre>
+</div>
+
+<h4>7c. Install <code>cargo-tauri</code> and probe-rs</h4>
+
+<pre><code># Install the Tauri CLI (used for building/dev-running the GUI):
+cargo install tauri-cli --version "^2.0"     # version pin matches Tauri 2.x
+
+# probe-rs — Rust-native debug probe driver. Used by the host for SWD/JTAG:
+cargo install --locked probe-rs-tools
+
+# (Optional but useful) cargo-make / cargo-binstall for faster installs of
+# pre-built binaries:
+cargo install cargo-binstall</code></pre>
+
+<h4>Verify step 7</h4>
+<pre><code>cargo --version          # 1.7x.x or newer
+rustc --version          # matching
+cargo tauri --version    # 2.x
+probe-rs --version       # any 0.x or 1.x</code></pre>
+
+<!-- =========================================================================== -->
+<h2 id="step8">Step 8 — KiCad 9 + KiBot (hardware)</h2>
+
+<div class="step">
+  <span class="num">8</span><span class="est">~10 min · 2–4 GB</span>
+  <h3>Install KiCad 9 (schematic + PCB) and KiBot (CI for ERC, DRC, BOM, 3D render)</h3>
+  <p>KiCad is an interactive desktop app — install it natively on your OS, even if you're using WSL2 for everything else. KiBot is Python-based and runs in your venv; it drives KiCad's headless commands to produce the artifacts you'll commit (BOM, gerbers, fabrication outputs, 3D renders).</p>
+</div>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux · Ubuntu / Debian</span>
+  <pre><code># Add the KiCad 9.0 PPA (official stable):
+sudo add-apt-repository --yes ppa:kicad/kicad-9.0-releases
+sudo apt update
+sudo apt install -y kicad
+
+# KiBot in the venv:
+pip install kibot</code></pre>
+  <p class="small">Fedora: <code>sudo dnf install kicad</code>. Arch: <code>sudo pacman -S kicad kicad-library kicad-library-3d</code>.</p>
+</div>
+
+<div class="os-card mac">
+  <span class="os-tag">macOS</span>
+  <pre><code>brew install --cask kicad
+
+# KiBot in the venv:
+pip install kibot</code></pre>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows · native (recommended even for WSL2 users)</span>
+  <p>Download the latest 9.0.x installer from <a href="https://www.kicad.org/download/windows/">kicad.org/download/windows</a> and run it. Pick the default install location.</p>
+  <p>For <strong>KiBot</strong>, install Docker Desktop and use the official Docker image (KiBot's pip install on Windows is finicky):</p>
+  <pre><code>scoop install docker
+# Then later, from anywhere:
+docker run --rm -v "${PWD}:/work" setsoft/kicad_auto:latest \
+    kibot -c .kibot.yaml</code></pre>
+  <p class="small">If you're using WSL2, you can install KiBot via pip inside WSL2 (same as the Linux card) — the only thing you'll launch natively on Windows is KiCad itself. KiBot can read a <code>.kicad_pcb</code> file from a WSL2-mounted path just fine.</p>
+</div>
+
+<h4>Verify step 8</h4>
+<pre><code>kicad-cli version           # 9.0.x — ships with the KiCad install
+kibot --version             # 1.6 or newer (after pip install)
+kibot --list-schemas        # lists supported output types (gerbers, BOM, etc.)</code></pre>
+
+<!-- =========================================================================== -->
+<h2 id="step9">Step 9 — Enclosure CAD (CadQuery / FreeCAD)</h2>
+
+<div class="step">
+  <span class="num">9</span><span class="est">~5–15 min</span>
+  <h3>Pick one open-source CAD path for the enclosure</h3>
+  <p>Per design spec §10, edevkit1 supports two enclosure-source paths. Pick one based on your preference; both can produce STEP and STL outputs that KiCad and the slicer can read.</p>
+</div>
+
+<table>
+  <tr><th>Option</th><th>Best for</th><th>Tooling</th></tr>
+  <tr><td><strong>CadQuery</strong></td><td>Programmatic, scriptable enclosures. Python source, version-control friendly.</td><td>Python pip package; runs headless from CI.</td></tr>
+  <tr><td><strong>FreeCAD 1.x</strong></td><td>GUI-driven design, parametric modeling, KiCad STEP import.</td><td>Desktop app + Python scripting via FreeCAD's macro system.</td></tr>
+</table>
+
+<h4>9a. CadQuery (recommended for CI-friendly workflow)</h4>
+<pre><code># In your venv:
+pip install cadquery cq-editor
+# cq-editor gives you a GUI viewer for iterating on CadQuery scripts.</code></pre>
+
+<h4>9b. FreeCAD 1.x</h4>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux</span>
+  <pre><code># Ubuntu PPA (FreeCAD 1.0+):
+sudo add-apt-repository --yes ppa:freecad-maintainers/freecad-stable
+sudo apt update
+sudo apt install -y freecad
+# OR via Snap / Flatpak / AppImage from freecad.org</code></pre>
+</div>
+
+<div class="os-card mac">
+  <span class="os-tag">macOS</span>
+  <pre><code>brew install --cask freecad</code></pre>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows · native</span>
+  <p>Download the 1.x installer from <a href="https://www.freecad.org/downloads.php">freecad.org</a> and run.</p>
+</div>
+
+<!-- =========================================================================== -->
+<h2 id="step10">Step 10 — Slicer (OrcaSlicer)</h2>
+
+<div class="step">
+  <span class="num">10</span><span class="est">~5 min · 200 MB</span>
+  <h3>Install OrcaSlicer for 3D-printing the enclosure</h3>
+  <p>Per design spec §10, OrcaSlicer is the chosen slicer (PETG body, optional TPU bumpers; profiles target Bambu Lab printers). Skip if you're not building physical enclosures.</p>
+</div>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux</span>
+  <pre><code># OrcaSlicer ships AppImages — easiest install:
+mkdir -p ~/Apps
+cd ~/Apps
+wget https://github.com/SoftFever/OrcaSlicer/releases/latest/download/OrcaSlicer_Linux_AppImage_Ubuntu2404_VX.X.X.AppImage \
+    -O OrcaSlicer.AppImage
+chmod +x OrcaSlicer.AppImage
+# Run with: ~/Apps/OrcaSlicer.AppImage</code></pre>
+  <p class="small">Replace <code>VX.X.X</code> with the latest version from the GitHub releases page.</p>
+</div>
+
+<div class="os-card mac">
+  <span class="os-tag">macOS</span>
+  <pre><code>brew install --cask orcaslicer</code></pre>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows · native</span>
+  <p>Download the installer from <a href="https://github.com/SoftFever/OrcaSlicer/releases/latest">OrcaSlicer releases</a>.</p>
+</div>
+
+<!-- =========================================================================== -->
+<h2 id="step11">Step 11 — Bench tools (sigrok, mcumgr, serial)</h2>
+
+<div class="step">
+  <span class="num">11</span><span class="est">~5 min</span>
+  <h3>Install logic-analyzer software, OTA tooling, and serial terminal</h3>
+  <p>These are the day-to-day debug tools you'll use at the bench: a logic analyzer for protocol-timing problems, mcumgr for OTA, and a serial terminal for the CDC-ACM consoles edevkit1 exposes.</p>
+</div>
+
+<h4>11a. sigrok + PulseView (logic analyzer)</h4>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux</span>
+  <pre><code>sudo apt install -y sigrok-cli pulseview
+# Or from source / Flatpak if your distro is behind: https://sigrok.org/wiki/Downloads</code></pre>
+</div>
+
+<div class="os-card mac">
+  <span class="os-tag">macOS</span>
+  <pre><code>brew install --cask pulseview
+brew install sigrok-cli</code></pre>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows</span>
+  <p>Download installer from <a href="https://sigrok.org/wiki/Downloads">sigrok.org</a>. Or use WSL2 + <code>usbipd-win</code> to forward the LA's USB device to WSL2 and run <code>sigrok-cli</code> there (better long-term).</p>
+</div>
+
+<h4>11b. mcumgr (OTA / SMP client)</h4>
+
+<p>edevkit1 uses MCUboot + Zephyr's SMP server for OTA updates. The host-side counterpart is the <code>mcumgr</code> CLI (Go-based) or the <code>smpclient</code> Python package.</p>
+
+<pre><code># Option A — Go-based mcumgr (any OS with Go installed):
+go install github.com/apache/mynewt-mcumgr-cli/mcumgr@latest
+# Resulting binary at $GOPATH/bin/mcumgr; add to PATH.
+
+# Option B — Python smpclient (in your venv):
+pip install smpclient</code></pre>
+
+<p class="small">Either works; <code>mcumgr</code> is more battle-tested, <code>smpclient</code> is easier to integrate into Python scripts.</p>
+
+<h4>11c. Serial terminal</h4>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux · macOS</span>
+  <pre><code># `screen` is preinstalled on macOS and most Linuxes:
+screen /dev/cu.usbmodem* 115200
+# Quit: Ctrl-A then K then Y
+
+# OR: tio (friendlier than screen — auto-reconnect, hex view):
+sudo apt install tio                    # Linux
+brew install tio                        # macOS
+tio /dev/cu.usbmodem*                   # default 115200</code></pre>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows · native</span>
+  <p>Use <strong>PuTTY</strong> (<code>scoop install putty</code>), <strong>TeraTerm</strong>, or <strong>Windows Terminal's serial connection</strong>. From WSL2, install <code>tio</code> and use <code>usbipd-win</code> for USB passthrough.</p>
+</div>
+
+<h4>11d. OpenOCD (alternative to probe-rs / pyOCD)</h4>
+
+<pre><code># Linux:    sudo apt install openocd
+# macOS:    brew install open-ocd
+# Windows:  scoop install openocd</code></pre>
+<p class="small">OpenOCD is not strictly required (probe-rs is the preferred host tool per the design doc), but having it on hand helps when you need to verify behavior against a second-source debug stack.</p>
+
+<!-- =========================================================================== -->
+<h2 id="step12">Step 12 — Editor / IDE setup</h2>
+
+<div class="step">
+  <span class="num">12</span><span class="est">~5 min</span>
+  <h3>Configure your editor for Zephyr + Rust + KiCad workflows</h3>
+  <p>Pick whatever editor you prefer; the recommendation is <strong>VSCode</strong> for the breadth of well-maintained extensions covering all five subsystems. CLion + Rust Rover combination also works for users with JetBrains licenses.</p>
+</div>
+
+<h4>VSCode extensions (recommended set)</h4>
+<table>
+  <tr><th>Extension</th><th>Why</th></tr>
+  <tr><td>C/C++ (Microsoft)</td><td>IntelliSense for Zephyr C code.</td></tr>
+  <tr><td>CMake Tools</td><td>Configure/build CMake projects from the editor.</td></tr>
+  <tr><td>nRF Kconfig (or any Kconfig syntax extension)</td><td>Highlighting + lookups for <code>prj.conf</code>.</td></tr>
+  <tr><td>Devicetree (Nordic / Pleasant3)</td><td>Highlighting + binding navigation for <code>.dts</code>/<code>.overlay</code>.</td></tr>
+  <tr><td>Cortex-Debug</td><td>GDB sessions over CMSIS-DAP / probe-rs.</td></tr>
+  <tr><td>rust-analyzer</td><td>Rust IDE features for the host workspace.</td></tr>
+  <tr><td>Tauri</td><td>Project scaffolding + commands for the GUI.</td></tr>
+  <tr><td>Even Better TOML</td><td><code>Cargo.toml</code>, <code>tauri.conf.json</code> editing.</td></tr>
+  <tr><td>KiCad EDA support</td><td>(Optional) Open <code>.kicad_pro</code> files from VSCode.</td></tr>
+</table>
+
+<p>VSCode's <code>settings.json</code> doesn't expand shell variables, so the file needs concrete paths. Substitute the values you exported in <a href="#layout-pick">Pick a layout</a> — the example below uses Layout A's defaults:</p>
+<pre><code>// .vscode/settings.json (in the repo; gitignored)
+// Replace each path with the value of the matching env var on your machine.
+{
+  // $EDEV_VENV/bin/python  (Linux/macOS) or $EDEV_VENV\Scripts\python.exe (Windows)
+  "python.defaultInterpreterPath": "${userHome}/projects/temp/edevkit/edev/bin/python",
+
+  "terminal.integrated.env.linux": {
+    "ZEPHYR_SDK_INSTALL_DIR": "${userHome}/zephyr-sdk-1.0.1",          // = $ZEPHYR_SDK_INSTALL_DIR
+    "ZEPHYR_BASE":            "${userHome}/projects/temp/zephyrproject/zephyr",  // = $ZEPHYR_WORKSPACE/zephyr
+    "EDEVKIT_REPO":           "${userHome}/projects/temp/edevkit/edevkit",
+    "EDEV_VENV":              "${userHome}/projects/temp/edevkit/edev",
+    "ZEPHYR_WORKSPACE":       "${userHome}/projects/temp/zephyrproject"
+  },
+  "terminal.integrated.env.osx": {
+    "ZEPHYR_SDK_INSTALL_DIR": "${userHome}/zephyr-sdk-1.0.1",
+    "ZEPHYR_BASE":            "${userHome}/projects/temp/zephyrproject/zephyr",
+    "EDEVKIT_REPO":           "${userHome}/projects/temp/edevkit/edevkit",
+    "EDEV_VENV":              "${userHome}/projects/temp/edevkit/edev",
+    "ZEPHYR_WORKSPACE":       "${userHome}/projects/temp/zephyrproject"
+  },
+  "terminal.integrated.env.windows": {
+    "ZEPHYR_SDK_INSTALL_DIR": "${userHome}\\zephyr-sdk-1.0.1",
+    "ZEPHYR_BASE":            "${userHome}\\projects\\temp\\zephyrproject\\zephyr",
+    "EDEVKIT_REPO":           "${userHome}\\projects\\temp\\edevkit\\edevkit",
+    "EDEV_VENV":              "${userHome}\\projects\\temp\\edevkit\\edev",
+    "ZEPHYR_WORKSPACE":       "${userHome}\\projects\\temp\\zephyrproject"
+  }
+}</code></pre>
+<p class="small"><strong>Layout B (flat siblings):</strong> drop the <code>/temp/edevkit/</code> segment from the paths above. <strong>Layout C:</strong> the venv is at <code>${userHome}/edev/...</code> and the workspace at <code>${userHome}/zephyrproject/...</code>. <strong>Windows:</strong> the venv interpreter path is <code>${userHome}\...\edev\Scripts\python.exe</code> instead of <code>/bin/python</code>.</p>
+
+<!-- =========================================================================== -->
+<h2 id="step13">Step 13 — Shell helpers &amp; daily workflow</h2>
+
+<div class="step">
+  <span class="num">13</span><span class="est">~2 min</span>
+  <h3>Verify the helpers load, and learn the every-terminal recipe</h3>
+  <p>You'll re-run the same build/flash/test commands hundreds of times. The repo ships convenience helpers (<code>edev_build</code>, <code>edev_flash</code>, <code>edev_create_app</code>, …) that already got wired into your venv by <a href="#step3">Step 3 — <code>setup_venv.sh</code></a>. Nothing more to install — this step just confirms it works and shows the daily-use recipe.</p>
+</div>
+
+<p>The wiring chain is:</p>
+<ol>
+  <li><strong>Your shell rc</strong> (<code>~/.zshrc</code>, <code>~/.bashrc</code>, or PowerShell <code>$PROFILE</code>) exports the four layout vars from <a href="#layout-pick">Pick a layout</a>.</li>
+  <li><strong>Activating the venv</strong> (<code>source "$EDEV_VENV/bin/activate"</code>) auto-sources <code>$EDEVKIT_REPO/tools/env_helpers.sh</code>, because Step 3 appended a guarded <code>source</code> line to <code>activate</code>.</li>
+  <li><strong>The helpers</strong> are now functions in your shell. Full reference for every helper at <a href="shell_helpers.html"><strong>shell_helpers.html</strong></a>.</li>
+</ol>
+
+<h3 id="daily-workflow">Daily workflow — every new terminal</h3>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux · macOS · WSL2 (bash / zsh)</span>
+  <pre><code># open a new terminal — your rc auto-loads the layout vars.
+# then, one line:
+source "$EDEV_VENV/bin/activate"
+
+# verify:
+edev_help</code></pre>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows · native (PowerShell)</span>
+  <pre><code># open a new PowerShell — $PROFILE auto-loads the layout vars.
+# then, one line:
+. "$env:EDEV_VENV\Scripts\Activate.ps1"
+
+# verify:
+edev_help</code></pre>
+</div>
+
+<p>That's the whole loop. The "(edev)" prompt prefix is your cue that <code>west</code>, <code>pyocd</code>, <code>imgtool</code>, and every <code>edev_*</code> helper are on PATH.</p>
+
+<h3 id="refresh-recipes">When you need to refresh something</h3>
+
+<table>
+  <tr><th>You changed…</th><th>Do this</th></tr>
+  <tr>
+    <td>Your shell rc (added a layout var, fixed a typo)</td>
+    <td>Open a new terminal — or in the current one: <code>deactivate 2>/dev/null; source ~/.zshrc; source "$EDEV_VENV/bin/activate"</code></td>
+  </tr>
+  <tr>
+    <td><code>$EDEVKIT_REPO/tools/env_helpers.sh</code> itself (e.g. after <code>git pull</code>)</td>
+    <td>Just re-source it — no need to leave the venv: <code>source "$EDEVKIT_REPO/tools/env_helpers.sh"</code></td>
+  </tr>
+  <tr>
+    <td>Recreated the venv (<code>rm -rf "$EDEV_VENV"</code> + new <code>python -m venv</code>)</td>
+    <td>Re-run <code>setup_venv.sh</code> — that re-appends the auto-source block to the new <code>activate</code></td>
+  </tr>
+  <tr>
+    <td>Want the helpers in <em>every</em> shell, not just inside the venv</td>
+    <td>Append <code>source "$EDEVKIT_REPO/tools/env_helpers.sh"</code> to your shell rc (Pattern B; see <a href="shell_helpers.html#install">shell_helpers.html</a> for trade-offs)</td>
+  </tr>
+  <tr>
+    <td>Want every new terminal to auto-activate the venv</td>
+    <td>Append <code>source "$EDEV_VENV/bin/activate"</code> to your shell rc — convenient, but slows shell startup ~50–100 ms and the venv is then live in unrelated shells too</td>
+  </tr>
+</table>
+
+<p>What you get once the helpers are loaded — every command checks the layout vars are set before running, so a missing <code>EDEVKIT_REPO</code> gives a clear error rather than a confusing path failure:</p>
+
+<table>
+  <tr><th>Command</th><th>What it does</th></tr>
+  <tr><td><code>edev_activate</code></td><td>enter the Python venv at <code>$EDEV_VENV</code></td></tr>
+  <tr><td><code>westz &lt;args…&gt;</code></td><td>run <code>west</code> from inside <code>$ZEPHYR_WORKSPACE</code> regardless of <code>$PWD</code></td></tr>
+  <tr><td><code>edev_create_app &lt;name&gt; [parent]</code></td><td>scaffold a new Zephyr app at <code>$PWD/&lt;name&gt;/</code> (override the parent dir with the second arg)</td></tr>
+  <tr><td><code>edev_build [src] [board]</code></td><td>pristine sysbuild build (MCUboot + signed app); default board <code>rpi_pico2/rp2350a/m33</code></td></tr>
+  <tr><td><code>edev_build_simple</code></td><td>pristine non-sysbuild build for ad-hoc samples</td></tr>
+  <tr><td><code>edev_flash</code></td><td>flash via probe-rs over SWD</td></tr>
+  <tr><td><code>edev_flash_uf2</code></td><td>UF2 drag-and-drop flash for BOOTSEL mode (volume <code>RP2350</code>)</td></tr>
+  <tr><td><code>edev_ota</code></td><td>push signed image via <code>mcumgr</code> to a running kit</td></tr>
+  <tr><td><code>edev_console</code></td><td>open serial console (tio if available, else screen)</td></tr>
+  <tr><td><code>edev_doc</code></td><td>open the local docs hub in a browser</td></tr>
+  <tr><td><code>edev_help</code></td><td>print all helpers and current default values</td></tr>
+</table>
+
+<p class="small">The script pattern is adapted from edevtoolkit's <code>documents/env_script.txt</code>. See <a href="shell_helpers.html">shell_helpers.html</a> for the full reference, typical workflows, hacking notes, and a side-by-side mapping of differences.</p>
+
+<!-- =========================================================================== -->
+<h2 id="smoke">Step 14 — Smoke tests</h2>
+
+<div class="step">
+  <span class="num">14</span><span class="est">~10 min</span>
+  <h3>Confirm everything you installed actually works</h3>
+  <p>Three quick build attempts — one per major subsystem. If they all pass, you're done. If any fails, jump to the matching troubleshooting section below.</p>
+</div>
+
+<h4>14a. Firmware smoke test — build blinky for <code>rpi_pico2/rp2350a/m33</code></h4>
+<p class="small">Zephyr 3.7+ requires fully-qualified board targets when a board has multiple cores or variants. The Pico 2 is one such case: pass <code>rpi_pico2/rp2350a/m33</code> to select the Cortex-M33 cores (which is what edevkit1 uses). Plain <code>rpi_pico2</code> will fail with "Board qualifiers ... not found".</p>
+<pre><code>edev_activate                   # the helper from step 13
+cd "$ZEPHYR_WORKSPACE/zephyr/samples/basic/blinky"
+west build -p always -b rpi_pico2/rp2350a/m33 -s . -d ./build-rpi_pico2_rp2350a_m33
+
+# Expected last line:
+#   [123/123] Linking C executable zephyr/zephyr.elf
+#   Memory region   Used Size   Region Size   %age Used
+#   FLASH: …
+#   RAM:   …
+ls ./build-rpi_pico2_rp2350a_m33/zephyr/zephyr.uf2     # should exist</code></pre>
+
+<h4>14b. Host smoke test — build the Rust workspace</h4>
+<pre><code># Once host/Cargo.toml exists in the repo:
+cd "$EDEVKIT_REPO/host"
+cargo build --release --bin edevkit
+# Tauri GUI:
+cargo tauri build
+# Outputs:
+#   $EDEVKIT_REPO/host/target/release/edevkit              (CLI binary)
+#   $EDEVKIT_REPO/host/gui/src-tauri/target/release/...    (GUI bundle)</code></pre>
+<p class="small">If <code>host/Cargo.toml</code> doesn't exist yet (greenfield repo), substitute any "hello world" cargo project to verify the toolchain: <code>cargo new --bin /tmp/hello &amp;&amp; cd /tmp/hello &amp;&amp; cargo build</code>.</p>
+
+<h4>14c. Hardware smoke test — KiBot dry-run</h4>
+<pre><code># Once hardware/.kibot.yaml exists:
+cd "$EDEVKIT_REPO/hardware"
+kibot -c .kibot.yaml --list      # should print configured outputs without errors
+
+# Verify kicad-cli works:
+kicad-cli version                 # 9.0.x
+kicad-cli sch --help              # subcommands listed</code></pre>
+
+<!-- =========================================================================== -->
+<h2 id="checklist">Step 15 — Final checklist</h2>
+
+<p>Walk through this list in a single shell session. If every line returns the expected output, your environment is fully provisioned.</p>
+
+<pre><code>edev_activate
+
+# 0) Confirm the layout env vars are still set
+echo "$EDEVKIT_REPO"            # the git repo
+echo "$EDEV_VENV"               # the venv root
+echo "$ZEPHYR_WORKSPACE"        # the Zephyr workspace
+echo "$ZEPHYR_SDK_INSTALL_DIR"  # the SDK toolchains
+
+# 1) Python + west
+which python                    # should be inside $EDEV_VENV/bin
+which west                      # ditto
+west --version                  # ≥ 1.2
+
+# 2) Zephyr workspace
+echo "$ZEPHYR_BASE"             # = $ZEPHYR_WORKSPACE/zephyr (set by `west zephyr-export`)
+west list | head -3             # zephyr, mcuboot, hal_rpi_pico, …
+
+# 3) Zephyr SDK
+"$ZEPHYR_SDK_INSTALL_DIR/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc" --version
+# should print 13.2.0 or similar
+
+# 4) PIO assembler
+which pioasm                    # …/tools/pico-sdk-tools/pioasm/build/pioasm
+pioasm -h | head -1             # usage line
+
+# 5) Rust + Tauri
+cargo --version
+rustc --version
+cargo tauri --version
+probe-rs --version
+
+# 6) Hardware tools
+kicad-cli version
+kibot --version
+
+# 7) Bench tools
+sigrok-cli --version
+which mcumgr                    # OR: pip show smpclient
+which tio screen                # at least one
+which openocd                   # any version
+
+# 8) Enclosure
+python -c "import cadquery"     # no error means CadQuery imports
+freecad --version               # if you chose FreeCAD path</code></pre>
+
+<ul class="checklist">
+  <li>System prerequisites installed (cmake, ninja, gperf, dtc, python3, git)</li>
+  <li>Repository cloned, no path with spaces or non-ASCII chars</li>
+  <li>Python venv created and activated by default in new shells (via shell rc)</li>
+  <li>Zephyr workspace initialised, <code>west list</code> shows all modules</li>
+  <li>Zephyr SDK installed, <code>arm-zephyr-eabi-gcc</code> reachable</li>
+  <li>pioasm built and on <code>PATH</code></li>
+  <li>Rust toolchain installed; <code>cargo tauri</code> + <code>probe-rs</code> available</li>
+  <li>KiCad 9 launches; KiBot reports a version</li>
+  <li>CadQuery (or FreeCAD) imports / launches</li>
+  <li>OrcaSlicer launches</li>
+  <li>sigrok-cli + tio (or PuTTY) work</li>
+  <li>VSCode opens the repo and finds the venv interpreter</li>
+  <li>Shell helpers (<code>edev_activate</code>, <code>edev_build</code>, <code>edev_flash</code>) defined</li>
+  <li>Blinky build succeeds for <code>rpi_pico2/rp2350a/m33</code> board</li>
+</ul>
+
+<!-- =========================================================================== -->
+<h2 id="trouble-linux">Troubleshooting — Linux</h2>
+
+<table>
+  <tr><th>Symptom</th><th>Cause / fix</th></tr>
+  <tr><td><code>cmake: command not found</code></td><td>Missing apt package — re-run step 1 install line.</td></tr>
+  <tr><td><code>fatal error: Python.h: No such file</code></td><td>Missing <code>python3-dev</code> — <code>sudo apt install python3-dev</code>.</td></tr>
+  <tr><td><code>west update</code> fails on git clone</td><td>Network / firewall. Try <code>--narrow -o=--depth=1</code>; if behind a corporate proxy, set <code>http.proxy</code> in <code>~/.gitconfig</code>.</td></tr>
+  <tr><td>Zephyr build can't find toolchain</td><td><code>ZEPHYR_SDK_INSTALL_DIR</code> not exported. Add to <code>~/.bashrc</code> and re-source.</td></tr>
+  <tr><td>USB device permission denied (probe-rs / pyOCD / mcumgr)</td><td>Missing udev rules. See <a href="#udev">USB permissions</a> below.</td></tr>
+  <tr><td>Tauri build: <code>error: failed to run custom build command for openssl-sys</code></td><td>Missing <code>libssl-dev</code>. <code>sudo apt install libssl-dev pkg-config</code>.</td></tr>
+  <tr><td>Tauri build: <code>error: failed to run custom build command for webkit2gtk-sys</code></td><td>Missing <code>libwebkit2gtk-4.1-dev</code>. On older Debian, fall back to <code>libwebkit2gtk-4.0-dev</code>.</td></tr>
+  <tr><td><code>kicad: cannot connect to X server</code> over SSH</td><td>Run <code>ssh -X</code> (X11 forwarding), or use VNC / RustDesk for the GUI.</td></tr>
+  <tr><td>Rust install: <code>linker `cc` not found</code></td><td>Missing <code>build-essential</code> — re-run step 1.</td></tr>
+</table>
+
+<!-- =========================================================================== -->
+<h2 id="trouble-mac">Troubleshooting — macOS</h2>
+
+<table>
+  <tr><th>Symptom</th><th>Cause / fix</th></tr>
+  <tr><td><code>brew: command not found</code></td><td>Run the brew shellenv line for your arch (Apple Silicon vs Intel — see step 1 macOS card).</td></tr>
+  <tr><td>"cannot be opened because Apple cannot check it for malicious software"</td><td>System Settings → Privacy &amp; Security → "Open Anyway" for the flagged binary. One-time per binary.</td></tr>
+  <tr><td>Zephyr build: <code>fatal error: 'stdio.h' file not found</code></td><td>Xcode CLI tools out of date. <code>sudo xcode-select --install</code>.</td></tr>
+  <tr><td>Apple Silicon: <code>bad CPU type</code> running x86 binaries</td><td>You hit a non-native binary (rare in this stack). Install Rosetta: <code>softwareupdate --install-rosetta --agree-to-license</code>.</td></tr>
+  <tr><td><code>/dev/cu.usbmodem*</code> not appearing</td><td>Confirm cable is data-rated, not charge-only; try a different USB port; check <code>system_profiler SPUSBDataType</code> for the device.</td></tr>
+  <tr><td>Tauri dev-server: white window / no content</td><td>WKWebView cache corruption. Quit, <code>rm -rf ~/Library/WebKit/&lt;app-bundle-id&gt;</code>, restart.</td></tr>
+  <tr><td>KiCad 9 crashes on launch</td><td>Old KiCad cache. <code>rm -rf ~/Library/Preferences/kicad</code> and re-launch.</td></tr>
+</table>
+
+<!-- =========================================================================== -->
+<h2 id="trouble-win">Troubleshooting — Windows</h2>
+
+<table>
+  <tr><th>Symptom</th><th>Cause / fix</th></tr>
+  <tr><td><code>Activate.ps1 cannot be loaded</code></td><td>Execution policy: <code>Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser</code>.</td></tr>
+  <tr><td>Long-path errors during <code>west update</code></td><td>Enable long paths: <code>git config --global core.longpaths true</code> AND set the OS long-path policy: <code>New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force</code> (admin PowerShell, requires reboot).</td></tr>
+  <tr><td>USB device not visible to WSL2</td><td>You need <code>usbipd-win</code> — see <a href="#wsl-usb">USB passthrough on WSL2</a> below.</td></tr>
+  <tr><td>Cargo build: <code>error: linker `link.exe` not found</code></td><td>VC++ Build Tools not installed (or "Desktop development with C++" workload missing). Re-run the VS Installer.</td></tr>
+  <tr><td>Zephyr build: <code>Could NOT find Python3</code></td><td>Multiple Pythons on <code>PATH</code>. In your venv, <code>where python</code> should show the venv first. Fix <code>PATH</code> ordering.</td></tr>
+  <tr><td>KiCad install: stuck at "downloading 3D models"</td><td>Skip the 3D models for now; install them later via <strong>Help → Install 3D Models</strong> inside KiCad.</td></tr>
+</table>
+
+<!-- =========================================================================== -->
+<h2 id="udev">USB permissions (Linux udev rules)</h2>
+
+<p>On Linux, USB devices are owned by root by default. Without rules, probe-rs / pyOCD / mcumgr will fail with "permission denied" or "device not found." Install rules <strong>once</strong> per machine:</p>
+
+<pre><code># Add yourself to the plugdev group:
+sudo usermod -aG plugdev $USER
+# Log out and back in for the group change to take effect.
+
+# probe-rs udev rules:
+sudo curl -fsSL \
+    https://probe.rs/files/69-probe-rs.rules \
+    -o /etc/udev/rules.d/69-probe-rs.rules
+
+# RP2350 BOOTSEL mode (for UF2 drag-and-drop) — file as 70-rp2350.rules:
+sudo tee /etc/udev/rules.d/70-rp2350.rules &gt;/dev/null &lt;&lt;'EOF'
+SUBSYSTEM=="usb", ATTR{idVendor}=="2e8a", ATTR{idProduct}=="000f", MODE="0666", GROUP="plugdev"
+EOF
+
+# Reload:
+sudo udevadm control --reload-rules
+sudo udevadm trigger</code></pre>
+
+<p>Re-plug the device after this; permissions should now be correct.</p>
+
+<!-- =========================================================================== -->
+<h2 id="wsl-usb">USB passthrough on WSL2</h2>
+
+<p>WSL2 doesn't see USB devices by default — they're attached to the Windows kernel. Use <a href="https://github.com/dorssel/usbipd-win"><code>usbipd-win</code></a> to forward devices on demand.</p>
+
+<pre><code># In Windows (admin PowerShell, one-time):
+winget install usbipd
+
+# List USB devices visible to Windows:
+usbipd list
+# Note the BUSID of the device you want to forward, e.g. 1-7
+
+# Bind it (one-time per device):
+usbipd bind --busid 1-7
+
+# Attach it to WSL2 (each session, after replug):
+usbipd attach --wsl --busid 1-7
+
+# Inside WSL2, verify:
+lsusb               # should show the device
+
+# To release it back to Windows:
+usbipd detach --busid 1-7</code></pre>
+
+<p class="small">Add the udev rules from <a href="#udev">the section above</a> inside your WSL2 Ubuntu — same as a native Linux install.</p>
+
+<!-- =========================================================================== -->
+<h2 id="next">Where to go next</h2>
+
+<p>Once everything verifies, walk through these in order:</p>
+
+<ol>
+  <li><a href="edevkit1.html">edevkit1.html</a> — read sections 1–4 of the v1 design spec to internalise the architecture, and section 6.5 if you're touching the protocol engines.</li>
+  <li><a href="../docs/BRINGUP.md">docs/BRINGUP.md</a> (when it lands) — first-power-on procedure for assembled hardware.</li>
+  <li><a href="../README.md">README.md</a> — top-level orientation, links to per-subsystem docs.</li>
+  <li><strong>Pick your first task</strong> based on the <a href="#step-coverage">step-coverage table</a>: firmware engineers should aim at the M0 milestone in any project roadmap document; host engineers should boot the Tauri dev server; hardware folks should open <code>hardware/edevkit1.kicad_pro</code>.</li>
+</ol>
+
+<div class="callout good">
+  <span class="label">When in doubt</span>
+  Stick to the v1 design spec (<a href="edevkit1.html">edevkit1.html</a>) — it's the source of truth for architectural questions. Every other document, including this one, defers to it.
+</div>
+
+<footer>
+  edevkit · tools/web/pages/installation.html · written for Linux, macOS, Windows · cross-references the <a href="edevkit1.html">edevkit1 design spec</a>. Update this file when the install path changes — it's the first thing every new contributor reads.
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script>
+(function () {
+  // theme toggle (light → dark → system → light)
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  function eff() {
+    var t = localStorage.getItem(key);
+    if (t === 'dark' || t === 'light') return t;
+    return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  // scroll-to-top
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  // hide back-to-hub when opened directly via file:// (no hub running)
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  // T toggles theme outside form fields
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body>
+</html>
