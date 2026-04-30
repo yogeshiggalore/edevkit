@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}404 · edevkit{% endblock %}
+
+{% block body %}
+<main class="notfound">
+  <div>
+    <h1>404</h1>
+    <p>Nothing at <code>{{ path }}</code>.</p>
+    <a class="btn btn-primary" href="/">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M19 12H5M12 19l-7-7 7-7"/>
+      </svg>
+      Back to the hub
+    </a>
+  </div>
+</main>
+{% endblock %}

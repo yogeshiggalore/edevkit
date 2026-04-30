@@ -1,0 +1,2783 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<title>edevkit1 — Embedded Developer Kit v1 Design Document</title>
+<link rel="preconnect" href="https://rsms.me/">
+<link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+<style>
+  /* ============================================================
+     edevkit1 design doc — modern interactive UI
+     Uses: light-dark(), color-mix(), :has(), container queries,
+     scroll-driven animations, view transitions, CSS nesting
+     ============================================================ */
+
+  @supports (font-variation-settings: normal) {
+    :root { --font-sans: 'Inter var', system-ui, -apple-system, sans-serif; }
+  }
+  :root {
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+
+    /* Brand — aligned to the edevkit family palette
+       (cyan-teal primary; supplementary hues kept for callout variants).
+       See tools/web/static/style.css for the canonical hub tokens. */
+    --brand-1: oklch(56% 0.16 215);  /* edevkit cyan-teal — primary */
+    --brand-2: oklch(50% 0.18 235);  /* gradient companion */
+    --brand-3: oklch(72% 0.15 70);   /* warm amber accent */
+    --brand-4: oklch(58% 0.14 145);  /* success green */
+    --brand-5: oklch(56% 0.16 215);  /* alias of brand-1 — kept for legacy refs */
+
+    /* Light theme */
+    --light-bg: #fafafa;
+    --light-surface: #ffffff;
+    --light-surface-2: #f4f4f5;
+    --light-surface-3: #e4e4e7;
+    --light-border: #e4e4e7;
+    --light-border-soft: #f4f4f5;
+    --light-text: #18181b;
+    --light-text-muted: #52525b;
+    --light-text-dim: #a1a1aa;
+    --light-code-bg: #f4f4f5;
+
+    /* Dark theme */
+    --dark-bg: #09090b;
+    --dark-surface: #18181b;
+    --dark-surface-2: #27272a;
+    --dark-surface-3: #3f3f46;
+    --dark-border: #27272a;
+    --dark-border-soft: #1f1f23;
+    --dark-text: #fafafa;
+    --dark-text-muted: #a1a1aa;
+    --dark-text-dim: #71717a;
+    --dark-code-bg: #0a0a0c;
+
+    /* Active = light-dark switching */
+    --bg: light-dark(var(--light-bg), var(--dark-bg));
+    --surface: light-dark(var(--light-surface), var(--dark-surface));
+    --surface-2: light-dark(var(--light-surface-2), var(--dark-surface-2));
+    --surface-3: light-dark(var(--light-surface-3), var(--dark-surface-3));
+    --border: light-dark(var(--light-border), var(--dark-border));
+    --border-soft: light-dark(var(--light-border-soft), var(--dark-border-soft));
+    --text: light-dark(var(--light-text), var(--dark-text));
+    --text-muted: light-dark(var(--light-text-muted), var(--dark-text-muted));
+    --text-dim: light-dark(var(--light-text-dim), var(--dark-text-dim));
+    --code-bg: light-dark(var(--light-code-bg), var(--dark-code-bg));
+
+    /* Accent semantic */
+    --accent: var(--brand-1);
+    --ok:   var(--brand-4);
+    --warn: #ef4444;
+    --tip:  var(--brand-3);
+    --info: var(--brand-5);
+    --secondary: var(--brand-2);
+
+    /* Motion */
+    --ease: cubic-bezier(.4, 0, .2, 1);
+    --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+    --dur-fast: 150ms;
+    --dur: 250ms;
+    --dur-slow: 400ms;
+
+    /* Layout */
+    --toc-width: 300px;
+    --content-max: 1100px;
+    --radius-sm: 6px;
+    --radius: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 20px;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px light-dark(rgb(0 0 0 / .04), rgb(0 0 0 / .3));
+    --shadow:    0 4px 12px light-dark(rgb(0 0 0 / .06), rgb(0 0 0 / .4));
+    --shadow-lg: 0 12px 32px light-dark(rgb(0 0 0 / .10), rgb(0 0 0 / .5));
+
+    accent-color: var(--accent);
+    color-scheme: light dark;
+  }
+
+  [data-theme="light"] { color-scheme: light; }
+  [data-theme="dark"]  { color-scheme: dark; }
+
+  /* Reset */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 80px; }
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.65;
+    background: var(--bg);
+    color: var(--text);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* Animated gradient backdrop */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background:
+      radial-gradient(at 20% 0%, color-mix(in oklab, var(--brand-1) 18%, transparent) 0%, transparent 50%),
+      radial-gradient(at 80% 0%, color-mix(in oklab, var(--brand-2) 12%, transparent) 0%, transparent 50%),
+      radial-gradient(at 100% 100%, color-mix(in oklab, var(--brand-5) 14%, transparent) 0%, transparent 50%),
+      radial-gradient(at 0% 100%, color-mix(in oklab, var(--brand-3) 10%, transparent) 0%, transparent 50%);
+    background-attachment: fixed;
+    pointer-events: none;
+    opacity: light-dark(0.6, 0.5);
+    animation: gradient-shift 20s ease-in-out infinite alternate;
+  }
+  @keyframes gradient-shift {
+    0%   { transform: translate(0, 0) scale(1); }
+    50%  { transform: translate(-2%, 1%) scale(1.05); }
+    100% { transform: translate(2%, -1%) scale(1); }
+  }
+
+  /* Reading progress bar */
+  .progress-track {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: transparent;
+    z-index: 1000;
+  }
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--brand-1), var(--brand-2), var(--brand-3));
+    transform-origin: left;
+    transform: scaleX(0);
+    box-shadow: 0 0 12px var(--brand-1);
+  }
+  @supports (animation-timeline: scroll()) {
+    .progress-bar {
+      animation: progress linear;
+      animation-timeline: scroll();
+      transform: scaleX(0);
+    }
+    @keyframes progress { to { transform: scaleX(1); } }
+  }
+
+  /* Top bar */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: color-mix(in oklab, var(--bg) 80%, transparent);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .brand-mark {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: -.01em;
+  }
+  .brand-dot {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    background: linear-gradient(135deg, var(--brand-1), var(--brand-2));
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand-1) 20%, transparent);
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  /* chip + pulse + pins mark — same icon as the docs hub favicon */
+  .brand-dot::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    background: white;
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+
+  /* back-to-hub link in topbar */
+  .back-to-hub {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    margin-right: 4px;
+  }
+  .back-to-hub:hover { background: var(--surface-2); color: var(--brand-1); }
+  .back-to-hub .arrow { font-size: 14px; line-height: 1; }
+  .brand-meta {
+    color: var(--text-dim);
+    font-size: 12px;
+    font-weight: 400;
+    margin-left: auto;
+  }
+
+  /* Search */
+  .search-box {
+    flex: 1;
+    max-width: 320px;
+    position: relative;
+  }
+  .search-input {
+    width: 100%;
+    padding: 8px 12px 8px 34px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .search-input:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 18%, transparent);
+  }
+  .search-icon {
+    position: absolute;
+    left: 11px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    height: 14px;
+    color: var(--text-dim);
+    pointer-events: none;
+  }
+
+  /* Theme toggle */
+  .theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .theme-toggle button {
+    border: 0;
+    background: transparent;
+    width: 30px;
+    height: 26px;
+    border-radius: 99px;
+    cursor: pointer;
+    color: var(--text-dim);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .theme-toggle button:hover { color: var(--text); }
+  .theme-toggle button[data-active="true"] {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+  }
+  .theme-toggle svg { width: 14px; height: 14px; }
+
+  /* Layout */
+  .layout {
+    display: grid;
+    grid-template-columns: var(--toc-width) 1fr;
+    gap: 0;
+    max-width: 1500px;
+    margin: 0 auto;
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  /* TOC sidebar */
+  nav.toc {
+    position: sticky;
+    top: 64px;
+    height: calc(100vh - 64px);
+    overflow-y: auto;
+    padding: 28px 18px;
+    font-size: 13px;
+    border-right: 1px solid var(--border);
+    backdrop-filter: blur(8px);
+  }
+  nav.toc::-webkit-scrollbar { width: 6px; }
+  nav.toc::-webkit-scrollbar-thumb {
+    background: var(--surface-3);
+    border-radius: 3px;
+  }
+  nav.toc h2 {
+    margin: 0 0 16px;
+    font-size: 11px;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+  nav.toc ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    counter-reset: section;
+  }
+  nav.toc ol ol {
+    padding-left: 14px;
+    margin-top: 4px;
+    overflow: hidden;
+    max-height: 0;
+    transition: max-height var(--dur-slow) var(--ease);
+  }
+  nav.toc li {
+    margin: 2px 0;
+    position: relative;
+  }
+  nav.toc li:has(ol):has(.l1.active) > ol,
+  nav.toc li:has(.l2.active) > ol,
+  nav.toc li:has(ol):hover > ol {
+    max-height: 600px;
+  }
+  nav.toc a {
+    display: block;
+    padding: 6px 12px;
+    color: var(--text-muted);
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    border-left: 2px solid transparent;
+    transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), padding-left var(--dur-fast) var(--ease);
+    position: relative;
+  }
+  nav.toc a:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+  nav.toc a.l1 {
+    font-weight: 600;
+    color: var(--text);
+  }
+  nav.toc a.l2 {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding-left: 24px;
+  }
+  nav.toc a.active {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: color-mix(in oklab, var(--accent) 7%, transparent);
+  }
+  nav.toc a.active::before {
+    content: '';
+    position: absolute;
+    left: -2px;
+    top: 50%;
+    width: 2px;
+    height: 60%;
+    background: var(--accent);
+    transform: translateY(-50%);
+    border-radius: 2px;
+  }
+
+  /* Main */
+  main {
+    padding: 40px 56px 120px;
+    max-width: var(--content-max);
+    container-type: inline-size;
+  }
+  @media (max-width: 900px) { main { padding: 24px 20px 80px; } }
+
+  /* Cover */
+  header.cover {
+    padding: 56px 0 40px;
+    margin-bottom: 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 6px 12px;
+    border-radius: 99px;
+    background: color-mix(in oklab, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in oklab, var(--accent) 18%, transparent);
+    color: var(--accent);
+  }
+  .eyebrow::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 99px;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 30%, transparent);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: .4; }
+  }
+  header.cover h1 {
+    font-size: clamp(40px, 6vw, 64px);
+    letter-spacing: -.03em;
+    line-height: 1.05;
+    margin: 16px 0 12px;
+    background: linear-gradient(120deg,
+      var(--text) 0%,
+      var(--brand-1) 40%,
+      var(--brand-2) 70%,
+      var(--brand-3) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    background-size: 200% 100%;
+    animation: shine 8s linear infinite;
+  }
+  @keyframes shine {
+    to { background-position: 200% 0; }
+  }
+  header.cover .subtitle {
+    font-size: clamp(16px, 1.6vw, 19px);
+    color: var(--text-muted);
+    max-width: 700px;
+    margin-bottom: 32px;
+  }
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .meta-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .meta-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+  }
+  .meta-card .label {
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+  .meta-card .value {
+    margin-top: 6px;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -.01em;
+  }
+
+  /* Sections */
+  section {
+    margin: 64px 0;
+    scroll-margin-top: 80px;
+    animation: fade-in linear both;
+    animation-timeline: view();
+    animation-range: entry 10% cover 30%;
+  }
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  h2 {
+    font-size: clamp(26px, 3vw, 34px);
+    letter-spacing: -.02em;
+    font-weight: 700;
+    margin: 0 0 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+  }
+  h2 .num {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--text-dim);
+    font-weight: 500;
+    padding: 4px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    letter-spacing: 0;
+  }
+  h3 {
+    font-size: 22px;
+    letter-spacing: -.01em;
+    font-weight: 700;
+    margin: 36px 0 14px;
+    scroll-margin-top: 80px;
+  }
+  h4 {
+    font-size: 16px;
+    letter-spacing: -.005em;
+    font-weight: 600;
+    margin: 24px 0 12px;
+  }
+  h5 {
+    font-size: 13px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 20px 0 8px;
+    font-weight: 600;
+  }
+
+  p, li { color: var(--text); }
+  ul, ol { padding-left: 22px; }
+  li { margin: 6px 0; }
+  strong { font-weight: 700; color: light-dark(#000, #fff); }
+  em { font-style: italic; color: var(--accent); }
+  a { color: var(--accent); text-decoration: none; transition: color var(--dur-fast); }
+  a:hover { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+
+  /* Tables */
+  .table-wrap {
+    overflow-x: auto;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    margin: 18px 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  thead th {
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 12px 16px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+  }
+  td, th {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-soft);
+    vertical-align: top;
+  }
+  tr:last-child td, tr:last-child th { border-bottom: 0; }
+  tbody tr {
+    transition: background var(--dur-fast) var(--ease);
+  }
+  tbody tr:hover {
+    background: color-mix(in oklab, var(--accent) 5%, transparent);
+  }
+
+  /* Code */
+  code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--code-bg);
+    color: var(--secondary);
+    font-weight: 500;
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    margin: 16px 0;
+  }
+  pre code {
+    background: transparent;
+    padding: 0;
+    color: var(--text);
+    font-weight: 400;
+  }
+  .copy-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    padding: 5px 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease), color var(--dur) var(--ease), background var(--dur) var(--ease);
+  }
+  pre:hover .copy-btn { opacity: 1; }
+  .copy-btn:hover {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .copy-btn[data-copied="true"] {
+    background: var(--ok);
+    color: white;
+    border-color: var(--ok);
+    opacity: 1;
+  }
+
+  /* ASCII diagrams */
+  .ascii {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre;
+    margin: 16px 0;
+  }
+
+  /* Callouts */
+  .callout {
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin: 16px 0;
+    border-left: 3px solid;
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .callout-icon {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 3px;
+  }
+  .callout.info { border-color: var(--info); background: color-mix(in oklab, var(--info) 6%, var(--surface)); }
+  .callout.tip  { border-color: var(--tip);  background: color-mix(in oklab, var(--tip) 6%, var(--surface)); }
+  .callout.warn { border-color: var(--warn); background: color-mix(in oklab, var(--warn) 6%, var(--surface)); }
+  .callout.ok   { border-color: var(--ok);   background: color-mix(in oklab, var(--ok) 6%, var(--surface)); }
+  .callout strong:first-child { font-weight: 700; }
+
+  /* Cards / grids */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  @container (max-width: 700px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease);
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--brand-1), var(--brand-2), var(--brand-3));
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease);
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-lg);
+    border-color: color-mix(in oklab, var(--accent) 30%, var(--border));
+  }
+  .card:hover::before { opacity: 1; }
+  .card h4 { margin-top: 0; }
+
+  /* Badges & pills */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 99px;
+    font-weight: 600;
+    letter-spacing: .02em;
+  }
+  .badge.v1   { background: color-mix(in oklab, var(--ok) 12%, transparent);   color: var(--ok);     border: 1px solid color-mix(in oklab, var(--ok) 30%, transparent); }
+  .badge.v2   { background: color-mix(in oklab, var(--tip) 12%, transparent);  color: var(--tip);    border: 1px solid color-mix(in oklab, var(--tip) 30%, transparent); }
+  .badge.skip { background: color-mix(in oklab, var(--text-dim) 12%, transparent); color: var(--text-dim); border: 1px solid color-mix(in oklab, var(--text-dim) 30%, transparent); }
+  .badge.lock { background: color-mix(in oklab, var(--accent) 12%, transparent); color: var(--accent); border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent); }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 99px;
+    letter-spacing: .02em;
+  }
+  .pill-ok   { background: color-mix(in oklab, var(--ok) 16%, transparent); color: var(--ok); }
+  .pill-warn { background: color-mix(in oklab, var(--warn) 16%, transparent); color: var(--warn); }
+  .pill-info { background: color-mix(in oklab, var(--info) 16%, transparent); color: var(--info); }
+  .pill-tip  { background: color-mix(in oklab, var(--tip) 16%, transparent); color: var(--tip); }
+
+  /* Section number chip */
+  .section-num {
+    color: var(--text-dim);
+    font-weight: 500;
+    font-family: var(--font-mono);
+    font-size: 14px;
+  }
+
+  /* SVG diagram wrap */
+  .svg-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    margin: 20px 0;
+    text-align: center;
+    overflow-x: auto;
+    box-shadow: var(--shadow-sm);
+  }
+  .svg-caption {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-top: 12px;
+    font-style: italic;
+  }
+
+  /* Details / collapsible */
+  details {
+    margin: 12px 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: border-color var(--dur) var(--ease);
+  }
+  details[open] {
+    border-color: color-mix(in oklab, var(--accent) 30%, var(--border));
+  }
+  summary {
+    padding: 14px 18px;
+    cursor: pointer;
+    font-weight: 600;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    user-select: none;
+    transition: background var(--dur-fast);
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before {
+    content: '';
+    width: 0; height: 0;
+    border-style: solid;
+    border-width: 5px 0 5px 8px;
+    border-color: transparent transparent transparent var(--text-muted);
+    transition: transform var(--dur) var(--ease);
+    flex-shrink: 0;
+  }
+  details[open] summary::before { transform: rotate(90deg); }
+  summary:hover { background: var(--surface-2); }
+  details > *:not(summary) {
+    padding: 0 18px 16px;
+  }
+
+  /* Status grid */
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .status-tile {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  }
+  .status-tile:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklab, var(--accent) 30%, var(--border));
+  }
+  .status-tile .icon {
+    width: 32px; height: 32px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: color-mix(in oklab, var(--accent) 12%, transparent);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .status-tile .label {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .status-tile .desc {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: 2px;
+  }
+
+  /* Search hidden */
+  section[hidden] { display: none !important; }
+  .table-wrap tr.search-hidden { display: none; }
+
+  /* Floating tools */
+  .float-tools {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 50;
+  }
+  .float-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 99px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow);
+    transition: transform var(--dur) var(--ease), color var(--dur) var(--ease), background var(--dur) var(--ease);
+  }
+  .float-btn:hover {
+    transform: scale(1.05);
+    color: white;
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .float-btn svg { width: 18px; height: 18px; }
+  #scroll-top {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur) var(--ease);
+  }
+  #scroll-top.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Footer */
+  hr {
+    border: 0;
+    height: 1px;
+    background: var(--border);
+    margin: 40px 0;
+  }
+  footer {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-top: 40px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+  }
+
+  /* Glossary */
+  .gloss-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .gloss-item {
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    transition: border-color var(--dur);
+  }
+  .gloss-item:hover {
+    border-color: color-mix(in oklab, var(--accent) 30%, var(--border));
+  }
+  .gloss-item dt {
+    font-weight: 700;
+    margin-bottom: 4px;
+    color: var(--text);
+  }
+  .gloss-item dd {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  /* Print */
+  @media print {
+    nav.toc, .topbar, .float-tools, .progress-track, body::before { display: none !important; }
+    .layout { display: block; }
+    main { padding: 0; max-width: 100%; }
+    body { background: white; color: black; }
+    .card, table, .callout, pre, .ascii { background: white !important; box-shadow: none !important; }
+    h1 { color: black !important; -webkit-text-fill-color: black; }
+    a { color: #0366d6; }
+  }
+
+  /* Reduce motion */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+      scroll-behavior: auto !important;
+    }
+  }
+</style>
+</head>
+<body>
+
+<!-- Reading progress -->
+<div class="progress-track"><div class="progress-bar"></div></div>
+
+<!-- Top bar -->
+<div class="topbar">
+  <a class="back-to-hub" href="/" id="back-to-hub" title="Back to docs hub">
+    <span class="arrow" aria-hidden="true">←</span>
+    <span>edevkit</span>
+  </a>
+  <div class="brand-mark">
+    <div class="brand-dot"></div>
+    <span>edevkit1</span>
+    <span class="brand-meta">design spec</span>
+  </div>
+  <div class="search-box">
+    <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    <input id="search" type="search" class="search-input" placeholder="Search sections… (⌘ K)" />
+  </div>
+  <div class="theme-toggle" role="radiogroup" aria-label="Theme">
+    <button data-theme-set="light" title="Light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M5 5l1.5 1.5M17.5 17.5L19 19M2 12h2M20 12h2M5 19l1.5-1.5M17.5 6.5L19 5"/></svg></button>
+    <button data-theme-set="auto" title="Auto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></svg></button>
+    <button data-theme-set="dark" title="Dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+  </div>
+</div>
+
+<div class="layout">
+
+<nav class="toc" aria-label="Document outline">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#summary" class="l1">1. Executive Summary</a></li>
+    <li><a href="#goals" class="l1">2. Goals &amp; Use Cases</a></li>
+    <li><a href="#features" class="l1">3. Feature Set</a>
+      <ol>
+        <li><a href="#features-v1" class="l2">v1 scope</a></li>
+        <li><a href="#features-v2" class="l2">v2 / deferred</a></li>
+      </ol>
+    </li>
+    <li><a href="#architecture" class="l1">4. System Architecture</a></li>
+    <li><a href="#hardware" class="l1">5. Hardware Design</a>
+      <ol>
+        <li><a href="#hw-mcu" class="l2">5.1 MCU choice</a></li>
+        <li><a href="#hw-pio" class="l2">5.2 PIO budget</a></li>
+        <li><a href="#hw-gpio" class="l2">5.3 GPIO assignment</a></li>
+        <li><a href="#hw-connectors" class="l2">5.4 Connectors</a></li>
+        <li><a href="#hw-shifter" class="l2">5.5 Level shifters</a></li>
+        <li><a href="#hw-power" class="l2">5.6 Power architecture</a></li>
+        <li><a href="#hw-memory" class="l2">5.7 Memory / flash</a></li>
+        <li><a href="#hw-userio" class="l2">5.8 User I/O</a></li>
+        <li><a href="#hw-protect" class="l2">5.9 Protection</a></li>
+        <li><a href="#hw-pcb" class="l2">5.10 PCB stackup</a></li>
+        <li><a href="#hw-bom" class="l2">5.11 BOM</a></li>
+      </ol>
+    </li>
+    <li><a href="#firmware" class="l1">6. Firmware Design</a>
+      <ol>
+        <li><a href="#fw-zephyr" class="l2">6.1 Zephyr RTOS</a></li>
+        <li><a href="#fw-smp" class="l2">6.2 Multicore SMP</a></li>
+        <li><a href="#fw-pio" class="l2">6.3 PIO programs</a></li>
+        <li><a href="#fw-cmsis-dap" class="l2">6.4 CMSIS-DAP v2</a></li>
+        <li><a href="#fw-mcuboot" class="l2">6.5 MCUboot &amp; OTA</a></li>
+        <li><a href="#fw-emulation" class="l2">6.6 Device emulation</a></li>
+        <li><a href="#fw-features" class="l2">6.7 Other features</a></li>
+      </ol>
+    </li>
+    <li><a href="#host" class="l1">7. Host Tooling</a>
+      <ol>
+        <li><a href="#host-gui" class="l2">7.1 Tauri GUI</a></li>
+        <li><a href="#host-cli" class="l2">7.2 CLI</a></li>
+      </ol>
+    </li>
+    <li><a href="#mechanical" class="l1">8. Mechanical / Enclosure</a></li>
+    <li><a href="#manufacturing" class="l1">9. PCB Manufacturing</a></li>
+    <li><a href="#workflow" class="l1">10. Dev Workflow</a></li>
+    <li><a href="#schedule" class="l1">11. Schedule &amp; Effort</a></li>
+    <li><a href="#zephyr-gaps" class="l1">12. Zephyr-vs-pico-sdk Gaps</a></li>
+    <li><a href="#riscv" class="l1">13. RISC-V Support</a></li>
+    <li><a href="#risk" class="l1">14. Risk Register</a></li>
+    <li><a href="#decisions" class="l1">15. Decision Log</a></li>
+    <li><a href="#glossary" class="l1">16. Glossary</a></li>
+    <li><a href="#references" class="l1">17. References</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<header class="cover">
+  <span class="eyebrow">Open-source design specification</span>
+  <h1>edevkit1</h1>
+  <div class="subtitle">Embedded Developer Kit, Version 1 — a single-board ARM/RISC-V debug probe, multi-protocol tester, and device emulator. Built on RP2350B + Zephyr RTOS.</div>
+  <div class="meta-grid">
+    <div class="meta-card"><div class="label">Author</div><div class="value">Yogesh M. Iggalore</div></div>
+    <div class="meta-card"><div class="label">License</div><div class="value">Open source</div></div>
+    <div class="meta-card"><div class="label">Date</div><div class="value">2026-04-29</div></div>
+    <div class="meta-card"><div class="label">Status</div><div class="value">Spec lock — v1</div></div>
+    <div class="meta-card"><div class="label">Target ship</div><div class="value">~5 months</div></div>
+    <div class="meta-card"><div class="label">Cost @ qty 100</div><div class="value">~$33 / unit</div></div>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<section id="summary" data-search-text="executive summary overview features locked v1 v2">
+<h2><span class="num">01</span>Executive Summary</h2>
+
+<p><strong>edevkit1</strong> is an open-source embedded development tool that combines on a single board:</p>
+
+<div class="status-grid">
+  <div class="status-tile">
+    <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L18 6 L18 18 L12 22 L6 18 L6 6 Z"/></svg></div>
+    <div><div class="label">Debug probe</div><div class="desc">CMSIS-DAP v2 — SWD &amp; JTAG for ARM Cortex + RISC-V</div></div>
+  </div>
+  <div class="status-tile">
+    <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M9 7l-6 5 6 5M15 7l6 5-6 5"/></svg></div>
+    <div><div class="label">SWO trace</div><div class="desc">Real-time ITM/printf trace from CoreSight</div></div>
+  </div>
+  <div class="status-tile">
+    <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v6H4zM4 14h16v6H4z"/></svg></div>
+    <div><div class="label">Dual UART</div><div class="desc">Target log + dev/test, independent voltage domains</div></div>
+  </div>
+  <div class="status-tile">
+    <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l5 5"/></svg></div>
+    <div><div class="label">I²C tester</div><div class="desc">Master / slave / sniffer at any address</div></div>
+  </div>
+  <div class="status-tile">
+    <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg></div>
+    <div><div class="label">SPI / DSPI / QSPI</div><div class="desc">All modes, master/slave/sniffer, up to 50 MHz</div></div>
+  </div>
+  <div class="status-tile">
+    <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v16m8-8H4"/></svg></div>
+    <div><div class="label">Device emulator</div><div class="desc">Fake flash, sensors, AT modems via YAML profiles</div></div>
+  </div>
+  <div class="status-tile">
+    <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V8H3v8h12"/><path d="m17 17 4-4-4-4"/></svg></div>
+    <div><div class="label">USB-C composite</div><div class="desc">CMSIS-DAP + 4× CDC + WebUSB on one cable</div></div>
+  </div>
+  <div class="status-tile">
+    <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg></div>
+    <div><div class="label">Tauri GUI + CLI</div><div class="desc">Cross-platform, scriptable, OTA-updatable</div></div>
+  </div>
+</div>
+
+<p>Built around the <strong>RP2350B</strong> (Cortex-M33 dual-core, 12 PIO state machines, 520 KB SRAM) running <strong>Zephyr RTOS 4.x</strong> with <strong>MCUboot</strong> for OTA updates over USB. Firmware delivers all protocols using PIO programs for wire-level timing, with HW UARTs for the two UART channels.</p>
+
+<div class="callout tip">
+  <div class="callout-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg></div>
+  <div><strong>Why build instead of buy?</strong> A J-Link Plus + Saleae Logic + Total Phase Aardvark + custom emulator scripts costs ~$1,500 per engineer and still doesn't integrate. edevkit1 hits ~$33/unit BOM, single tool, single GUI — and the device-emulation feature isn't in any off-the-shelf product.</div>
+</div>
+
+<h3>What's locked in for v1</h3>
+<div class="grid-2">
+  <div class="card">
+    <h4>Hardware</h4>
+    <ul>
+      <li>RP2350B (QFN-80, 48 GPIO)</li>
+      <li>16 MB boot flash + 128 MB data flash</li>
+      <li>Mixed level shifters (LVC8T245 + TXS0108E + LVC1T45)</li>
+      <li>TPS25940 eFuse on Vtgt (programmable current limit)</li>
+      <li>USB-C (FS) with common-mode choke + ESD</li>
+      <li>WS2812 LED chain, 4 buttons via ADC ladder, buzzer</li>
+      <li>4-layer FR4 PCB, 60 × 85 mm, ENIG, controlled impedance</li>
+      <li>3D-printed PETG enclosure</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>Firmware</h4>
+    <ul>
+      <li>Zephyr 4.x with USB-Device-Next composite</li>
+      <li>SMP across both Cortex-M33 cores</li>
+      <li>CMSIS-DAP v2 (SWD/JTAG/SWO)</li>
+      <li>MCUboot, ECDSA-P256 signed images, swap &amp; revert</li>
+      <li>SMP server over USB CDC for OTA</li>
+      <li>YAML-based device emulation engine</li>
+      <li>LittleFS for configs &amp; calibration</li>
+      <li>Per-unit serial from RP2350 chip ID</li>
+      <li>Hardware watchdog + panic dump capture</li>
+    </ul>
+  </div>
+</div>
+
+<h3>What's deferred to v2</h3>
+<div class="card">
+  <ul>
+    <li><span class="badge v2">v2</span> 8-channel logic analyser (sigrok-compatible via SUMP protocol)</li>
+    <li><span class="badge v2">v2</span> CAN, RS-485</li>
+    <li><span class="badge v2">v2</span> USB-C PD high-current target power</li>
+    <li><span class="badge v2">v2</span> cJTAG &amp; WCH SWIO RISC-V wire protocols</li>
+    <li><span class="badge v2">v2</span> Standalone OLED + rotary encoder</li>
+    <li><span class="badge v2">v2</span> Manchester-encoded SWO; ETM/parallel trace</li>
+    <li><span class="badge v2">v2</span> Multi-target switch (debug 2 boards from one probe)</li>
+  </ul>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="goals" data-search-text="goals use cases workflow nrf52 esp32 stm32 sensor flash bootloader">
+<h2><span class="num">02</span>Goals &amp; Use Cases</h2>
+
+<h3>Primary goals</h3>
+<ol>
+  <li><strong>One tool on every engineer's desk.</strong> Replace a pile of debugger + scope + logic-analyser + protocol-bridge boxes with a single integrated device.</li>
+  <li><strong>Unified host experience.</strong> Debug, log, sniff, emulate — all in one GUI with shared timeline and correlated events.</li>
+  <li><strong>Test drivers without real hardware.</strong> The device-emulation engine lets developers exercise their I²C / SPI / UART driver code against fake-but-realistic peripherals before the actual silicon arrives.</li>
+  <li><strong>OTA-updatable.</strong> New device profiles, new emulation models, new protocol modes shipped without re-flashing via probe.</li>
+  <li><strong>Open hardware.</strong> KiCad source, Zephyr firmware, Tauri GUI — all in git, all reproducible, all maintainable by the community.</li>
+</ol>
+
+<h3>Target use cases</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Scenario</th><th>How edevkit1 helps</th></tr></thead>
+<tbody>
+<tr><td>Bringing up new ring firmware on nRF52</td><td>SWD flash + SWO log + simultaneous I²C sniff of LSM6DSOX traffic, all in one GUI</td></tr>
+<tr><td>Validating a new I²C sensor driver before silicon arrives</td><td>Emulate the sensor with a YAML profile + replay recorded waveform data</td></tr>
+<tr><td>Debugging a stuck SPI flash bootloader</td><td>Emulate W25Q128 with controllable response delays and error injection</td></tr>
+<tr><td>Testing GPS / modem AT-command parser</td><td>Emulate ESP-AT or NMEA GPS, replay GPX route file, inject random response failures</td></tr>
+<tr><td>Stress-testing a host MCU's QSPI driver</td><td>Configure as QSPI slave, exercise all 4 modes, vary clock 1–50 MHz</td></tr>
+<tr><td>Field-debugging at a customer site</td><td>One USB-powered tool in a pocket, no laptop full of accessories</td></tr>
+<tr><td>Manufacturing line — programming target boards</td><td>SWD probe + standalone LED status; later field-flasher via data flash</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="features" data-search-text="feature list scope deferred">
+<h2><span class="num">03</span>Feature Set</h2>
+
+<h3 id="features-v1">3.1 v1 scope</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Feature</th><th>Detail</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>CMSIS-DAP v2 debug</td><td>SWD + JTAG mode-mux on same Cortex Debug header. Up to 25 MHz SWCLK / TCK. SWO RX (UART encoding, up to 6 Mbps).</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>RISC-V debug</td><td>JTAG passthrough — works for ESP32-C3/C6/H2, RP2350 Hazard3, SiFive, K210, GD32V via probe-rs / OpenOCD.</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Target log UART (CDC bridge)</td><td>RP2350 hardware UART0, Vtgt-domain level shifter, 6 Mbaud max</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Test UART (developer's circuit)</td><td>RP2350 hardware UART1, Vio-domain level shifter, full bidirectional, configurable baud / parity / stop / flow</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>I²C (master / slave / sniffer)</td><td>PIO1 SM0. 100 kHz – 3.4 MHz. Configurable address; sniff while master/slave runs.</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>SPI / DSPI / QSPI (master / slave / sniffer)</td><td>PIO1 SM1 (+ SM2 for QSPI). Up to 50 MHz QSPI master, 25 MHz QSPI slave. All modes (CPHA/CPOL).</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Device emulation engine</td><td>YAML-driven profiles. Built-in: W25Qxx flash, common I²C sensors, modems (ESP-AT, SIM7000, NMEA GPS).</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>OTA firmware updates</td><td>MCUboot bootloader + SMP server over USB CDC; ECDSA-P256 signed; swap-and-revert</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Persistent device profiles</td><td>LittleFS partition on boot flash, ~2 MB</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Emulation backing store</td><td>Dedicated 128 MB QSPI data flash, raw block device</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Per-unit serial &amp; calibration</td><td>RP2350 64-bit chip ID → human serial; ADC cal stored in LittleFS</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Manufacturing self-test mode</td><td>Hold button-1 at boot → sequential HW tests, pass/fail report</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Voltage / current sensing</td><td>Vtgt sense ADC, target current via INA180; eFuse limits 250 mA default</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>User I/O</td><td>4 buttons (ADC ladder), 8 WS2812 status LEDs, 1 RGB LED, buzzer (mutable)</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Tauri GUI + Rust CLI</td><td>Cross-platform; built on probe-rs; SMP client integrated for updates</td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>3D-printed PETG enclosure</td><td>Two-shell clamshell, M2.5 heat-set inserts, TPU buttons + feet</td><td><span class="pill pill-ok">v1</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="features-v2">3.2 Deferred to v2</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Feature</th><th>Reason for deferral</th></tr></thead>
+<tbody>
+<tr><td>8-ch logic analyser, sigrok / SUMP-compatible, 50 MHz × 256 KB</td><td>~6 weeks engineering; LA need is intermittent; v1 hardware leaves PIO2 + 12 GPIO free for clean v2 firmware add</td></tr>
+<tr><td>USB-C PD high-current target power</td><td>Adds PD controller + back-EMF protection; useful but not v1-critical</td></tr>
+<tr><td>CAN bus, RS-485</td><td>Need PHYs (SN65HVD230 / SN65HVD3082); fits via v1 expansion header</td></tr>
+<tr><td>cJTAG (compact JTAG, 2-pin)</td><td>None of our common targets need it</td></tr>
+<tr><td>WCH SWIO RISC-V (CH32V)</td><td>WCH chips not in our hardware stack</td></tr>
+<tr><td>Standalone OLED display + rotary encoder</td><td>GUI handles status; LEDs + buttons enough for v1</td></tr>
+<tr><td>Manchester-encoded SWO</td><td>UART-encoded SWO covers Cortex-M; Manchester is uncommon</td></tr>
+<tr><td>ETM / parallel trace</td><td>Requires HSTX peripheral driver in Zephyr (not yet) + ribbon connector</td></tr>
+<tr><td>Multi-target switch</td><td>Single Cortex Debug header in v1; v2 could add a TC2030 selector mux</td></tr>
+<tr><td>Real-time LA streaming &gt; 12 MS/s</td><td>USB-FS bandwidth limited; would need USB-HS MCU or external buffer SRAM</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="architecture" data-search-text="system architecture diagram block">
+<h2><span class="num">04</span>System Architecture</h2>
+
+<p>The host computer (developer's laptop) connects to edevkit1 over a single USB-C cable. The edevkit1 firmware exposes a USB composite device with multiple endpoints, each serving a different logical role. On the target side, edevkit1 has separate physical connectors per protocol, each electrically isolated and voltage-tolerant via dedicated level shifters.</p>
+
+<div class="svg-wrap">
+<svg width="100%" viewBox="0 0 900 480" xmlns="http://www.w3.org/2000/svg" style="max-width:900px">
+<defs>
+  <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+  </marker>
+  <linearGradient id="brand-grad" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%"   stop-color="oklch(56% 0.16 215)"/>
+    <stop offset="60%"  stop-color="oklch(50% 0.18 235)"/>
+    <stop offset="100%" stop-color="oklch(72% 0.15 70)"/>
+  </linearGradient>
+</defs>
+<style>
+  .svg-bg { fill: var(--surface); stroke: var(--border); stroke-width:1.5; }
+  .svg-bg2 { fill: var(--surface-2); stroke: var(--border); stroke-width:1.5; }
+  .svg-acc { stroke: url(#brand-grad); stroke-width: 2; }
+  .svg-text { fill: var(--text); font: 600 13px var(--font-sans); }
+  .svg-label { fill: var(--text); font: 12px var(--font-sans); }
+  .svg-small { fill: var(--text-muted); font: 10.5px var(--font-sans); }
+  .svg-arrow { stroke: var(--text-muted); stroke-width: 1.5; fill: none; }
+</style>
+
+<rect x="20" y="40" width="180" height="100" rx="10" class="svg-bg"/>
+<text x="110" y="60" text-anchor="middle" class="svg-text">Host (laptop)</text>
+<text x="110" y="80" text-anchor="middle" class="svg-label">Tauri GUI</text>
+<text x="110" y="98" text-anchor="middle" class="svg-label">edevkit-cli</text>
+<text x="110" y="116" text-anchor="middle" class="svg-label">probe-rs / OpenOCD</text>
+<text x="110" y="132" text-anchor="middle" class="svg-label">mcumgr</text>
+
+<line x1="200" y1="90" x2="280" y2="90" class="svg-arrow" marker-end="url(#arr)" marker-start="url(#arr)"/>
+<text x="240" y="82" text-anchor="middle" class="svg-small">USB-C (FS)</text>
+
+<rect x="280" y="20" width="430" height="430" rx="14" class="svg-bg svg-acc"/>
+<text x="495" y="42" text-anchor="middle" class="svg-text">edevkit1 — RP2350B + Zephyr</text>
+
+<rect x="300" y="60" width="180" height="160" rx="8" class="svg-bg2"/>
+<text x="390" y="80" text-anchor="middle" class="svg-text">USB Composite Device</text>
+<text x="310" y="100" class="svg-small">CMSIS-DAP HID + Bulk</text>
+<text x="310" y="116" class="svg-small">CMSIS-DAP SWO Bulk</text>
+<text x="310" y="132" class="svg-small">CDC ACM #1: target-uart</text>
+<text x="310" y="148" class="svg-small">CDC ACM #2: test-uart</text>
+<text x="310" y="164" class="svg-small">CDC ACM #3: shell + SMP</text>
+<text x="310" y="180" class="svg-small">WebUSB: protocol ctrl</text>
+<text x="310" y="200" class="svg-small">CDC ACM #4: edevkit log</text>
+
+<rect x="500" y="60" width="190" height="80" rx="8" class="svg-bg2"/>
+<text x="595" y="80" text-anchor="middle" class="svg-text">Cortex-M33 #0</text>
+<text x="510" y="98" class="svg-small">USB stack</text>
+<text x="510" y="114" class="svg-small">CMSIS-DAP dispatcher</text>
+<text x="510" y="130" class="svg-small">SWO bulk pump</text>
+
+<rect x="500" y="155" width="190" height="80" rx="8" class="svg-bg2"/>
+<text x="595" y="175" text-anchor="middle" class="svg-text">Cortex-M33 #1</text>
+<text x="510" y="193" class="svg-small">Protocol engines</text>
+<text x="510" y="209" class="svg-small">Emulators</text>
+<text x="510" y="225" class="svg-small">Sniffer drains</text>
+
+<rect x="300" y="240" width="390" height="200" rx="8" class="svg-bg2"/>
+<text x="495" y="260" text-anchor="middle" class="svg-text">Front-panel connectors (level-shifted)</text>
+
+<rect x="320" y="280" width="100" height="44" rx="6" fill="oklch(56% 0.16 215 / 0.08)" stroke="oklch(56% 0.16 215)"/>
+<text x="370" y="298" text-anchor="middle" class="svg-label">Cortex Debug</text>
+<text x="370" y="314" text-anchor="middle" class="svg-small">SWD/JTAG/SWO</text>
+
+<rect x="430" y="280" width="100" height="44" rx="6" fill="oklch(56% 0.16 215 / 0.08)" stroke="oklch(56% 0.16 215)"/>
+<text x="480" y="298" text-anchor="middle" class="svg-label">TC2030</text>
+<text x="480" y="314" text-anchor="middle" class="svg-small">tag-connect</text>
+
+<rect x="540" y="280" width="120" height="44" rx="6" fill="rgba(16,185,129,.06)" stroke="#10b981"/>
+<text x="600" y="298" text-anchor="middle" class="svg-label">Target UART</text>
+<text x="600" y="314" text-anchor="middle" class="svg-small">printf bridge</text>
+
+<rect x="320" y="340" width="100" height="44" rx="6" fill="oklch(60% 0.18 290 / 0.08)" stroke="oklch(60% 0.18 290)"/>
+<text x="370" y="358" text-anchor="middle" class="svg-label">Test UART</text>
+<text x="370" y="374" text-anchor="middle" class="svg-small">dev's circuit</text>
+
+<rect x="430" y="340" width="100" height="44" rx="6" fill="oklch(60% 0.18 290 / 0.08)" stroke="oklch(60% 0.18 290)"/>
+<text x="480" y="358" text-anchor="middle" class="svg-label">I²C</text>
+<text x="480" y="374" text-anchor="middle" class="svg-small">M/S/sniff</text>
+
+<rect x="540" y="340" width="120" height="44" rx="6" fill="oklch(60% 0.18 290 / 0.08)" stroke="oklch(60% 0.18 290)"/>
+<text x="600" y="358" text-anchor="middle" class="svg-label">SPI/DSPI/QSPI</text>
+<text x="600" y="374" text-anchor="middle" class="svg-small">M/S/sniff</text>
+
+<rect x="430" y="400" width="100" height="32" rx="6" fill="oklch(72% 0.15 70 / 0.10)" stroke="oklch(72% 0.15 70)"/>
+<text x="480" y="420" text-anchor="middle" class="svg-small">Vtgt eFuse + sense</text>
+
+<rect x="740" y="240" width="140" height="200" rx="10" class="svg-bg"/>
+<text x="810" y="260" text-anchor="middle" class="svg-text">Developer's</text>
+<text x="810" y="278" text-anchor="middle" class="svg-text">target board /</text>
+<text x="810" y="296" text-anchor="middle" class="svg-text">circuit / sensor</text>
+<text x="810" y="332" text-anchor="middle" class="svg-small">nRF52, ESP32, STM32,</text>
+<text x="810" y="348" text-anchor="middle" class="svg-small">RISC-V, sensors,</text>
+<text x="810" y="364" text-anchor="middle" class="svg-small">flash chips, modems</text>
+
+<line x1="660" y1="330" x2="740" y2="330" class="svg-arrow" marker-end="url(#arr)"/>
+</svg>
+<div class="svg-caption">Figure 4.1 — edevkit1 system architecture: host ↔ USB ↔ RP2350B ↔ level-shifted protocol headers ↔ developer target.</div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="hardware" data-search-text="hardware design rp2350 mcu pio gpio connectors level shifter power memory flash protection pcb stackup bom">
+<h2><span class="num">05</span>Hardware Design</h2>
+
+<h3 id="hw-mcu">5.1 MCU choice — RP2350B</h3>
+
+<div class="grid-2">
+<div class="card">
+<h4>Why RP2350B (not RP2350A)</h4>
+<ul>
+<li><strong>48 GPIO</strong> (vs 30 on RP2350A) — needed for our pin budget</li>
+<li>QFN-80, 10 × 10 mm (vs 60-QFN, 7 × 7 mm)</li>
+<li>~$0.50 cost premium, negligible</li>
+<li>Same dual Cortex-M33 + Hazard3 RV32, same 12 PIO state machines, same 520 KB SRAM</li>
+</ul>
+</div>
+<div class="card">
+<h4>Why RP2350 family (not STM32 / nRF / etc.)</h4>
+<ul>
+<li><strong>12 PIO state machines</strong> — every protocol gets its own dedicated bit-banger; no fighting for hardware peripherals</li>
+<li>Dual Cortex-M33 @ 150 MHz with TrustZone — fast, supports SMP cleanly</li>
+<li>520 KB SRAM — large ring buffers for sniffer, SWO, SMP</li>
+<li>Cheap (~$2 in qty 100); strong supply</li>
+<li>Mature pico-sdk + Zephyr support; large community</li>
+<li>Open silicon ethos aligns with open-hardware project</li>
+</ul>
+</div>
+</div>
+
+<details>
+<summary>Full RP2350B specifications</summary>
+<div class="table-wrap">
+<table>
+<tbody>
+<tr><th>Parameter</th><th>Value</th></tr>
+<tr><td>CPU</td><td>2× Cortex-M33 @ 150 MHz, FPU, TrustZone, ETM</td></tr>
+<tr><td>Alt. CPU</td><td>2× Hazard3 RV32IMACB (RISC-V) — selectable at boot</td></tr>
+<tr><td>SRAM</td><td>520 KB (10 banks, supports SMP)</td></tr>
+<tr><td>External flash</td><td>QSPI XIP up to 16 MB (W25Q128)</td></tr>
+<tr><td>PIO blocks</td><td>3 × 4 state machines = 12 SMs</td></tr>
+<tr><td>USB</td><td>USB 1.1 FS (12 Mbps), device + host</td></tr>
+<tr><td>HW peripherals</td><td>2× UART, 2× SPI, 2× I²C, 4× ADC inputs, 24× PWM, 16× DMA, RTC, watchdog, HSTX</td></tr>
+<tr><td>GPIO (RP2350B)</td><td>48 (with 4× ADC-capable)</td></tr>
+<tr><td>Package</td><td>80-QFN 10 × 10 mm, 0.4 mm pitch</td></tr>
+</tbody>
+</table>
+</div>
+</details>
+
+<h3 id="hw-pio">5.2 PIO state-machine budget</h3>
+<p>RP2350 has <strong>3 PIO blocks × 4 state machines = 12 SMs total</strong>. Allocation for v1:</p>
+
+<div class="ascii">PIO0 (debug + low-rate proto)        PIO1 (high-rate protocol tester)     PIO2 (reserved for v2)
+  SM0  →  SWD / JTAG (mode mux)        SM0  →  I²C (master/slave/sniff)     SM0  →  free / v2 LA ch0–3
+  SM1  →  SWO RX (UART decode)         SM1  →  SPI / DSPI / QSPI primary    SM1  →  free / v2 LA ch4–7
+  SM2  →  WS2812 LED chain             SM2  →  QSPI partner (CLK + CS)      SM2  →  free / v2 trigger
+  SM3  →  free                         SM3  →  Sniffer (concurrent w/ M/S)  SM3  →  free / v2 timestamp</div>
+
+<div class="callout info">
+  <div class="callout-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg></div>
+  <div><strong>Why this is roomy.</strong> Earlier drafts crammed everything into 2 PIO blocks and ran out. With LA deferred to v2 (whole PIO2 free) and SPI/QSPI mode-shared (one connector, mode-select), there are 5 free SMs in v1 — plenty of headroom for protocol sniffer concurrency, runtime profile changes, and v2 features without re-spinning hardware.</div>
+</div>
+
+<h3 id="hw-gpio">5.3 GPIO assignment (RP2350B, 48 GPIO)</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>GPIO</th><th>Function</th><th>Peripheral</th></tr></thead>
+<tbody>
+<tr><td>GPIO0–1</td><td>Target UART TX / RX</td><td>HW UART0</td></tr>
+<tr><td>GPIO2–3</td><td>Test UART TX / RX</td><td>HW UART1</td></tr>
+<tr><td>GPIO4–5</td><td>I²C SDA / SCL</td><td>PIO1 SM0</td></tr>
+<tr><td>GPIO6–11</td><td>SPI/QSPI SCK + nCS + IO0..IO3</td><td>PIO1 SM1+SM2</td></tr>
+<tr><td>GPIO12–13</td><td>SWCLK / SWDIO (TCK / TMS in JTAG mode)</td><td>PIO0 SM0</td></tr>
+<tr><td>GPIO14</td><td>SWO / TDO (input)</td><td>PIO0 SM1</td></tr>
+<tr><td>GPIO15</td><td>TDI (JTAG mode)</td><td>PIO0 SM0</td></tr>
+<tr><td>GPIO16</td><td>nRESET (open-drain)</td><td>GPIO</td></tr>
+<tr><td>GPIO17</td><td>Vtgt sense</td><td>ADC0</td></tr>
+<tr><td>GPIO18–23</td><td>Data flash QSPI (SCK/IO0..3/nCS)</td><td>HW SPI1 + GPIO</td></tr>
+<tr><td>GPIO24–27</td><td>Level-shifter DIR + OE</td><td>GPIO</td></tr>
+<tr><td>GPIO28–29</td><td>Vio select + target power switch</td><td>GPIO</td></tr>
+<tr><td>GPIO30–32</td><td>Vio sense, target current sense, VBUS sense</td><td>ADC1, ADC2, ADC3</td></tr>
+<tr><td>GPIO33</td><td>WS2812 LED chain data</td><td>PIO0 SM2</td></tr>
+<tr><td>GPIO34</td><td>Buzzer (PWM)</td><td>PWM</td></tr>
+<tr><td>GPIO35</td><td>Button matrix (4 buttons via ADC ladder)</td><td>ADC4</td></tr>
+<tr><td>GPIO36–47</td><td>Reserved — v2 expansion (LA, CAN, RS-485, second debug)</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+<p>Used: <strong>36 / 48</strong>. Spare: <strong>12</strong>. Comfortable headroom for v2.</p>
+
+<h3 id="hw-connectors">5.4 Connectors (front panel)</h3>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Group</th><th>Connector</th><th>Pins</th><th>Vio domain</th></tr></thead>
+<tbody>
+<tr><td rowspan="3"><strong>Debug</strong></td><td>Cortex Debug 1.27 mm 2×5</td><td>SWCLK, SWDIO, SWO, RST, TDI (JTAG), Vtgt, GND</td><td>Vtgt</td></tr>
+<tr><td>TC2030-IDC tag-connect (6-pin)</td><td>SWCLK, SWDIO, RST, Vtgt, GND, KEY</td><td>Vtgt</td></tr>
+<tr><td>Target UART 2.54 mm 1×4</td><td>RX, TX, Vtgt, GND</td><td>Vtgt</td></tr>
+<tr><td rowspan="3"><strong>Protocol Test</strong></td><td>Test UART 2.54 mm 1×4</td><td>RX, TX, Vio, GND</td><td>Vio (1.8/3.3 V)</td></tr>
+<tr><td>I²C 2.54 mm 1×4</td><td>SDA, SCL, Vio, GND</td><td>Vio</td></tr>
+<tr><td>SPI / DSPI / QSPI 2.54 mm 1×8</td><td>SCK, IO0, IO1, IO2, IO3, nCS, Vio, GND</td><td>Vio</td></tr>
+<tr><td><strong>Power</strong></td><td>USB-C receptacle</td><td>VBUS + D+/D-</td><td>5 V in</td></tr>
+<tr><td><strong>v2 expansion</strong></td><td>1×8 SMD header (rear edge)</td><td>6 spare GPIOs + 3.3V + GND</td><td>3.3V</td></tr>
+</tbody>
+</table>
+</div>
+
+<h4>SPI/DSPI/QSPI mode-shared pinout</h4>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Pin</th><th>SPI (1-bit)</th><th>DSPI (2-bit)</th><th>QSPI (4-bit)</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>SCK</td><td>SCK</td><td>SCK</td></tr>
+<tr><td>2</td><td>MOSI</td><td>IO0 (bi-dir)</td><td>IO0</td></tr>
+<tr><td>3</td><td>MISO</td><td>IO1 (bi-dir)</td><td>IO1</td></tr>
+<tr><td>4</td><td>nCS</td><td>nCS</td><td>nCS</td></tr>
+<tr><td>5</td><td>(free / IRQ)</td><td>(free / IRQ)</td><td>IO2</td></tr>
+<tr><td>6</td><td>(free / WP)</td><td>(free / WP)</td><td>IO3</td></tr>
+<tr><td>7</td><td>Vio</td><td>Vio</td><td>Vio</td></tr>
+<tr><td>8</td><td>GND</td><td>GND</td><td>GND</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="hw-shifter">5.5 Level shifters</h3>
+
+<p>Two shifter families used, picked by speed and direction need:</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Use</th><th>Part</th><th>Channels</th><th>Direction</th><th>Max speed</th></tr></thead>
+<tbody>
+<tr><td>SWD/JTAG, SPI/QSPI (high speed, bidirectional)</td><td>SN74LVC8T245</td><td>8</td><td>Explicit DIR pin</td><td>~150 MHz</td></tr>
+<tr><td>I²C (open-drain, bidirectional)</td><td>TXS0108E</td><td>8</td><td>Auto-direction</td><td>~50 MHz</td></tr>
+<tr><td>UART (RX, TX unidirectional)</td><td>SN74LVC1T45</td><td>1 each</td><td>Static DIR (tied)</td><td>~150 MHz</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Mixed strategy keeps cost down (auto-dir is cheaper to drive but slower; explicit DIR is more PCB-area but faster).</p>
+
+<div class="callout warn">
+<div class="callout-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L22 22 L2 22 Z"/><path d="M12 9v4M12 17h.01"/></svg></div>
+<div><strong>Vtgt vs Vio domains.</strong> Debug header references <em>target's voltage</em> (Vtgt) — auto-detected via ADC. Protocol test headers reference <em>edevkit-selected Vio</em> (1.8 / 3.3 V) — set by user in GUI. <strong>These are independent domains</strong>, intentionally — your target can be 1.8 V while the I²C device under test is 3.3 V, and vice versa.</div>
+</div>
+
+<h3 id="hw-power">5.6 Power architecture</h3>
+
+<div class="ascii">USB-C VBUS (5 V, 500 mA host budget)
+   │
+   ├──► Common-mode choke (Würth 744232090) ──► USB D+/D- to RP2350
+   │
+   ├──► ESD protection (USBLC6-2)
+   │
+   └──► TPS62933 buck (5V → 3.3V, 2A)
+          │
+          ├──► RP2350 + flash + level shifters (3.3 V system)
+          │
+          ├──► TLV70218 LDO (3.3V → 1.8V)
+          │       │
+          │       └──► Vio = 1.8V option
+          │
+          ├──► Vio mux (3.3V or 1.8V, switched by GPIO28)
+          │       │
+          │       └──► Vio rail to protocol headers + their level shifters
+          │
+          └──► TPS25940 eFuse → Vtgt output
+                  │
+                  ├──► Programmable current limit (250 mA default)
+                  ├──► OCP / OVP / UVLO
+                  ├──► Auto-retry on fault
+                  └──► INA180 current sense → ADC2
+
+Vtgt is independent from Vio — Vtgt goes to debug header (target's reference V),
+Vio goes to protocol headers (edevkit-selected reference V).
+</div>
+
+<details>
+<summary>Power-on sequencing (firmware-managed)</summary>
+<ol>
+<li>USB connect → 5 V applied</li>
+<li>RP2350 boots, runs Stage 2 → MCUboot → app</li>
+<li>Firmware enables 3.3 V buck (already on by default — for self-power)</li>
+<li>Firmware enables 1.8 V LDO if needed</li>
+<li>Firmware sets Vio mux to default 3.3 V (or last-saved value from LittleFS)</li>
+<li>Firmware sets all level-shifter DIR pins to safe defaults (input)</li>
+<li>Firmware enables level-shifter OE</li>
+<li>Firmware enables Vtgt eFuse load switch (only after USB enumerates and host configures)</li>
+</ol>
+<p>This sequence avoids glitching target signals during boot, even if a target board is plugged in at power-up.</p>
+</details>
+
+<h3 id="hw-memory">5.7 Memory architecture</h3>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Memory</th><th>Part</th><th>Size</th><th>Bus</th><th>Use</th></tr></thead>
+<tbody>
+<tr><td>RP2350 internal SRAM</td><td>integrated</td><td>520 KB</td><td>—</td><td>Stack, heap, ring buffers, USB buffers, MCUboot scratch RAM</td></tr>
+<tr><td>Boot QSPI flash</td><td>W25Q128JV</td><td>16 MB</td><td>RP2350 dedicated XIP QSPI</td><td>Stage 2 boot, MCUboot, app slots, LittleFS configs</td></tr>
+<tr><td>Data QSPI flash</td><td>W25Q01JV</td><td>128 MB</td><td>HW SPI1 (QSPI mode @ 25–50 MHz)</td><td>Emulation backing store, capture buffers</td></tr>
+</tbody>
+</table>
+</div>
+
+<h4>Boot flash partition map</h4>
+<div class="ascii">0x10000000  ┌────────────────────────────────┐  Boot flash starts (XIP)
+            │  Stage 2 boot      256 B        │
+0x10000100  ├────────────────────────────────┤
+            │  MCUboot           ~ 256 KB     │
+0x10040000  ├────────────────────────────────┤
+            │  Slot 0 (primary)  512 KB       │  ← signed image, MCUboot-validated
+0x100C0000  ├────────────────────────────────┤
+            │  Slot 1 (secondary) 512 KB      │  ← OTA staging area
+0x10140000  ├────────────────────────────────┤
+            │  LittleFS         2 MB          │  ← /lfs/profiles, /lfs/cal.bin,
+            │                                 │     /lfs/settings.yml, /lfs/sessions
+0x10340000  ├────────────────────────────────┤
+            │  MCUboot scratch   512 KB       │  ← used during slot swap
+0x103C0000  ├────────────────────────────────┤
+            │  Reserved / future ~12 MB       │
+0x10FFFFFF  └────────────────────────────────┘
+</div>
+
+<h4>Data flash usage</h4>
+<p>Raw block device, addressed by <em>slot ID</em> from host:</p>
+<ul>
+<li><strong>Emulation images</strong>: developer uploads firmware images for flash emulation, gets slot handle, references slot in profile (<code>--image-slot 0x05</code>)</li>
+<li><strong>Capture archives</strong>: long-running sniffer captures saved here, exported on demand</li>
+<li><strong>Stimulation streams</strong>: sensor replay CSVs, GPS routes, AT-command scripts uploaded for emulator use</li>
+<li><strong>Future v2</strong>: standalone target firmware images (field-flasher mode without host)</li>
+</ul>
+
+<h3 id="hw-userio">5.8 User I/O</h3>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Element</th><th>Implementation</th><th>GPIO cost</th></tr></thead>
+<tbody>
+<tr><td>4× tactile buttons</td><td>SMD 6 × 6 mm, ADC resistor ladder (single ADC pin reads all 4)</td><td>1 (ADC4)</td></tr>
+<tr><td>8× status LEDs</td><td>WS2812B (RGB) chain, daisy-chained data</td><td>1 (PIO0 SM2)</td></tr>
+<tr><td>1× big RGB status LED</td><td>End of WS2812 chain</td><td>(same line)</td></tr>
+<tr><td>1× buzzer</td><td>Magnetic SMD buzzer, PWM driven, software-mutable</td><td>1 (PWM)</td></tr>
+<tr><td>1× BOOTSEL pinhole button</td><td>Recessed SMD button, tweezer-press; takes RP2350 to UF2 mode</td><td>(BOOTSEL pin, not GPIO)</td></tr>
+</tbody>
+</table>
+</div>
+
+<h4>Boot LED states (visible before USB enumerates)</h4>
+<div class="table-wrap">
+<table>
+<thead><tr><th>State</th><th>Pattern</th></tr></thead>
+<tbody>
+<tr><td>USB up, awaiting host</td><td>Cyan slow heartbeat</td></tr>
+<tr><td>Host connected, idle</td><td>Green steady, dim</td></tr>
+<tr><td>Active session (any protocol)</td><td>Green steady, bright</td></tr>
+<tr><td>Update in progress</td><td>Blue scanner</td></tr>
+<tr><td>Boot error / firmware bad</td><td>Amber blink, rapid</td></tr>
+<tr><td>Vtgt overcurrent / eFuse trip</td><td>Red flash + buzzer beep</td></tr>
+<tr><td>Self-test mode</td><td>Rainbow chase</td></tr>
+<tr><td>Factory reset triggered</td><td>White pulse 3×</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="hw-protect">5.9 Protection circuitry</h3>
+
+<div class="grid-2">
+<div class="card">
+<h4>ESD on every external pin</h4>
+<ul>
+<li>USB D+/D− → USBLC6-2 (low-cap, 4-channel)</li>
+<li>SWD lines → SP0524 ESD array</li>
+<li>UART, I²C lines → SP0504 / PESD3V3 arrays</li>
+<li>SPI/QSPI 6-line group → SP0524 + PESD on extras</li>
+<li>Vtgt input → bidirectional 6 V TVS clamp</li>
+</ul>
+<p style="color:var(--text-muted);margin-top:8px;font-size:13px;">Total: ~$0.50 BOM for 4 ESD diode arrays. Cheap insurance.</p>
+</div>
+<div class="card">
+<h4>Vtgt output protection</h4>
+<ul>
+<li><strong>TPS25940 eFuse</strong> — programmable current limit (default 250 mA, configurable to 500 mA)</li>
+<li>OCP, OVP, UVLO</li>
+<li>Auto-retry on fault clear</li>
+<li>OPEN-DRAIN fault output → MCU IRQ</li>
+<li>INA180 high-side current sense → ADC2 → live current shown in GUI</li>
+</ul>
+<p style="color:var(--text-muted);margin-top:8px;font-size:13px;">~$1.50 BOM. Saves the board if developer shorts Vtgt to GND.</p>
+</div>
+<div class="card">
+<h4>Reverse-polarity / overvoltage on inputs</h4>
+<ul>
+<li>Bidirectional clamp diodes on each Vtgt-domain input pin</li>
+<li>Series PTC fuse on Vtgt output (backup to eFuse)</li>
+<li>Vio rail isolated by load switch with reverse-blocking</li>
+</ul>
+</div>
+<div class="card">
+<h4>USB-C input</h4>
+<ul>
+<li>USBLC6-2 ESD on D+/D−</li>
+<li>Common-mode choke (Würth 744232090)</li>
+<li>VBUS clamp Schottky for back-EMF</li>
+<li>VBUS sense on ADC3 — detect cable yank</li>
+</ul>
+</div>
+</div>
+
+<h3 id="hw-pcb">5.10 PCB stackup</h3>
+
+<p><strong>4-layer, 1.6 mm, 1 oz copper, FR4, ENIG finish, controlled impedance</strong>. Standard JLCPCB / PCB Power / Lion Circuits stackup.</p>
+
+<div class="ascii">┌─────────────────────────────────────────────────────────────┐
+│ L1 (top)        SIGNAL          1 oz copper, ENIG, soldermask│
+├─────────────────────────────────────────────────────────────┤  0.2 mm prepreg
+│ L2              GND PLANE       1 oz, solid pour              │
+├─────────────────────────────────────────────────────────────┤  1.0 mm core (FR4)
+│ L3              POWER PLANES    1 oz, split: 3.3V / 1.8V / Vio│
+├─────────────────────────────────────────────────────────────┤  0.2 mm prepreg
+│ L4 (bottom)     SIGNAL + GND    1 oz, secondary, ENIG         │
+└─────────────────────────────────────────────────────────────┘
+   Total: 1.6 mm
+</div>
+
+<details>
+<summary>Routing rules</summary>
+<ul>
+<li><strong>USB D+/D−</strong>: differential pair on L1, 90 Ω diff impedance, length-matched ±0.5 mm, reference L2 GND</li>
+<li><strong>QSPI signals</strong> (boot + data flash): on L1, 50 Ω SE impedance, &lt;5 mm trace length, reference L2 GND, length-matched</li>
+<li><strong>SWD/JTAG</strong>: on L1, &lt;25 MHz, length-matched within ±2 mm</li>
+<li><strong>Crystal</strong>: on L1 above L2 GND, stitching vias around</li>
+<li><strong>Power</strong>: L3 split into 3.3 V / 1.8 V / Vio zones; bridged where needed</li>
+<li><strong>L2 (GND) is sacred</strong> — no traces. Continuous pour.</li>
+<li><strong>Via-in-pad</strong> for RP2350 QFN-80 fanout (resin filled + plated)</li>
+</ul>
+<h5>Board dimensions</h5>
+<ul>
+<li>Outline: 60 × 85 mm</li>
+<li>Mounting: 4× M2.5 with 4 mm clearance from edge</li>
+<li>USB-C: top edge, centered</li>
+<li>Front panel: connectors along one long edge (Cortex Debug + TC2030 + Target UART grouped)</li>
+<li>Side panel: protocol test connectors (Test UART + I²C + SPI/QSPI) grouped</li>
+</ul>
+</details>
+
+<h3 id="hw-bom">5.11 Bill of materials @ qty 100</h3>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Block</th><th>Part</th><th>Qty</th><th>Cost</th></tr></thead>
+<tbody>
+<tr><td>MCU</td><td>RP2350B (QFN-80)</td><td>1</td><td>$2.00</td></tr>
+<tr><td>Boot flash</td><td>W25Q128JV (SOIC-8 / WSON-8)</td><td>1</td><td>$0.80</td></tr>
+<tr><td>Data flash</td><td>W25Q01JV (1 Gbit, SOIC-16)</td><td>1</td><td>$2.50</td></tr>
+<tr><td>Level shifters</td><td>SN74LVC8T245 (TSSOP-24)</td><td>2</td><td>$0.60</td></tr>
+<tr><td></td><td>TXS0108E</td><td>2</td><td>$0.80</td></tr>
+<tr><td></td><td>SN74LVC1T45</td><td>4</td><td>$0.30</td></tr>
+<tr><td>Power</td><td>TPS62933 buck (5V → 3.3V)</td><td>1</td><td>$0.80</td></tr>
+<tr><td></td><td>TLV70218 LDO (3.3V → 1.8V)</td><td>1</td><td>$0.30</td></tr>
+<tr><td></td><td>Vio mux load switch</td><td>1</td><td>$0.20</td></tr>
+<tr><td></td><td>TPS25940 eFuse (Vtgt)</td><td>1</td><td>$1.50</td></tr>
+<tr><td></td><td>INA180 current sense</td><td>1</td><td>$0.40</td></tr>
+<tr><td>Protection</td><td>USBLC6-2 (USB ESD)</td><td>1</td><td>$0.20</td></tr>
+<tr><td></td><td>SP0524 ESD array</td><td>3</td><td>$0.40</td></tr>
+<tr><td></td><td>Common-mode choke (Würth 744232)</td><td>1</td><td>$0.15</td></tr>
+<tr><td></td><td>TVS / clamp diodes (Vtgt etc)</td><td>5</td><td>$0.20</td></tr>
+<tr><td>Connectors</td><td>USB-C receptacle</td><td>1</td><td>$0.50</td></tr>
+<tr><td></td><td>Cortex Debug 1.27 mm 2×5 SMD (Samtec FTSH)</td><td>1</td><td>$0.60</td></tr>
+<tr><td></td><td>TC2030-IDC tag-connect</td><td>1</td><td>$0.80</td></tr>
+<tr><td></td><td>2.54 mm 1×4 headers</td><td>3</td><td>$0.30</td></tr>
+<tr><td></td><td>2.54 mm 1×8 header (SPI/QSPI)</td><td>1</td><td>$0.20</td></tr>
+<tr><td></td><td>1×8 SMD header (v2 expansion)</td><td>1</td><td>$0.30</td></tr>
+<tr><td>User I/O</td><td>WS2812B LEDs</td><td>9</td><td>$1.20</td></tr>
+<tr><td></td><td>Tactile buttons 6×6 mm SMD</td><td>4</td><td>$0.40</td></tr>
+<tr><td></td><td>BOOTSEL recessed button</td><td>1</td><td>$0.10</td></tr>
+<tr><td></td><td>Magnetic buzzer SMD</td><td>1</td><td>$0.50</td></tr>
+<tr><td>Crystal</td><td>12 MHz HC-49 SMD + caps</td><td>1</td><td>$0.30</td></tr>
+<tr><td>Test points</td><td>Keystone 5015 SMD (×6)</td><td>6</td><td>$0.30</td></tr>
+<tr><td>Misc</td><td>0402 R/C/L passives</td><td>~120</td><td>$1.50</td></tr>
+<tr><td>PCB</td><td>4-layer 60×85 mm, ENIG</td><td>1</td><td>$1.50</td></tr>
+<tr><td>Assembly</td><td>SMT machine assembly</td><td>1</td><td>$6.00</td></tr>
+<tr><td>Enclosure</td><td>3D-printed PETG + TPU</td><td>1</td><td>$2.80</td></tr>
+<tr><td>Hardware</td><td>4× M2.5 inserts + screws</td><td>1</td><td>$0.50</td></tr>
+<tr><td>Cable kit</td><td>SWD ribbon + jumpers + USB-C</td><td>1</td><td>$5.00</td></tr>
+<tr><td colspan="2"><strong>Total BOM @ qty 100</strong></td><td colspan="2"><strong>~$33 / unit</strong></td></tr>
+<tr><td colspan="2"><strong>@ qty 500 (estimate)</strong></td><td colspan="2"><strong>~$23 / unit</strong></td></tr>
+<tr><td colspan="2"><strong>@ qty 1000 (estimate)</strong></td><td colspan="2"><strong>~$18 / unit</strong></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="firmware" data-search-text="firmware design zephyr smp pio cmsis-dap mcuboot emulation watchdog">
+<h2><span class="num">06</span>Firmware Design</h2>
+
+<h3 id="fw-zephyr">6.1 Zephyr RTOS — why &amp; structure</h3>
+
+<p>Built on <strong>Zephyr 4.x</strong> (USB-Device-Next stack, mature SMP, MCUboot first-class). The full firmware is a single Zephyr application built via <code>west</code> + <code>sysbuild</code>.</p>
+
+<details>
+<summary>Repository layout</summary>
+<pre><code>edevkit/
+├── west.yml                        # workspace manifest
+├── sysbuild.conf                   # MCUboot + app sysbuild
+├── app/                            # main edevkit firmware
+│   ├── CMakeLists.txt
+│   ├── prj.conf
+│   ├── boards/
+│   │   └── rpi_pico2_rp2350a_m33.overlay  # flash partitions, USB descriptors (FQBN-named for Zephyr 3.7+)
+│   ├── pio/
+│   │   ├── swd.pio                 # SWD bit-bang
+│   │   ├── jtag.pio
+│   │   ├── swo.pio                 # UART decode of SWO line
+│   │   ├── i2c.pio
+│   │   ├── spi_master.pio
+│   │   ├── spi_slave.pio
+│   │   ├── qspi_master.pio
+│   │   ├── qspi_slave.pio
+│   │   └── ws2812.pio
+│   ├── src/
+│   │   ├── main.c
+│   │   ├── usb/                    # composite descriptor + role classes
+│   │   ├── cmsis_dap/              # SWD/JTAG dispatcher, SWO pump
+│   │   ├── proto/                  # I²C, SPI engines
+│   │   ├── emulator/               # YAML profile loader, register banks
+│   │   ├── shell/                  # Zephyr shell extensions
+│   │   └── boot/                   # power sequencing, LED states
+│   └── profiles/                   # built-in YAML emulation profiles
+│       ├── flash/
+│       ├── sensor/
+│       └── modem/
+├── child_image/
+│   └── mcuboot/                    # MCUboot config
+│       └── prj.conf
+└── tools/
+    ├── pioasm/                     # vendored pioasm binary
+    ├── cmake/PIO.cmake             # PIO header generator helper
+    └── factory_test/               # pogo-pin test fixture firmware
+</code></pre>
+</details>
+
+<details>
+<summary>Key Zephyr Kconfig settings</summary>
+<pre><code>CONFIG_BOOTLOADER_MCUBOOT=y
+CONFIG_USB_DEVICE_STACK_NEXT=y
+CONFIG_USBD_CDC_ACM_CLASS=y
+CONFIG_USBD_HID_SUPPORT=y
+CONFIG_SMP=y
+CONFIG_MP_MAX_NUM_CPUS=2
+CONFIG_SCHED_CPU_MASK=y
+CONFIG_LOG=y
+CONFIG_LOG_RUNTIME_FILTERING=y
+CONFIG_SHELL=y
+CONFIG_SHELL_BACKEND_USB_CDC_ACM=y
+CONFIG_FILE_SYSTEM=y
+CONFIG_FILE_SYSTEM_LITTLEFS=y
+CONFIG_MCUMGR=y
+CONFIG_MCUMGR_GRP_IMG=y
+CONFIG_MCUMGR_GRP_OS=y
+CONFIG_MCUMGR_GRP_FS=y
+CONFIG_WATCHDOG=y
+CONFIG_TASK_WDT=y
+CONFIG_FAULT_DUMP=2
+</code></pre>
+</details>
+
+<h3 id="fw-smp">6.2 Multicore (SMP) thread layout</h3>
+
+<p>Both Cortex-M33 cores run a single Zephyr SMP image. Threads are pinned to specific cores to keep USB latency tight.</p>
+
+<div class="grid-2">
+<div class="card">
+<h4>Core 0 — USB / debug</h4>
+<ul style="font-family:var(--font-mono);font-size:13px">
+<li>usb_thread</li>
+<li>cmsis_dap_dispatcher</li>
+<li>swo_rx_pump</li>
+<li>target_uart_pump</li>
+<li>test_uart_pump</li>
+<li>shell_thread</li>
+<li>smp_server_thread</li>
+</ul>
+</div>
+<div class="card">
+<h4>Core 1 — protocol / emulation</h4>
+<ul style="font-family:var(--font-mono);font-size:13px">
+<li>i2c_engine_thread</li>
+<li>spi_engine_thread</li>
+<li>qspi_engine_thread</li>
+<li>emulator_thread</li>
+<li>sniffer_drain_thread</li>
+<li>led_chain_thread</li>
+<li>watchdog_thread</li>
+</ul>
+</div>
+</div>
+
+<h4>Cross-core IPC primitives</h4>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Primitive</th><th>Use</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>k_msgq</code></td><td>Command/event passing (host→engine, engine→USB)</td><td>Default for almost all IPC</td></tr>
+<tr><td><code>ring_buf</code> (in <code>.nocache</code>)</td><td>SWO trace stream, sniffer events, high-throughput data</td><td>SPSC; cache-flushed at producer side</td></tr>
+<tr><td><code>k_spinlock</code> + shared struct</td><td>Voltage state, mode flags, emulation_active bit</td><td>Read often, written rarely</td></tr>
+<tr><td><code>k_event</code></td><td>One-shot signals (target reset detected, profile loaded)</td><td>Bitwise wake-on-any</td></tr>
+<tr><td><code>atomic_t</code></td><td>Per-channel byte counters, abort flags</td><td>Lock-free</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout warn">
+<div class="callout-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L22 22 L2 22 Z"/><path d="M12 9v4M12 17h.01"/></svg></div>
+<div><strong>Cache coherency.</strong> Cortex-M33 has 4 KB I-cache + 4 KB D-cache per core. Zephyr kernel objects (<code>k_msgq</code>, <code>k_pipe</code>, <code>ring_buf</code>) handle this internally. Hand-rolled shared structs need <code>sys_cache_data_flush_range()</code> at the producer and <code>sys_cache_data_invd_range()</code> at the consumer, or place them in a <code>.nocache</code> linker region.</div>
+</div>
+
+<h3 id="fw-pio">6.3 PIO programs</h3>
+
+<p>Each protocol has its own <code>.pio</code> file assembled at build time by <code>pioasm</code> (vendored under <code>tools/</code>). The build emits a header per file with <code>pio_program_t</code> + entry-point offsets. Zephyr's <code>pio_rpi_pico</code> driver loads the program into a state machine.</p>
+
+<details>
+<summary>Example — SWD program (simplified)</summary>
+<pre><code>; src/pio/swd.pio
+.program swd
+.side_set 1 opt
+
+public write_cmd:
+    out  x, 32           side 0     ; bit count - 1 into X
+    out  pindirs, 1      side 0     ; SWDIO = output
+write_bit:
+    out  pins, 1         side 0 [1] ; drive bit, clock low
+    jmp  x--, write_bit  side 1 [1] ; clock high, dec X
+
+public read_cmd:
+    out  x, 32           side 0
+    out  pindirs, 1      side 0     ; SWDIO = input
+read_bit:
+    in   pins, 1         side 0 [1] ; sample on clock low
+    jmp  x--, read_bit   side 1 [1]
+    push                 side 0
+</code></pre>
+<p>This is identical in spirit to <a href="https://github.com/raspberrypi/debugprobe">raspberrypi/debugprobe</a>'s <code>probe.pio</code>. With clkdiv tuned, SWCLK reaches <strong>25 MHz</strong> on RP2350.</p>
+</details>
+
+<h3 id="fw-cmsis-dap">6.4 CMSIS-DAP v2 implementation</h3>
+
+<p><strong>USB composite descriptor</strong>: HID interface for v1-compatibility commands + Bulk in/out for v2 high-speed transfers + Bulk SWO endpoint for trace streaming.</p>
+
+<h4>Command groups implemented</h4>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Group</th><th>Commands</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>General Info</td><td><code>DAP_Info</code>, <code>DAP_HostStatus</code>, <code>DAP_Connect</code>, <code>DAP_Disconnect</code></td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Configuration</td><td><code>DAP_TransferConfigure</code>, <code>DAP_SWJ_Sequence</code>, <code>DAP_SWD_Configure</code>, <code>DAP_JTAG_Configure</code></td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Transfer</td><td><code>DAP_Transfer</code>, <code>DAP_TransferBlock</code>, <code>DAP_TransferAbort</code></td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>JTAG-only</td><td><code>DAP_JTAG_Sequence</code>, <code>DAP_JTAG_IDCODE</code></td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>SWO</td><td><code>DAP_SWO_Transport</code>, <code>DAP_SWO_Mode</code>, <code>DAP_SWO_Baudrate</code>, <code>DAP_SWO_Control</code>, <code>DAP_SWO_Status</code>, <code>DAP_SWO_Data</code></td><td><span class="pill pill-ok">v1</span></td></tr>
+<tr><td>Atomic / Vendor</td><td>Atomic command queue, vendor extensions</td><td><span class="pill pill-info">v1.1</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<h4>Capabilities byte advertised</h4>
+<ul>
+<li>Bit 0: SWD ✓</li>
+<li>Bit 1: JTAG ✓</li>
+<li>Bit 2: SWO UART ✓</li>
+<li>Bit 3: SWO Manchester (v2)</li>
+<li>Bit 4: Atomic commands ✓</li>
+<li>Bit 5: Test domain timer ✓</li>
+<li>Bit 6: SWO streaming trace ✓</li>
+<li>Bit 7: UART communication port ✓</li>
+<li>Bit 8: USB COM port (CDC) ✓</li>
+</ul>
+
+<h4>Host tool compatibility</h4>
+<ul>
+<li><strong>probe-rs</strong> — full SWD + JTAG + SWO support, Rust ecosystem</li>
+<li><strong>OpenOCD</strong> — universal, all chip configs</li>
+<li><strong>pyOCD</strong> — Python scripting, CI integration</li>
+<li><strong>Keil µVision</strong> — commercial IDE</li>
+<li><strong>VSCode + cortex-debug</strong> — via OpenOCD or pyOCD</li>
+</ul>
+
+<h3 id="fw-mcuboot">6.5 MCUboot &amp; OTA updates</h3>
+
+<h4>Boot sequence</h4>
+<div class="ascii">┌─ Power-on ─┐
+│            │
+│  Boot ROM (silicon)                  reads stage 2 from flash
+│       │
+│       ▼
+│  Stage 2 boot (256 B)                sets up XIP, jumps to MCUboot
+│       │
+│       ▼
+│  MCUboot                             validates slot 0 signature
+│       │                               (or swaps if test pending)
+│       ▼
+│  edevkit application                  USB stack, protocols, etc.
+│       │
+│       ▼
+│  boot_write_img_confirmed()           after USB enumerates + host pings
+│                                       (must occur within 30s of boot)
+└────────────┘
+</div>
+
+<h4>OTA update flow</h4>
+<div class="ascii">┌─ Host (mcumgr or Tauri GUI) ─┐
+│                              │
+│  1. mcumgr image upload      │  ─── over USB CDC ───▶  edevkit SMP server
+│                              │                          │
+│  2. mcumgr image test &lt;hash&gt; │                          ▼
+│                              │                       SMP writes signed image to slot 1
+│  3. mcumgr reset             │
+│                              │  ─── reboot trigger ──▶  Stage 2 → MCUboot
+│                              │                          │
+└──────────────────────────────┘                          ▼
+                                                      MCUboot reads test flag
+                                                      Validates slot 1 signature
+                                                      Swaps slot 0 ↔ slot 1
+                                                      Boots into new image
+                                                      ┌─────────────────────────┐
+                                                      │ NEW IMAGE RUNNING       │
+                                                      │ Has 30s to confirm      │
+                                                      │ via boot_write_img_     │
+                                                      │ confirmed()             │
+                                                      └─────────────┬───────────┘
+                                                                    │
+                                            ┌──────────────────────┴──────────────────────┐
+                                            │                                              │
+                                            ▼                                              ▼
+                                    Confirms in time                                Doesn't confirm
+                                    (USB up, host pinged)                           (boot loop, hang)
+                                            │                                              │
+                                            ▼                                              ▼
+                                    Slot 1 marked confirmed                        On next reset, MCUboot
+                                    Old image replaced eventually                  reverts: swap back
+</div>
+
+<h4>Recovery if everything breaks</h4>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Scenario</th><th>Recovery path</th></tr></thead>
+<tbody>
+<tr><td>New image hangs in boot</td><td>MCUboot revert (automatic on second boot)</td></tr>
+<tr><td>Both slots corrupt</td><td>BOOTSEL pinhole → RP2350 UF2 mode → drag UF2 image</td></tr>
+<tr><td>BOOTSEL not accessible</td><td>External SWD probe (e.g., another edevkit) → reflash</td></tr>
+<tr><td>LittleFS partition corrupted</td><td>Application self-heals: detects bad LittleFS, re-formats, regenerates defaults</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="fw-emulation">6.6 Device emulation engine</h3>
+
+<p>The emulation engine runs on Cortex-M33 #1 and lets developers test their host-side drivers without the real peripheral hardware. Three target categories are supported in v1:</p>
+
+<div class="grid-3">
+<div class="card">
+<h4>SPI/QSPI flash</h4>
+<p style="font-size:13px;color:var(--text-muted)">Emulate W25Qxx, MX25Lxx and others. JEDEC commands decoded, backing data served from data flash. Programmable response delays + error injection.</p>
+</div>
+<div class="card">
+<h4>I²C sensor</h4>
+<p style="font-size:13px;color:var(--text-muted)">Emulate LSM6DSOX, BMP280, SHT4x, etc. Register bank in SRAM, optional waveform-replay stream from CSV.</p>
+</div>
+<div class="card">
+<h4>UART AT-command device</h4>
+<p style="font-size:13px;color:var(--text-muted)">Emulate ESP-AT, SIM7000, NMEA GPS. Pattern-matching command table with delay + multi-line responses.</p>
+</div>
+</div>
+
+<details>
+<summary>Profile YAML schema (excerpt — flash emulator)</summary>
+<pre><code>schema: 1
+type: spi-slave
+name: w25q128-stock
+mode: qspi
+speed_max: 50M
+jedec_id: [0xEF, 0x40, 0x18]
+capacity: 16777216
+sector_size: 4096
+page_size: 256
+backing:
+  source: data-flash-slot
+  slot: 0x00
+commands:
+  - opcode: 0x9F
+    response: jedec_id
+  - opcode: 0x05
+    response: status_register
+  - opcode: 0x06
+    type: write_enable
+  - opcode: 0x03   # read
+    type: read
+    addr_bytes: 3
+  - opcode: 0x6B   # quad read
+    type: read
+    addr_bytes: 3
+    dummy_cycles: 8
+    output_lanes: 4
+  - opcode: 0x02   # page program
+    type: page_program
+    delay_us: 3000
+  - opcode: 0x20   # sector erase
+    type: erase
+    size: 4096
+    delay_us: 50000
+fault_inject:
+  - on_command: 0x02
+    every_n: 100
+    behaviour: hold_busy_forever
+</code></pre>
+</details>
+
+<h4>Built-in profile library (v1)</h4>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Category</th><th>Profiles</th></tr></thead>
+<tbody>
+<tr><td>SPI/QSPI flash</td><td>W25Q128, W25Q256, W25Q01, MX25L128, GD25Qxx (5 variants)</td></tr>
+<tr><td>I²C sensors</td><td>LSM6DSOX (accel+gyro), BMP280 (pressure), SHT4x (temp/RH), DS3231 (RTC), MAX30001 (ECG/BIO-Z), MAX30101 (PPG), AFE4900 (PPG+ECG) (~10)</td></tr>
+<tr><td>UART modems</td><td>ESP-AT, SIM7000, BG96, NMEA-0183 GPS, generic AT (~5)</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="fw-features">6.7 Other firmware features</h3>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Feature</th><th>Implementation</th></tr></thead>
+<tbody>
+<tr><td><strong>Watchdog</strong></td><td>Hardware WDT, 2 s timeout, fed from main thread on each scheduler tick</td></tr>
+<tr><td><strong>Panic / coredump</strong></td><td>Zephyr <code>FAULT_DUMP=2</code> writes regs + stack to LittleFS at <code>/lfs/panic/&lt;ts&gt;.dump</code>, rolling 4-entry log</td></tr>
+<tr><td><strong>Per-unit serial</strong></td><td>Generated from RP2350 64-bit chip ID; format <code>EDV-XXXX-YYYY-ZZZZ</code>; written to <code>/lfs/serial.txt</code> at first boot</td></tr>
+<tr><td><strong>Calibration</strong></td><td>Vtgt-sense gain/offset, current-sense gain/offset, button-ladder threshold; written to <code>/lfs/cal.bin</code> at factory test</td></tr>
+<tr><td><strong>Self-test mode</strong></td><td>Hold button-1 at boot → enter test mode; sequential checks, pass/fail report on LEDs + USB CDC</td></tr>
+<tr><td><strong>Factory reset</strong></td><td>Hold button-1 + button-4 at boot → wipe LittleFS user data (preserve cal partition)</td></tr>
+<tr><td><strong>RTC + host time-sync</strong></td><td>RP2350 RTC, set on session start by host; all sniffer/SWO timestamps absolute walltime</td></tr>
+<tr><td><strong>Single-host-session lock</strong></td><td>WebUSB control endpoint; first connection wins, subsequent connections get "device busy"</td></tr>
+<tr><td><strong>Buffer-overflow policy</strong></td><td>Sniffer ring full → stop capture + emit error event (no silent drop)</td></tr>
+<tr><td><strong>Profile schema versioning</strong></td><td>Each YAML carries <code>schema: 1</code>; firmware refuses unknown schemas with clear error</td></tr>
+<tr><td><strong>FW ↔ GUI handshake</strong></td><td>Version + capability bitmask exchanged at connect; GUI warns on mismatch</td></tr>
+<tr><td><strong>Runtime log filtering</strong></td><td>Zephyr <code>log_runtime_filtering</code>; per-domain enable from shell or GUI</td></tr>
+<tr><td><strong>USB suspend / wake</strong></td><td>Reduces clocks on host suspend; wakes on USB resume; preserves session state</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="host" data-search-text="host tooling tauri gui cli probe-rs mcumgr">
+<h2><span class="num">07</span>Host Tooling</h2>
+
+<h3 id="host-gui">7.1 Tauri GUI</h3>
+
+<p>Single cross-platform desktop app (macOS + Linux + Windows), built on <a href="https://tauri.app">Tauri</a> (Rust core + web frontend). Reuses <a href="https://probe.rs">probe-rs</a> for ARM/RISC-V debug support and a custom protocol layer for emulation/sniffer features.</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Pane</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><strong>Device picker</strong></td><td>List connected edevkits by serial; pick one if multiple plugged in</td></tr>
+<tr><td><strong>Debug</strong></td><td>Target chip selector, flash/erase/halt/run/reset, breakpoints, register view, memory inspector, disassembly</td></tr>
+<tr><td><strong>Serial</strong></td><td>Three tabs: SWO trace, Target UART, Test UART. Each: baud, parity, line-ending, hex/ASCII, find/filter, log-to-file</td></tr>
+<tr><td><strong>I²C</strong></td><td>Mode selector, config, command builder, sniffer timeline</td></tr>
+<tr><td><strong>SPI/QSPI</strong></td><td>Mode selector + config + sniffer + emulation profile loader</td></tr>
+<tr><td><strong>Emulator</strong></td><td>Profile picker, live register monitor, stimulation stream control, error-injection toggles</td></tr>
+<tr><td><strong>Settings</strong></td><td>Vio voltage select, Vtgt power on/off, current limit, buzzer mute, LED brightness, firmware version</td></tr>
+<tr><td><strong>Update</strong></td><td>Firmware version, "Check for updates", upload progress; calls SMP via mcumgr-style protocol</td></tr>
+<tr><td><strong>Self-test</strong></td><td>Manufacturing test runner, calibration check, diagnostics</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="host-cli">7.2 CLI</h3>
+
+<p>Single Rust binary <code>edevkit</code> with subcommands. Same core code as GUI; can be scripted for CI / lab automation.</p>
+
+<pre><code># Discovery
+edevkit list                              # show connected probes by serial
+edevkit info --serial EDV-XXXX-YYYY       # device details
+
+# Debug
+edevkit flash --target nrf52840 ./fw.elf
+edevkit log target  --baud 115200          # tail target log UART
+edevkit log swo                            # tail SWO trace
+edevkit halt; edevkit run; edevkit reset
+
+# UART under test
+edevkit uart test --baud 9600 --parity E
+edevkit uart test --tx "AT+VERSION\r\n" --expect "OK"
+
+# I²C
+edevkit i2c config --speed 400k --pullup 2.2k
+edevkit i2c master --addr 0x6A --tx 0x0F --rx 1
+edevkit i2c slave  --addr 0x48
+edevkit i2c sniff  --capture 4096 --output ./capture.bin
+edevkit i2c scan
+
+# SPI / QSPI
+edevkit spi config --mode qspi --speed 50M
+edevkit spi master --tx "9F" --rx 3
+edevkit spi sniff  --capture 8192
+
+# Emulation
+edevkit emulate flash --model W25Q128 --image ./bootloader.bin
+edevkit emulate sensor --model LSM6DSOX --addr 0x6A --stream ./imu.csv --rate 833
+edevkit emulate at --model ESP-AT
+edevkit emulate gps --model NMEA --gpx ./route.gpx --rate 1Hz
+edevkit emulate run my-saved-profile-name
+
+# Profile management
+edevkit profile save my-test --i2c-addr 0x6A --speed 400k
+edevkit profile list
+edevkit profile delete my-test
+edevkit profile import ./custom_profile.yml
+
+# Update / management
+edevkit update                              # check + install latest
+edevkit update --image ./app.signed.bin
+edevkit reset --bootloader                  # boot into UF2 recovery
+
+# Diagnostics
+edevkit selftest
+edevkit calibrate vtgt-sense
+edevkit log device                          # edevkit's own Zephyr log
+</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<section id="mechanical" data-search-text="mechanical enclosure 3d print petg bambu lab freecad cadquery">
+<h2><span class="num">08</span>Mechanical / Enclosure</h2>
+
+<p><strong>3D-printed PETG, two-shell clamshell.</strong> Designed in FreeCAD 1.x or CadQuery, sliced with OrcaSlicer, printed on Bambu Lab.</p>
+
+<h4>Material stack</h4>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Component</th><th>Material</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Top &amp; bottom shells</td><td>PETG</td><td>Heat-resistant ~80°C, durable, prints cleanly on Bambu textured PEI</td></tr>
+<tr><td>Button caps (4×)</td><td>TPU 95A</td><td>Tactile, color-distinguishable, won't crack with use</td></tr>
+<tr><td>Feet (4×)</td><td>TPU</td><td>Anti-slip, vibration-damping</td></tr>
+<tr><td>Logo &amp; port labels</td><td>PETG (contrast color, AMS multi-material)</td><td>Embedded labels in print, no stickers</td></tr>
+</tbody>
+</table>
+</div>
+
+<details>
+<summary>Print parameters &amp; cost</summary>
+<div class="table-wrap">
+<table>
+<tbody>
+<tr><th>Parameter</th><th>Value</th></tr>
+<tr><td>Layer height</td><td>0.2 mm</td></tr>
+<tr><td>Wall count</td><td>4 perimeters (1.6 mm)</td></tr>
+<tr><td>Infill</td><td>15% gyroid</td></tr>
+<tr><td>Top/bottom layers</td><td>5 each</td></tr>
+<tr><td>Support</td><td>None (orientation chosen to avoid)</td></tr>
+<tr><td>Print time/unit</td><td>~5.5 hours</td></tr>
+<tr><td>Filament/unit</td><td>~85 g</td></tr>
+<tr><td>Cost/unit (filament+hw)</td><td>~$2.80</td></tr>
+</tbody>
+</table>
+</div>
+</details>
+
+<h4>Workflow</h4>
+<div class="ascii">  KiCad PCB
+       │  File → Export → STEP (with all 3D models)
+       ▼
+  FreeCAD 1.x (KiCadStepUp workbench)  OR  CadQuery (Python script)
+       │  build shells around STEP, add cutouts, screw bosses, vents
+       ▼
+  STL export
+       │
+       ▼
+  OrcaSlicer (open source, Bambu printer profiles)
+       │  AMS configures multi-material colors
+       ▼
+  Bambu Lab (A1 / P1S / X1C)
+       │
+       ▼
+  Cleanup + heat-set inserts + assembly
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="manufacturing" data-search-text="manufacturing pcb fab india lion circuits pcb power megabyte jlcpcb">
+<h2><span class="num">09</span>PCB Manufacturing</h2>
+
+<h3>Indian fab options (4-layer capable)</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Vendor</th><th>Location</th><th>Notes</th><th>Use for</th></tr></thead>
+<tbody>
+<tr><td><strong>Lion Circuits</strong></td><td>Bangalore</td><td>Online ordering, instant quote, stencil + assembly. <strong>Bangalore-local — walk-in pickup possible</strong></td><td>v1 prototypes &amp; pilot batches</td></tr>
+<tr><td><strong>PCB Power Market</strong></td><td>Gandhinagar, Gujarat</td><td>Most established Indian fab. 1–32 layers, controlled impedance, full PCBA. Strong online portal.</td><td>Pilot or volume production</td></tr>
+<tr><td><strong>Megabyte Circuit Systems</strong></td><td>Bangalore</td><td>NPI-focused, week-long prototype cycles, impedance coupons + cross-section reports</td><td>High-quality prototypes</td></tr>
+<tr><td>AT&amp;S India</td><td>Nanjangud, KA</td><td>Multinational, automotive-grade. Volume only.</td><td>Production scale-up</td></tr>
+<tr><td>Genus Electrotech</td><td>Gandhinagar</td><td>Multi-layer, quick-turn</td><td>Alternative</td></tr>
+<tr><td>AS&amp;R Circuits</td><td>Bangalore</td><td>Prototype multilayer specialist</td><td>Alternative prototype</td></tr>
+</tbody>
+</table>
+</div>
+
+<h4>Pricing comparison (5 prototypes, 60×85 mm 4-layer ENIG)</h4>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Vendor</th><th>Price (₹)</th><th>Lead time</th></tr></thead>
+<tbody>
+<tr><td>Lion Circuits (Bangalore)</td><td>₹4,000–5,500</td><td>5–7 days</td></tr>
+<tr><td>PCB Power (Gandhinagar)</td><td>₹4,500–6,000</td><td>5–8 days</td></tr>
+<tr><td>Megabyte (Bangalore)</td><td>₹5,000–7,000</td><td>7 days</td></tr>
+<tr><td>JLCPCB (China, comparison)</td><td>~₹2,000 + customs</td><td>5 days fab + 5–7 days ship</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Recommended cadence</h3>
+<ol>
+<li><strong>v0.1, v0.2 prototypes</strong>: <strong>Lion Circuits</strong> (local, fast iteration, 5–7 day cycle)</li>
+<li><strong>Pilot batch (qty 50–200)</strong>: <strong>Lion Circuits</strong> or <strong>PCB Power</strong> — RFQ both, pick on price + delivery</li>
+<li><strong>Volume (qty 500+)</strong>: <strong>PCB Power</strong>, <strong>AT&amp;S</strong>, or <strong>Megabyte</strong></li>
+</ol>
+
+<details>
+<summary>Standard fab spec (RFQ template)</summary>
+<pre><code>Quantity:           [varies]
+Dimensions:         60 mm × 85 mm
+Layers:             4
+Thickness:          1.6 mm
+Copper:             1 oz outer + 1 oz inner
+Surface finish:     ENIG
+Soldermask:         black or charcoal
+Silkscreen:         white
+Min trace/space:    0.1 mm / 0.1 mm
+Min via:            0.2 mm
+Via-in-pad:         Yes — resin filled + plated
+Controlled impedance: 90 Ω diff (USB), 50 Ω SE (QSPI) — provide test coupon
+Stackup:            JLCJLCJLCJLC or equivalent
+PCBA service:       Required (turnkey if possible)
+Files attached:     Gerbers, drill, pick-and-place, BOM, assembly drawings
+</code></pre>
+</details>
+</section>
+
+<!-- ============================================================ -->
+<section id="workflow" data-search-text="workflow tools open source kicad freecad cadquery orcaslicer ci cd">
+<h2><span class="num">10</span>Development Workflow &amp; Tools</h2>
+
+<h3>Tooling (all open source)</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Role</th><th>Tool</th><th>License</th></tr></thead>
+<tbody>
+<tr><td>Schematic + PCB</td><td><strong>KiCad 9.x</strong></td><td>GPL</td></tr>
+<tr><td>Mechanical CAD (GUI)</td><td>FreeCAD 1.x with KiCadStepUp</td><td>LGPL-2.1</td></tr>
+<tr><td>Mechanical CAD (code)</td><td>CadQuery</td><td>Apache 2.0</td></tr>
+<tr><td>Slicer</td><td>OrcaSlicer</td><td>AGPL</td></tr>
+<tr><td>Firmware OS</td><td>Zephyr 4.x</td><td>Apache 2.0</td></tr>
+<tr><td>Firmware build</td><td>west + sysbuild + CMake</td><td>Apache 2.0</td></tr>
+<tr><td>PIO assembler</td><td>pioasm (vendored)</td><td>BSD-3-Clause</td></tr>
+<tr><td>Bootloader</td><td>MCUboot</td><td>Apache 2.0</td></tr>
+<tr><td>Firmware updater</td><td>mcumgr CLI / smpclient</td><td>Apache 2.0</td></tr>
+<tr><td>Debugger backend</td><td>probe-rs</td><td>MIT/Apache</td></tr>
+<tr><td>GUI framework</td><td>Tauri</td><td>MIT/Apache</td></tr>
+<tr><td>CLI &amp; GUI core language</td><td>Rust</td><td>MIT/Apache</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>CI/CD plan</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Trigger</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td>Push to <code>main</code> or PR</td><td>Build firmware (MCUboot + app), build CLI + GUI for 3 OSes, run unit tests</td></tr>
+<tr><td>Tag <code>v1.x.y</code></td><td>Sign firmware, build release artifacts, attach to GitHub Release</td></tr>
+<tr><td>Nightly</td><td>Run hardware-in-loop tests on test rig (2 edevkits, one acts as DUT)</td></tr>
+<tr><td>Schematic / PCB change</td><td>Run KiBot — DRC, ERC, BOM check, 3D render diff</td></tr>
+<tr><td>Enclosure change</td><td>Run CadQuery scripts → fresh STLs → diff against last release</td></tr>
+</tbody>
+</table>
+</div>
+
+<details>
+<summary>Repository structure</summary>
+<pre><code>edevkit/
+├── hardware/                # KiCad project + BOM + assembly drawings
+│   ├── edevkit1.kicad_pro
+│   ├── edevkit1.kicad_sch
+│   ├── edevkit1.kicad_pcb
+│   ├── BOM.csv
+│   └── manufacturing/       # Gerbers, pick-and-place per release
+├── firmware/                # Zephyr west workspace
+│   ├── west.yml
+│   └── (as per Section 6.1)
+├── enclosure/               # FreeCAD or CadQuery source
+│   ├── top.FCStd
+│   ├── bottom.FCStd
+│   ├── stls/
+│   └── slicer/              # .3mf for Bambu/Orca
+├── host/                    # Tauri GUI + CLI
+│   ├── core/                # Rust core, shared
+│   ├── cli/
+│   └── gui/                 # Tauri app
+├── docs/                    # All design + user docs
+├── tools/
+│   ├── pioasm/
+│   ├── factory_test/
+│   └── ci/
+└── LICENSE
+</code></pre>
+</details>
+</section>
+
+<!-- ============================================================ -->
+<section id="schedule" data-search-text="schedule effort time hardware firmware host tooling">
+<h2><span class="num">11</span>Schedule &amp; Effort</h2>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Track</th><th>Phase</th><th>Effort</th></tr></thead>
+<tbody>
+<tr><td rowspan="5"><strong>Hardware</strong></td><td>Schematic capture</td><td>1 week</td></tr>
+<tr><td>PCB layout (4-layer, controlled impedance)</td><td>2 weeks</td></tr>
+<tr><td>DRC + DFM cleanup + design review</td><td>0.5 week</td></tr>
+<tr><td>Fab + assembly (Lion Circuits) v0.1</td><td>1.5 weeks</td></tr>
+<tr><td>v0.1 → v1.0 spin (typical)</td><td>3 weeks</td></tr>
+<tr><td colspan="2"><em>Hardware total</em></td><td><em>~8 weeks</em></td></tr>
+
+<tr><td rowspan="9"><strong>Firmware</strong></td><td>Zephyr + USB-Device-Next minimal probe</td><td>2 weeks</td></tr>
+<tr><td>MCUboot integration</td><td>1.5 weeks</td></tr>
+<tr><td>CMSIS-DAP v2 (SWD)</td><td>3 weeks</td></tr>
+<tr><td>JTAG + SWO + UART pumps</td><td>2 weeks</td></tr>
+<tr><td>I²C M/S/sniffer engine + PIO program</td><td>2 weeks</td></tr>
+<tr><td>SPI/DSPI/QSPI engine + PIO programs</td><td>3 weeks</td></tr>
+<tr><td>Emulation engine + 3 reference profiles</td><td>4 weeks</td></tr>
+<tr><td>Manufacturing self-test + per-unit serial/cal</td><td>1.5 weeks</td></tr>
+<tr><td>Bring-up + integration on real hardware</td><td>2 weeks</td></tr>
+<tr><td colspan="2"><em>Firmware total (1 engineer)</em></td><td><em>~21 weeks</em></td></tr>
+
+<tr><td rowspan="3"><strong>Host tooling</strong></td><td>Rust core + CLI</td><td>4 weeks</td></tr>
+<tr><td>Tauri GUI (panes, charts, picker)</td><td>6 weeks</td></tr>
+<tr><td>SMP/MCUmgr update integration</td><td>1 week</td></tr>
+<tr><td colspan="2"><em>Host tooling total (1 engineer)</em></td><td><em>~11 weeks</em></td></tr>
+
+<tr><td rowspan="2"><strong>Mechanical</strong></td><td>Enclosure CAD + iterations</td><td>2 weeks</td></tr>
+<tr><td>Production print run</td><td>parallel</td></tr>
+<tr><td colspan="2"><em>Mechanical total</em></td><td><em>~2 weeks</em></td></tr>
+
+<tr><td rowspan="2"><strong>Documentation</strong></td><td>User guide + bring-up + recovery + FAQ</td><td>2 weeks</td></tr>
+<tr><td>Auto-gen API docs from doxygen</td><td>0.5 week</td></tr>
+<tr><td colspan="2"><em>Documentation total</em></td><td><em>~2.5 weeks</em></td></tr>
+
+<tr><td colspan="2"><strong>Critical path: firmware</strong></td><td><strong>~5 months elapsed</strong></td></tr>
+<tr><td colspan="2"><strong>Engineer-cost</strong></td><td><strong>~1.2 engineer-years</strong></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout tip">
+<div class="callout-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4 12H2M22 12h-2M5 5l3 3M16 16l3 3M5 19l3-3M16 8l3-3"/></svg></div>
+<div><strong>Recommended team</strong>: 1 firmware engineer (full time, owns Zephyr + PIO + CMSIS-DAP), 1 host-tools engineer (Rust + Tauri), 1 hardware engineer (KiCad + bring-up + enclosure, can be part-time). Tight collaboration on bring-up.</div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="zephyr-gaps" data-search-text="zephyr pico-sdk gaps mitigations hstx powman otp trustzone">
+<h2><span class="num">12</span>Zephyr-vs-pico-sdk: Gaps &amp; Mitigations</h2>
+
+<p>Zephyr's RP2350 support is good enough as of April 2026 (Zephyr 4.3+) but a few features lag behind Raspberry Pi's pico-sdk. Listed here so they don't surprise mid-build.</p>
+
+<h4>Tier 1 — affects edevkit1</h4>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Feature</th><th>Status</th><th>Mitigation</th></tr></thead>
+<tbody>
+<tr><td>PIO toolchain integration</td><td>pico-sdk auto-builds <code>.pio</code> headers; Zephyr does not</td><td>Vendor <code>pioasm</code> + custom CMake function. ~1 week one-time.</td></tr>
+<tr><td>HSTX peripheral driver</td><td>pico-sdk has it; Zephyr does not</td><td>Don't need it in v1. Skip.</td></tr>
+<tr><td>POWMAN driver</td><td>Partial in Zephyr</td><td>Direct register pokes via <code>mmio</code> for the few features needed</td></tr>
+<tr><td>OTP write</td><td>Partial in Zephyr</td><td>Use LittleFS + RP2350 chip-ID for serial. Don't need OTP for v1.</td></tr>
+<tr><td>TrustZone Secure / NS</td><td>TF-M integration young</td><td>Skip. v2 if needed.</td></tr>
+<tr><td>UF2 / picotool ergonomics</td><td>pico-sdk native; Zephyr produces ELF/HEX/BIN</td><td>Post-process to UF2 with <code>picotool</code> if needed for recovery</td></tr>
+</tbody>
+</table>
+</div>
+
+<h4>Things Zephyr gives us that pico-sdk wouldn't</h4>
+<ul>
+<li>Preemptive RTOS scheduler with priorities + MPU thread isolation</li>
+<li>USB-Device-Next composite — much cleaner than orchestrating TinyUSB</li>
+<li>Logging subsystem (multi-backend, runtime filtering)</li>
+<li>Shell over USB CDC for free</li>
+<li>LittleFS, settings, NVS as first-class subsystems</li>
+<li>MCUboot first-class integration</li>
+<li>Devicetree for managing v1 / v1.1 / v2 hardware revs</li>
+<li>SMP scheduler + cross-core IPC primitives</li>
+<li>Cross-MCU portability</li>
+<li>Tracing + power management framework</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="riscv" data-search-text="risc-v riscv esp32 c3 c6 hazard3 sifive jtag">
+<h2><span class="num">13</span>RISC-V Support</h2>
+
+<p><strong>v1 supports RISC-V via standard JTAG out of the box</strong> — no hardware changes, no extra firmware.</p>
+
+<h4>How it works</h4>
+<div class="ascii">  Host (probe-rs / OpenOCD with riscv driver)
+        │
+        │  CMSIS-DAP DAP_JTAG_Sequence (raw JTAG bit shifting)
+        ▼
+  edevkit firmware (Zephyr)
+        │
+        │  PIO0 SM0 in JTAG mode
+        ▼
+  RISC-V target's JTAG TAP
+</div>
+
+<p>The probe doesn't need to "understand" RISC-V — it's a transparent JTAG transport. The host tool implements the RISC-V Debug spec on top.</p>
+
+<h4>Targets that work on v1 today</h4>
+<ul>
+<li>ESP32-C3, ESP32-C6, ESP32-H2 (external JTAG mode)</li>
+<li>RP2350's own Hazard3 RV32 cores</li>
+<li>SiFive HiFive, FE310, U540</li>
+<li>K210, GD32V, BL808, MAX78000</li>
+<li>Most parts probe-rs or OpenOCD has a config for</li>
+</ul>
+
+<h4>Deferred to v2</h4>
+<ul>
+<li><strong>cJTAG</strong> (compact JTAG, 2-pin) — used by some Andes-Tech parts; ~1 week firmware work</li>
+<li><strong>WCH SWIO</strong> (1-wire RISC-V debug) — used by CH32V chips; ~1 week firmware + ~1 week host integration</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="risk" data-search-text="risk register mitigation likelihood impact">
+<h2><span class="num">14</span>Risk Register</h2>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Risk</th><th>Likelihood</th><th>Impact</th><th>Mitigation</th></tr></thead>
+<tbody>
+<tr><td>RP2350B supply constraint</td><td><span class="pill pill-ok">Low</span></td><td><span class="pill pill-warn">High</span></td><td>Single source (RP foundation). Order ample stock. Alternate: RP2040 (less GPIO, would re-spin).</td></tr>
+<tr><td>Zephyr RP2350 BSP regression upstream</td><td><span class="pill pill-tip">Low-Med</span></td><td><span class="pill pill-tip">Med</span></td><td>Pin to known-good Zephyr release tag. Carry minimal patch set if needed.</td></tr>
+<tr><td>USB FS bandwidth saturation</td><td><span class="pill pill-tip">Med</span></td><td><span class="pill pill-ok">Low</span></td><td>Large SRAM ring buffers; back-pressure-aware producers. Documented graceful degradation.</td></tr>
+<tr><td>QSPI signal integrity at 50 MHz</td><td><span class="pill pill-ok">Low</span></td><td><span class="pill pill-tip">Med</span></td><td>Controlled impedance; via-in-pad; flash near MCU; test coupon. Drop to 25 MHz if marginal.</td></tr>
+<tr><td>Level-shifter ESD failure</td><td><span class="pill pill-tip">Med</span></td><td><span class="pill pill-ok">Low</span></td><td>ESD arrays on every external pin; Vtgt eFuse with auto-retry; replacement procedure.</td></tr>
+<tr><td>Vtgt overcurrent damaging board</td><td><span class="pill pill-tip">Med</span></td><td><span class="pill pill-warn">High</span></td><td>TPS25940 eFuse + INA180 monitor; firmware watchdog of current readings.</td></tr>
+<tr><td>Firmware brick during OTA</td><td><span class="pill pill-tip">Med</span></td><td><span class="pill pill-ok">Low</span></td><td>MCUboot swap-and-revert; signed images; BOOTSEL recovery.</td></tr>
+<tr><td>Profile YAML schema break</td><td><span class="pill pill-tip">Med</span></td><td><span class="pill pill-ok">Low</span></td><td>Versioned schema; firmware refuses unknown schemas with clear error; migration tool.</td></tr>
+<tr><td>3D-printer breakage in production</td><td><span class="pill pill-ok">Low</span></td><td><span class="pill pill-ok">Low</span></td><td>Multiple printers; outsource print-farm fallback (Slant3D, Hubs).</td></tr>
+<tr><td>Concurrent debug+protocol bugs</td><td><span class="pill pill-tip">Med</span></td><td><span class="pill pill-tip">Med</span></td><td>HIL testing in CI; pin USB to core 0, protocols to core 1; well-defined IPC contracts.</td></tr>
+<tr><td>RP2350 cache coherency under SMP</td><td><span class="pill pill-ok">Low</span></td><td><span class="pill pill-warn">High</span></td><td>Use Zephyr kernel objects; <code>.nocache</code> regions for critical buffers.</td></tr>
+<tr><td>Engineer onboarding curve</td><td><span class="pill pill-tip">Med</span></td><td><span class="pill pill-ok">Low</span></td><td>Comprehensive docs; pair-programming for first weeks.</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="decisions" data-search-text="decision log rationale architecture choice">
+<h2><span class="num">15</span>Decision Log</h2>
+
+<p>Record of key architectural decisions made during design discussion, with rationale.</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Decision</th><th>Rationale</th></tr></thead>
+<tbody>
+<tr><td>D-1</td><td><strong>RP2350B over RP2040 / STM32 / nRF</strong></td><td>12 PIO state machines decisively wins for multi-protocol concurrent operation; dual M33 supports SMP cleanly; mature open-source community.</td></tr>
+<tr><td>D-2</td><td><strong>RP2350B (80-pin) over RP2350A (60-pin)</strong></td><td>Pin budget exceeds 30 GPIO. RP2350A insufficient even with optimization.</td></tr>
+<tr><td>D-3</td><td><strong>Zephyr RTOS over pico-sdk / FreeRTOS</strong></td><td>SMP, USB-Device-Next, MCUboot, LittleFS, Shell, devicetree, MPU isolation, logging — all built-in. ~1 week of PIO toolchain plumbing as one-time cost.</td></tr>
+<tr><td>D-4</td><td><strong>SPI/DSPI/QSPI mode-shared on one connector</strong></td><td>Developer uses one mode at a time. Frees PIO state machines and pins.</td></tr>
+<tr><td>D-5</td><td><strong>Two UARTs on separate hardware peripherals</strong></td><td>Different voltage domains (Vtgt vs Vio). Standard DAPLink convention.</td></tr>
+<tr><td>D-6</td><td><strong>SWO over CMSIS-DAP v2 bulk endpoint</strong></td><td>Spec-correct. probe-rs / OpenOCD auto-correlate with debug session. Saves a CDC slot.</td></tr>
+<tr><td>D-7</td><td><strong>Two flash chips (16 MB boot + 128 MB data)</strong></td><td>Avoids XIP ↔ emulation contention. Wear-leveling isolation.</td></tr>
+<tr><td>D-8</td><td><strong>4-layer PCB, not 2-layer</strong></td><td>RP2350B QFN-80 escape routing; USB diff pair impedance; QSPI 50 MHz; 4–5 power rails.</td></tr>
+<tr><td>D-9</td><td><strong>Logic analyser deferred to v2</strong></td><td>Trades 6 weeks for low marginal value. Hardware infra prepped for clean v2 add.</td></tr>
+<tr><td>D-10</td><td><strong>SUMP protocol for v2 LA</strong></td><td>Pulseview compatibility free, libsigrok inside Tauri free.</td></tr>
+<tr><td>D-11</td><td><strong>WS2812 LED chain (1 GPIO) over individual LEDs</strong></td><td>Saves 10 GPIOs at cost of $0.40 BOM and one PIO SM.</td></tr>
+<tr><td>D-12</td><td><strong>Buttons via ADC resistor ladder</strong></td><td>Saves 3 GPIOs. Standard low-cost technique.</td></tr>
+<tr><td>D-13</td><td><strong>Mixed level shifters</strong></td><td>Right shifter for each speed/direction need.</td></tr>
+<tr><td>D-14</td><td><strong>MCUboot with ECDSA-P256, swap-and-revert</strong></td><td>Standard Zephyr OTA. Brick-proof via revert-on-fail.</td></tr>
+<tr><td>D-15</td><td><strong>YAML profile schema for emulation</strong></td><td>Human-editable, git-diff-friendly, schema-versioned.</td></tr>
+<tr><td>D-16</td><td><strong>Tauri (Rust + web) for GUI</strong></td><td>Cross-platform, small binary, reuses CLI core.</td></tr>
+<tr><td>D-17</td><td><strong>3D-printed PETG enclosure with TPU buttons</strong></td><td>Bambu Lab in-house, ~$2.80/unit, fast iteration.</td></tr>
+<tr><td>D-18</td><td><strong>RISC-V via standard JTAG passthrough</strong></td><td>Zero hardware changes, zero extra firmware.</td></tr>
+<tr><td>D-19</td><td><strong>BOOTSEL via recessed pinhole button</strong></td><td>Recovery path is critical. Industry standard.</td></tr>
+<tr><td>D-20</td><td><strong>Lion Circuits primary fab for prototypes</strong></td><td>Bangalore-local, walk-in pickup, 5–7 day cycle.</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="glossary" data-search-text="glossary terms acronyms">
+<h2><span class="num">16</span>Glossary</h2>
+
+<dl class="gloss-grid">
+<div class="gloss-item"><dt>CMSIS-DAP</dt><dd>ARM's standard debug-probe USB protocol.</dd></div>
+<div class="gloss-item"><dt>SWD</dt><dd>Serial Wire Debug — 2-pin ARM debug interface.</dd></div>
+<div class="gloss-item"><dt>JTAG</dt><dd>5-pin industry-standard debug/test interface.</dd></div>
+<div class="gloss-item"><dt>SWO</dt><dd>Serial Wire Output — single-wire trace from target.</dd></div>
+<div class="gloss-item"><dt>ITM / DWT / TPIU</dt><dd>ARM CoreSight components for tracing.</dd></div>
+<div class="gloss-item"><dt>PIO</dt><dd>Programmable I/O — RP2350's bit-banging coprocessor.</dd></div>
+<div class="gloss-item"><dt>SM</dt><dd>State Machine — one of PIO's bit-banging engines.</dd></div>
+<div class="gloss-item"><dt>SMP</dt><dd>Symmetric Multi-Processing — both M33 cores share one OS image.</dd></div>
+<div class="gloss-item"><dt>MCUboot</dt><dd>Open-source bootloader with image signing, swap, revert.</dd></div>
+<div class="gloss-item"><dt>SMP server</dt><dd>Simple Management Protocol used for MCUmgr OTA.</dd></div>
+<div class="gloss-item"><dt>MCUmgr</dt><dd>Apache Mynewt's CLI for SMP-protocol device management.</dd></div>
+<div class="gloss-item"><dt>LittleFS</dt><dd>Power-loss-resilient flash file system.</dd></div>
+<div class="gloss-item"><dt>QSPI / DSPI</dt><dd>Quad / Dual SPI — multi-bit-wide variants of SPI.</dd></div>
+<div class="gloss-item"><dt>TC2030</dt><dd>Tag-Connect's reusable cable-to-pad debug connector.</dd></div>
+<div class="gloss-item"><dt>SUMP</dt><dd>OpenBench Logic Sniffer protocol — open standard for LAs.</dd></div>
+<div class="gloss-item"><dt>libsigrok / Pulseview</dt><dd>Open-source library + GUI for logic analysers.</dd></div>
+<div class="gloss-item"><dt>WS2812</dt><dd>Single-wire-data RGB LED, daisy-chainable.</dd></div>
+<div class="gloss-item"><dt>WebUSB</dt><dd>USB protocol that exposes device control to web pages.</dd></div>
+<div class="gloss-item"><dt>ENIG</dt><dd>Electroless Nickel Immersion Gold — premium PCB finish.</dd></div>
+<div class="gloss-item"><dt>HSTX</dt><dd>RP2350 High-Speed Transmit peripheral.</dd></div>
+</dl>
+</section>
+
+<!-- ============================================================ -->
+<section id="references" data-search-text="references links sources">
+<h2><span class="num">17</span>References</h2>
+
+<h3>Silicon &amp; firmware</h3>
+<ul>
+<li><a href="https://www.raspberrypi.com/products/rp2350/">RP2350 — Raspberry Pi product page</a></li>
+<li><a href="https://github.com/raspberrypi/hardware-design-guide">RP2350 hardware design guide (KiCad templates)</a></li>
+<li><a href="https://github.com/raspberrypi/debugprobe">raspberrypi/debugprobe — official RP2040 Debug Probe firmware</a></li>
+<li><a href="https://www.raspberrypi.com/documentation/microcontrollers/debug-probe.html">Raspberry Pi Debug Probe documentation</a></li>
+<li><a href="https://github.com/rgrr/yapicoprobe">rgrr/yapicoprobe — fault detection in PIO, 25 MHz SWD</a></li>
+<li><a href="https://github.com/essele/pico_debug">essele/pico_debug — embedded GDB server, optimized flashing</a></li>
+<li><a href="https://docs.zephyrproject.org/latest/">Zephyr documentation</a></li>
+<li><a href="https://docs.mcuboot.com/">MCUboot documentation</a></li>
+<li><a href="https://github.com/apache/mynewt-mcumgr-cli">mcumgr CLI (Apache)</a></li>
+<li><a href="https://probe.rs/">probe-rs — Rust-based debug probe</a></li>
+<li><a href="https://arm-software.github.io/CMSIS-DAP/latest/">CMSIS-DAP specification (ARM)</a></li>
+<li><a href="https://github.com/ARM-software/CMSIS-DAP">ARM-software/CMSIS-DAP — reference firmware</a></li>
+<li><a href="https://github.com/ARMmbed/DAPLink">DAPLink — productized debug-probe firmware</a></li>
+<li><a href="https://www.sump.org/projects/analyzer/protocol/">OpenBench Logic Sniffer (SUMP) protocol — for v2 LA</a></li>
+</ul>
+
+<h3>Hardware</h3>
+<ul>
+<li><a href="https://www.analog.com/en/products/max30001g.html">MAX30001G — for emulation profile design</a></li>
+<li><a href="https://www.ti.com/product/TPS25940">TPS25940 eFuse</a></li>
+<li><a href="https://www.ti.com/product/INA180">INA180 current sense amplifier</a></li>
+<li><a href="https://www.winbond.com/hq/product/code-storage-flash-memory/qspinor-flash/">Winbond W25Q series flash</a></li>
+<li><a href="https://www.tag-connect.com/info/cad-files">Tag-Connect KiCad footprints</a></li>
+<li><a href="https://www.snapeda.com/">SnapEDA — KiCad-native part library</a></li>
+<li><a href="https://www.ultralibrarian.com/">Ultra Librarian — vendor-published parts</a></li>
+</ul>
+
+<h3>Manufacturing (India)</h3>
+<ul>
+<li><a href="https://www.lioncircuits.com/">Lion Circuits — Bangalore PCB fab</a></li>
+<li><a href="https://www.pcbpower.com/">PCB Power Market — Gandhinagar</a></li>
+<li><a href="https://www.megabytecircuit.com/">Megabyte Circuit Systems — Bangalore</a></li>
+<li><a href="https://zbotic.in/indian-pcb-manufacturers-compared-2026-price-quality-lead-time/">Indian PCB manufacturers comparison 2026</a></li>
+</ul>
+
+<h3>Tools</h3>
+<ul>
+<li><a href="https://www.kicad.org/">KiCad — schematic + PCB design</a></li>
+<li><a href="https://www.freecad.org/">FreeCAD — mechanical CAD</a></li>
+<li><a href="https://github.com/CadQuery/cadquery">CadQuery — Python parametric CAD</a></li>
+<li><a href="https://github.com/SoftFever/OrcaSlicer">OrcaSlicer — slicer for Bambu Lab</a></li>
+<li><a href="https://tauri.app/">Tauri — desktop app framework (Rust)</a></li>
+</ul>
+
+<h3>Process &amp; design references</h3>
+<ul>
+<li><a href="https://docs.zephyrproject.org/latest/services/device_mgmt/index.html">Zephyr Device Management (MCUmgr / SMP)</a></li>
+<li><a href="https://docs.zephyrproject.org/latest/services/logging/index.html">Zephyr Logging subsystem</a></li>
+<li><a href="https://docs.zephyrproject.org/latest/services/file_system/index.html">Zephyr File system (LittleFS)</a></li>
+<li><a href="https://github.com/raspberrypi/pico-sdk">pico-sdk (for reference)</a></li>
+<li><a href="https://sigrok.org/wiki/Protocol_decoders">sigrok protocol decoders (~80, MIT-licensed)</a></li>
+</ul>
+</section>
+
+<hr>
+<footer>
+<p>edevkit1 v1 design specification — open-source embedded development tool. This document is the source of truth for v1 spec; supersedes any prior chat / draft descriptions. Contributions welcome via PR.</p>
+<p>Locked: 2026-04-29. Next review at v0.1 PCB return.</p>
+</footer>
+
+</main>
+
+</div> <!-- /layout -->
+
+<!-- Floating tools -->
+<div class="float-tools">
+  <button class="float-btn" id="print-btn" title="Print" onclick="window.print()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18h12v4H6zM18 14h.01"/><rect x="2" y="9" width="20" height="9" rx="2"/></svg>
+  </button>
+  <button class="float-btn" id="scroll-top" title="Scroll to top">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg>
+  </button>
+</div>
+
+<script>
+  // ============ Theme toggle ============
+  const themeButtons = document.querySelectorAll('[data-theme-set]');
+  function setTheme(t) {
+    if (t === 'auto') {
+      document.documentElement.removeAttribute('data-theme');
+    } else {
+      document.documentElement.setAttribute('data-theme', t);
+    }
+    localStorage.setItem('edevkit-theme', t);
+    themeButtons.forEach(b => b.dataset.active = (b.dataset.themeSet === t));
+  }
+  themeButtons.forEach(b => b.addEventListener('click', () => setTheme(b.dataset.themeSet)));
+  setTheme(localStorage.getItem('edevkit-theme') || 'auto');
+
+  // ============ Active TOC link via IntersectionObserver ============
+  const sections = document.querySelectorAll('section[id], h3[id]');
+  const tocLinks = document.querySelectorAll('nav.toc a[href^="#"]');
+  const linkMap = new Map();
+  tocLinks.forEach(a => linkMap.set(a.getAttribute('href').slice(1), a));
+
+  let currentActive = null;
+  const obs = new IntersectionObserver((entries) => {
+    // pick the topmost intersecting section
+    const visible = entries.filter(e => e.isIntersecting);
+    if (visible.length === 0) return;
+    visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+    const id = visible[0].target.id;
+    const link = linkMap.get(id);
+    if (link && link !== currentActive) {
+      tocLinks.forEach(a => a.classList.remove('active'));
+      link.classList.add('active');
+      currentActive = link;
+      // also light up the parent l1 if this is a l2
+      if (link.classList.contains('l2')) {
+        const parent = link.closest('li').parentElement.closest('li').querySelector('.l1');
+        parent?.classList.add('active');
+      }
+    }
+  }, { rootMargin: '-80px 0px -70% 0px', threshold: 0 });
+  sections.forEach(s => obs.observe(s));
+
+  // ============ Search/filter ============
+  const searchInput = document.getElementById('search');
+  const allSections = document.querySelectorAll('section[data-search-text]');
+  searchInput.addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    if (!q) {
+      allSections.forEach(s => s.hidden = false);
+      document.querySelectorAll('tbody tr').forEach(r => r.classList.remove('search-hidden'));
+      return;
+    }
+    allSections.forEach(s => {
+      const text = (s.dataset.searchText + ' ' + s.textContent).toLowerCase();
+      s.hidden = !text.includes(q);
+    });
+    // Also filter table rows
+    document.querySelectorAll('tbody tr').forEach(r => {
+      r.classList.toggle('search-hidden', !r.textContent.toLowerCase().includes(q));
+    });
+  });
+
+  // Cmd/Ctrl K to focus search
+  window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+    }
+    if (e.key === 'Escape' && document.activeElement === searchInput) {
+      searchInput.value = '';
+      searchInput.dispatchEvent(new Event('input'));
+      searchInput.blur();
+    }
+  });
+
+  // ============ Copy buttons on code blocks ============
+  document.querySelectorAll('pre').forEach(pre => {
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = 'Copy';
+    btn.addEventListener('click', async () => {
+      const text = pre.querySelector('code')?.innerText || pre.innerText;
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = 'Copied!';
+        btn.dataset.copied = 'true';
+        setTimeout(() => {
+          btn.textContent = 'Copy';
+          delete btn.dataset.copied;
+        }, 1500);
+      } catch (err) {
+        btn.textContent = 'Failed';
+      }
+    });
+    pre.appendChild(btn);
+  });
+
+  // ============ Scroll to top button ============
+  const scrollTop = document.getElementById('scroll-top');
+  window.addEventListener('scroll', () => {
+    scrollTop.classList.toggle('visible', window.scrollY > 600);
+  });
+  scrollTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+
+  // hide back-to-hub link when opened via file:// (no hub running)
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) bl.style.display = 'none';
+  }
+</script>
+
+</body>
+</html>

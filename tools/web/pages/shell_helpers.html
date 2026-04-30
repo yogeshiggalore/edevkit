@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — Shell helpers reference</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="edevkit — shell helpers reference. The bash/zsh and PowerShell scripts that wrap west, sysbuild, probe-rs, UF2 flashing, mcumgr OTA, and the docs hub launcher into single commands.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(13% 0.012 240)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ─────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:    oklch(20% 0.02 240);
+    --fg-2:  oklch(36% 0.02 240);
+    --muted: oklch(50% 0.02 240);
+    --faint: oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+      --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+      --brand-ring: oklch(72% 0.15 215 / 0.40);
+      --accent: oklch(80% 0.15 70);   --accent-soft: oklch(28% 0.06 70);
+      --good:   oklch(72% 0.16 145);  --good-soft: oklch(28% 0.06 145);
+      --warn:   oklch(82% 0.16 80);   --warn-soft: oklch(28% 0.06 80);
+      --danger: oklch(70% 0.20 28);   --danger-soft: oklch(28% 0.06 28);
+      --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240); --bg-elev: oklch(20% 0.018 240);
+      --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240); --line-strong: oklch(35% 0.022 240);
+      --grid-dot: oklch(100% 0 0 / .05); --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+      --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+      --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+    --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+    --brand-ring: oklch(72% 0.15 215 / 0.40);
+    --accent: oklch(80% 0.15 70);   --accent-soft: oklch(28% 0.06 70);
+    --good:   oklch(72% 0.16 145);  --good-soft: oklch(28% 0.06 145);
+    --warn:   oklch(82% 0.16 80);   --warn-soft: oklch(28% 0.06 80);
+    --danger: oklch(70% 0.20 28);   --danger-soft: oklch(28% 0.06 28);
+    --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240); --bg-elev: oklch(20% 0.018 240);
+    --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240); --line-strong: oklch(35% 0.022 240);
+    --grid-dot: oklch(100% 0 0 / .05); --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+    --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+    --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text); font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* topbar (matches installation.html) */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner { max-width: 1040px; margin: 0 auto; padding: 12px 28px; display: flex; align-items: center; gap: 14px; }
+  .back-link { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-family: var(--font-sans); font-size: 14px; font-weight: 600; color: var(--fg-2); padding: 6px 10px; border-radius: var(--r-2); transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%); flex-shrink: 0; position: relative; }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px; background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .doc-tag { font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); padding: 4px 10px; border-radius: var(--r-pill); background: var(--bg-soft); border: 1px solid var(--line); }
+  .grow { flex: 1; }
+  .theme-btn { width: 36px; height: 36px; display: grid; place-items: center; background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--r-2); color: var(--fg-2); cursor: pointer; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
+  .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .theme-btn svg { width: 16px; height: 16px; }
+  :root[data-theme="dark"] .theme-btn .sun { display: block; } :root[data-theme="dark"] .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .theme-btn .moon { display: none; }
+  }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  header.hero { border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 36px; }
+  header.hero .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .16em; color: var(--muted); padding: 5px 11px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--r-pill); }
+  header.hero .eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent); }
+
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 { font-size: clamp(32px, 5vw, 44px); line-height: 1.05; margin: 14px 0 12px; letter-spacing: -.025em; font-weight: 700; }
+  h2 { font-size: 26px; margin-top: 56px; padding-bottom: 6px; border-bottom: 1px solid var(--line); letter-spacing: -.018em; font-weight: 700; }
+  h3 { font-size: 19px; margin-top: 28px; margin-bottom: 8px; letter-spacing: -.012em; font-weight: 600; }
+
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  code, pre, .mono { font-family: var(--font-mono); }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.875em; border: 1px solid var(--code-border); }
+  pre { position: relative; background: var(--code-bg); border: 1px solid var(--code-border); border-radius: var(--r-3); padding: 14px 16px; overflow-x: auto; font-size: 13.5px; line-height: 1.55; box-shadow: var(--shadow-1); }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  .callout { margin: 18px 0; padding: 14px 18px; border-radius: var(--r-3); background: var(--bg-soft); border: 1px solid var(--line); border-left: 3px solid var(--line-strong); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout .label { display: inline-block; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; font-weight: 700; margin-right: 8px; color: var(--muted); }
+
+  /* helper-card grid */
+  .helpers { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; margin: 18px 0; }
+  .helper-card { padding: 18px 20px; background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--r-3); transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
+  .helper-card:hover { border-color: color-mix(in oklch, var(--brand) 35%, var(--line)); box-shadow: var(--shadow-1); }
+  .helper-card .name { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--brand); margin-bottom: 4px; }
+  .helper-card .sig { font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .helper-card p { margin: 0; font-size: 14px; color: var(--fg-2); line-height: 1.55; }
+
+  /* table */
+  table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 18px 0; font-size: 14.5px; border: 1px solid var(--line); border-radius: var(--r-3); overflow: hidden; box-shadow: var(--shadow-1); }
+  th, td { border-bottom: 1px solid var(--line-soft); padding: 9px 13px; text-align: left; vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  th { background: var(--bg-soft); font-weight: 600; color: var(--fg-2); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+
+  .pill { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 11px; padding: 2px 9px; border-radius: var(--r-pill); background: var(--brand-soft); color: var(--brand); font-weight: 600; letter-spacing: .04em; border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent); }
+  .small { font-size: 14px; color: var(--muted); }
+
+  footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--faint); font-family: var(--font-mono); font-size: 12px; }
+
+  .scroll-top { position: fixed; bottom: 24px; right: 24px; width: 42px; height: 42px; display: grid; place-items: center; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 50%; color: var(--fg-2); cursor: pointer; opacity: 0; transform: translateY(8px); transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease); box-shadow: var(--shadow-2); z-index: 40; }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; } html { scroll-behavior: auto; } }
+</style>
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">Shell helpers</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <span class="eyebrow">edevkit · workflow · shell helpers</span>
+  <h1>One source command. Every dev task on the bench.</h1>
+  <p class="small">A tiny helper script that wraps <code>west</code>, <strong>sysbuild</strong>, <strong>probe-rs</strong>, BOOTSEL UF2, mcumgr, and the docs hub launcher behind one-word commands. Source it once from your shell rc; type <code>edev_help</code> any time. Works on macOS, Linux, and (via the PowerShell variant) Windows.</p>
+  <p class="small">Based on the <code>edevtoolkit/documents/env_script.txt</code> pattern; edevkit-flavored for RP2350B + sysbuild + the umbrella-product layout.</p>
+</header>
+
+<!-- ───────────────────────────── -->
+<h2 id="why">Why a helper script</h2>
+<p>Without it, every iteration looks like:</p>
+<pre><code>cd ~/projects/temp/zephyrproject
+west build -p always -b rpi_pico2/rp2350a/m33 --sysbuild \
+    -s ~/projects/temp/edevkit/edevkit/firmware/app \
+    -d ~/projects/temp/edevkit/edevkit/firmware/build
+probe-rs download --chip RP2350 --binary-format bin --base-address 0x10000000 \
+    ~/projects/temp/edevkit/edevkit/firmware/build/mcuboot/zephyr/zephyr.bin
+probe-rs download --chip RP2350 --binary-format bin --base-address 0x10040000 \
+    ~/projects/temp/edevkit/edevkit/firmware/build/app/zephyr/zephyr.signed.bin
+…</code></pre>
+<p>With it:</p>
+<pre><code>edev_activate
+cd "$EDEVKIT_REPO/firmware/app"
+edev_build
+edev_flash</code></pre>
+<p>Same effect. Less typing. Layout-vars are the only knobs — no path is hardcoded.</p>
+
+<!-- ───────────────────────────── -->
+<h2 id="install">One-time install</h2>
+
+<p>Pre-requisite: the four layout env vars from <a href="installation.html#layout-pick">installation.html → Pick a layout</a> must already be exported in your shell rc.</p>
+
+<div class="callout info">
+  <span class="label">Recommended — Pattern C (loaded with the venv)</span>
+  Run <code>tools/setup_venv.sh</code> (or <code>setup_venv.ps1</code> on Windows) once. It creates the venv, installs west + docs-hub deps, and appends a one-line <code>source</code> to the venv's <code>activate</code> script. From then on, the helpers are loaded every time you enter the venv — no <code>~/.bashrc</code> edits required.
+</div>
+
+<h3>Linux / macOS / WSL2 (bash, zsh)</h3>
+<pre><code>bash "$EDEVKIT_REPO/tools/setup_venv.sh"
+
+# now whenever you activate, helpers come with it:
+source "$EDEV_VENV/bin/activate"
+edev_help</code></pre>
+
+<h3>Windows (native PowerShell)</h3>
+<pre><code>&amp; "$env:EDEVKIT_REPO\tools\setup_venv.ps1"
+
+# activate brings the helpers along:
+. "$env:EDEV_VENV\Scripts\Activate.ps1"
+edev_help</code></pre>
+
+<h3>What setup_venv does</h3>
+<ol>
+  <li>Creates the venv at <code>$EDEV_VENV</code> if missing (reuses it if present)</li>
+  <li>Upgrades pip + wheel</li>
+  <li>Installs <code>west</code> and the docs-hub deps (<code>fastapi</code>, <code>uvicorn</code>, <code>jinja2</code>)</li>
+  <li>Appends — <em>once</em>, idempotently — this guarded source line to the venv's <code>activate</code>:
+    <pre><code>if [ -n "${EDEVKIT_REPO:-}" ] &amp;&amp; [ -f "$EDEVKIT_REPO/tools/env_helpers.sh" ]; then
+    source "$EDEVKIT_REPO/tools/env_helpers.sh"
+fi</code></pre>
+  </li>
+  <li>Runs <code>west zephyr-export</code> if your Zephyr workspace is initialised</li>
+</ol>
+
+<p>The actual helpers <strong>stay in the repo</strong> at <code>$EDEVKIT_REPO/tools/env_helpers.sh</code>. <code>git pull</code> updates them; the venv's <code>activate</code> picks up the new version on the next session. If you ever <code>rm -rf $EDEV_VENV</code> and re-create it, re-run <code>setup_venv.sh</code> to restore the source line.</p>
+
+<details>
+  <summary class="small" style="cursor: pointer; color: var(--brand);">Alternative — Pattern B (source from shell rc)</summary>
+  <p class="small">If you want the helpers loaded in <em>every</em> shell (not just inside the venv) — for example, you switch in and out of the venv often and don't want to remember <code>edev_activate</code> — append this to your <code>~/.bashrc</code> / <code>~/.zshrc</code> instead:</p>
+  <pre><code>source "$EDEVKIT_REPO/tools/env_helpers.sh"</code></pre>
+  <p class="small">Trade-off: the helpers (and the <code>$PATH</code> addition for pioasm) are present even in shells unrelated to edevkit. Patterns C and B are mutually exclusive — pick one.</p>
+</details>
+
+<div class="callout">
+  <span class="label">Idempotent</span>
+  Sourcing the helper file twice is a no-op (the PATH addition is guarded; functions just get redefined). Re-running <code>setup_venv.sh</code> doesn't re-append the source line.
+</div>
+
+<!-- ───────────────────────────── -->
+<h2 id="reference">Reference</h2>
+
+<p>Every helper checks the four layout vars are set before doing anything; if one is missing, you get a friendly pointer back to the install guide instead of a confusing path error.</p>
+
+<div class="helpers">
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">⚡</span>edev_activate</div>
+    <div class="sig">edev_activate</div>
+    <p>Source the Python venv at <code>$EDEV_VENV/bin/activate</code>. Brings <code>west</code>, <code>pyocd</code>, <code>probe-rs</code> (if installed), <code>mcumgr</code>, <code>kibot</code>, and the docs-hub deps onto your PATH in one shot.</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">🔧</span>westz</div>
+    <div class="sig">westz &lt;args…&gt;</div>
+    <p>Run <code>west</code> from inside <code>$ZEPHYR_WORKSPACE</code>, regardless of your <code>$PWD</code>. West has to resolve modules relative to the workspace top-dir, so this avoids "couldn't find west.yml" errors when you invoke from inside the project repo.</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">📦</span>edev_create_app</div>
+    <div class="sig">edev_create_app &lt;name&gt; [parent]</div>
+    <p>Scaffold a new Zephyr application at <code>$PWD/&lt;name&gt;/</code> (default; override the parent dir with the second arg) with a working <code>CMakeLists.txt</code>, <code>prj.conf</code> (logging + shell enabled), board overlay stub, and a hello-world <code>main.c</code>. Refuses to clobber an existing dir.</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">🧱</span>edev_build</div>
+    <div class="sig">edev_build [src] [board]</div>
+    <p>Pristine <strong>sysbuild</strong> build (MCUboot + signed app). Defaults: <code>src=$PWD</code>, <code>board=$EDEV_BOARD_DEFAULT</code> (<code>rpi_pico2/rp2350a/m33</code>). Output lands at <code>./build-&lt;board-with-slashes-as-underscores&gt;/</code> (e.g. <code>./build-rpi_pico2_rp2350a_m33/</code>).</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">🧱</span>edev_build_simple</div>
+    <div class="sig">edev_build_simple [src] [board]</div>
+    <p>Pristine <strong>non-sysbuild</strong> build. Single <code>zephyr.bin</code> / <code>zephyr.uf2</code>, no MCUboot wrapper. Use for quick samples that don't need OTA.</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">🚀</span>edev_flash</div>
+    <div class="sig">edev_flash [src] [board]</div>
+    <p>Flash via <strong>probe-rs</strong> over SWD. Writes both <code>mcuboot.bin</code> at <code>0x10000000</code> and the signed app at <code>0x10040000</code>. Falls back to a single image if the build is non-sysbuild.</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">🪄</span>edev_flash_uf2</div>
+    <div class="sig">edev_flash_uf2 [src] [board]</div>
+    <p>UF2 drag-and-drop flash for BOOTSEL mode. Polls <code>/Volumes/$EDEV_UF2_VOLUME</code> (macOS) or <code>/media/$USER/$EDEV_UF2_VOLUME</code> (Linux) for up to 30 s, then copies the signed UF2 across. Default volume label: <code>RP2350</code>.</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">📡</span>edev_ota</div>
+    <div class="sig">edev_ota [src] [board]</div>
+    <p>Push the signed image to a running edevkit via <code>mcumgr</code> using the <code>edevkit</code> connection profile. Run <code>mcumgr -c edevkit image test &lt;hash&gt;</code> + <code>… reset</code> after to swap.</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">📺</span>edev_console</div>
+    <div class="sig">edev_console [port]</div>
+    <p>Open a serial console to the kit. Auto-detects <code>/dev/cu.usbmodem*</code> (macOS) or <code>/dev/ttyACM*</code> (Linux). Uses <code>tio</code> if available, falls back to <code>screen</code> at 115200.</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">📚</span>edev_doc</div>
+    <div class="sig">edev_doc [port]</div>
+    <p>Open the local docs hub in your default browser. Starts the FastAPI server in the background (port <code>8765</code> by default) if it isn't already running.</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">❓</span>edev_help</div>
+    <div class="sig">edev_help</div>
+    <p>Print every helper, every default value, and the four layout var values for a quick sanity-check.</p>
+  </div>
+</div>
+
+<!-- ───────────────────────────── -->
+<h2 id="defaults">Defaults &amp; overrides</h2>
+
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Override</th></tr>
+  <tr><td><code>EDEV_BOARD_DEFAULT</code></td><td><code>rpi_pico2/rp2350a/m33</code> (Cortex-M33 cores; same family as edevkit1's RP2350B)</td><td><code>export EDEV_BOARD_DEFAULT=rpi_pico2/rp2350a/hazard3</code> for the RISC-V cores; or <code>rpi_pico_w</code> for a Pico-W detour, etc.</td></tr>
+  <tr><td><code>EDEV_UF2_VOLUME</code></td><td><code>RP2350</code> (the BOOTSEL volume label on RP2350)</td><td>Change if your kit firmware advertises a different label.</td></tr>
+  <tr><td><code>EDEVKIT_REPO</code></td><td>required, no default</td><td>set in <code>.bashrc</code> per the install guide.</td></tr>
+  <tr><td><code>EDEV_VENV</code></td><td>required</td><td>ditto.</td></tr>
+  <tr><td><code>ZEPHYR_WORKSPACE</code></td><td>required</td><td>ditto.</td></tr>
+  <tr><td><code>ZEPHYR_SDK_INSTALL_DIR</code></td><td>required</td><td>ditto.</td></tr>
+</table>
+
+<!-- ───────────────────────────── -->
+<h2 id="workflows">Typical workflows</h2>
+
+<h3>Daily firmware iteration (with SWD probe)</h3>
+<pre><code>edev_activate
+cd "$EDEVKIT_REPO/firmware/app"
+edev_build &amp;&amp; edev_flash &amp;&amp; edev_console</code></pre>
+
+<h3>First-flash via BOOTSEL (no probe yet)</h3>
+<pre><code>edev_activate
+cd "$EDEVKIT_REPO/firmware/app"
+edev_build
+# unplug the kit, hold BOOTSEL, plug back in:
+edev_flash_uf2</code></pre>
+
+<h3>OTA update to a kit running in the field</h3>
+<pre><code>edev_activate
+cd "$EDEVKIT_REPO/firmware/app"
+edev_build
+edev_ota
+# then swap-and-confirm via mcumgr (see installation.html step 11b)</code></pre>
+
+<h3>Scaffold + run a one-off learning sample</h3>
+<pre><code>edev_activate
+edev_create_app blinky_test
+cd "$EDEVKIT_REPO/firmware/blinky_test"
+edev_build_simple &amp;&amp; edev_flash_uf2</code></pre>
+
+<h3>Just open the docs</h3>
+<pre><code>edev_doc                # boots the hub if needed, opens browser</code></pre>
+
+<!-- ───────────────────────────── -->
+<h2 id="mapping">Mapping from edevtoolkit's <code>env_script.txt</code></h2>
+
+<p>If you've used the edevtoolkit pattern before, here's the diff:</p>
+
+<table>
+  <tr><th>edevtoolkit</th><th>edevkit equivalent</th><th>Why</th></tr>
+  <tr><td><code>ZEPHYR_WORKSPACE_EDEV</code></td><td><code>ZEPHYR_WORKSPACE</code></td><td>Drops the project-specific suffix. Now reusable across any Zephyr project on the machine.</td></tr>
+  <tr><td>(none — venv hardcoded)</td><td><code>EDEV_VENV</code></td><td>Layout flexibility — three layouts supported (see install guide).</td></tr>
+  <tr><td><code>EDEV_BOARD_DEFAULT=rpi_pico</code></td><td><code>rpi_pico2/rp2350a/m33</code></td><td>RP2350B (Cortex-M33) vs RP2040. Zephyr 3.7+ requires fully-qualified board targets when a board has multiple cores.</td></tr>
+  <tr><td><code>EDEV_UF2_VOLUME=RPI-RP2</code></td><td><code>RP2350</code></td><td>Different BOOTSEL volume label on RP2350 silicon.</td></tr>
+  <tr><td><code>edev_build</code> (single image)</td><td><code>edev_build</code> (sysbuild) + <code>edev_build_simple</code></td><td>edevkit1 ships with MCUboot for OTA. Sysbuild is the default; the simple flavor is still there for ad-hoc samples.</td></tr>
+  <tr><td><code>edev_flash</code> (UF2 only)</td><td><code>edev_flash</code> (probe-rs) + <code>edev_flash_uf2</code> (BOOTSEL)</td><td>Once you have a kit, you'll mostly use SWD. UF2 stays as the recovery path.</td></tr>
+  <tr><td>—</td><td><code>edev_ota</code>, <code>edev_console</code>, <code>edev_doc</code>, <code>edev_help</code></td><td>New surface area for OTA, serial, and the docs hub.</td></tr>
+</table>
+
+<div class="callout">
+  <span class="label">Same shape, different defaults</span>
+  The <em>spirit</em> of <code>env_script.txt</code> is unchanged: a thin layer of bash functions over <code>west</code>, with a couple of project-aware env vars. Anyone who learned the edevtoolkit pattern can use this without re-learning anything — just type <code>edev_help</code>.
+</div>
+
+<!-- ───────────────────────────── -->
+<h2 id="hacking">Hacking on the helpers</h2>
+
+<p>The script is plain bash — open it and edit:</p>
+<pre><code>$EDITOR "$EDEVKIT_REPO/tools/env_helpers.sh"
+exec $SHELL -l         # reload</code></pre>
+
+<p>Add a helper by appending a function. Conventions:</p>
+<ul>
+  <li>Prefix names with <code>edev_</code> to keep the namespace tidy.</li>
+  <li>Call <code>_edev_check</code> first if the helper needs the layout vars.</li>
+  <li>Default any optional argument with <code>${1:-fallback}</code> so callers can omit positional args.</li>
+  <li>Print friendly status with the emoji prefix convention (<code>🚀</code> launching, <code>🧱</code> building, <code>📡</code> network, <code>✅</code> success, <code>❌</code> failure).</li>
+  <li>Keep the script idempotent — sourcing twice should be a no-op.</li>
+</ul>
+
+<!-- ───────────────────────────── -->
+<h2 id="next">Where to next</h2>
+
+<ul>
+  <li><a href="installation.html">Installation guide</a> — set up the four layout vars + venv + Zephyr workspace.</li>
+  <li><a href="edevkit1.html">edevkit1 design spec</a> — what these helpers ultimately exist to build.</li>
+</ul>
+
+<footer>
+  edevkit · tools/web/pages/shell_helpers.html · sourced from <code>tools/env_helpers.sh</code> · cross-references the <a href="installation.html">installation guide</a> and the <code>env_script.txt</code> pattern from edevtoolkit.
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
+</button>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () { st.classList.toggle('show', scrollY > 600); }, { passive: true });
+    st.addEventListener('click', function () { scrollTo({ top: 0, behavior: 'smooth' }); });
+  }
+
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body>
+</html>
