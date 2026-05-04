@@ -1,0 +1,15 @@
+{
+  "name": "edevkit-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "edevkit docs hub Tailwind build",
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i tailwind.input.css -o static/tailwind.css --minify",
+    "watch:css": "tailwindcss -c tailwind.config.js -i tailwind.input.css -o static/tailwind.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17",
+    "@tailwindcss/typography": "^0.5.15",
+    "@tailwindcss/forms": "^0.5.10"
+  }
+}

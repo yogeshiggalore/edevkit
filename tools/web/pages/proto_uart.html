@@ -1,0 +1,1449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — UART asynchronous serial</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A practitioner's reference on UART asynchronous serial — frame format, baud rates, line standards (TTL/RS-232/RS-422/RS-485), flow control, modem signals, error handling, hardware vs PIO bit-banged UARTs, edevkit1's twin-UART design (target log + test bridge), tooling (tio, screen, picocom, stty), and common pitfalls.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    /* graticule background — top-faded so it doesn't overwhelm */
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar (sticky nav + theme toggle) ────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── OS cards (Linux / macOS / Windows) ────────────────────────────── */
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  /* ── numbered step ─────────────────────────────────────────────────── */
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── checklist ─────────────────────────────────────────────────────── */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  // pre-paint theme — prevents FOUC
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">&larr;</span> edevkit</span>
+    </a>
+    <span class="doc-tag">Protocol &middot; UART</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit &middot; protocols &middot; UART</div>
+  <h1>UART &mdash; asynchronous serial, the lingua franca of embedded</h1>
+  <p class="small">A practitioner's reference on the <strong>Universal Asynchronous Receiver / Transmitter</strong>: the oldest, simplest, most universal serial link in embedded systems. Two wires (TX, RX), no clock line, a baud rate agreed up front, and a frame format both sides know about. That's it &mdash; and that's why every MCU on Earth has at least one. This document covers the wire-level frame, baud-rate generation, line standards (TTL / RS-232 / RS-422 / RS-485), flow control, modem signals, error reporting, hardware-vs-PIO trade-offs, edevkit1's twin-UART layout, and the tooling and gotchas that consume the most bench time.</p>
+  <p class="small"><strong>Audience.</strong> Firmware engineers wiring up a new target's debug console, host-side developers who just want their <code>printf</code>s to land in a terminal, and anyone confronted with a two-wire-three-wire-five-wire serial header on someone else's board and asked to "just talk to it." If you have used a Cortex-M before, this doc fills in the surrounding "but how does the wire actually move bits" part. If you are new to embedded entirely, start here, then read <a href="proto_i2c.html">proto_i2c.html</a> and <a href="proto_spi.html">proto_spi.html</a> for the synchronous-bus cousins.</p>
+  <p class="small"><strong>Where edevkit fits.</strong> edevkit1 carries <em>two</em> independent UART bridges &mdash; one wired to the target's voltage domain (for the target's log output), one wired to the user-selectable Vio domain (for protocol testing against a third device). The two are deliberately not tied together. Both are surfaced to the host as <a href="usb_cdc_acm.html">USB CDC-ACM</a> serial ports. See <a href="edevkit1.html">edevkit1.html</a> &sect;6 for the full hardware rationale.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Foundations</span>
+  <ol>
+    <li><a href="#about">What UART is &mdash; and isn't</a></li>
+    <li><a href="#frame">Frame format &mdash; start, data, parity, stop</a></li>
+    <li><a href="#baud">Baud rates and rate tolerance</a></li>
+  </ol>
+  <span class="heading">On the wire</span>
+  <ol>
+    <li><a href="#levels">Logic levels &amp; line standards</a></li>
+    <li><a href="#flow">Flow control &mdash; none / RTS-CTS / XON-XOFF</a></li>
+    <li><a href="#modem">Modem control signals &mdash; DTR, DSR, DCD, RI</a></li>
+    <li><a href="#errors">Errors &mdash; framing, parity, overrun, break</a></li>
+  </ol>
+  <span class="heading">Implementation</span>
+  <ol>
+    <li><a href="#hw-vs-pio">Hardware UART vs PIO / bit-banged UART</a></li>
+    <li><a href="#edevkit">edevkit1's twin-UART setup</a></li>
+    <li><a href="#zephyr">Zephyr UART API &mdash; concrete code</a></li>
+  </ol>
+  <span class="heading">Day-to-day</span>
+  <ol>
+    <li><a href="#tooling">Host tooling &mdash; tio, screen, picocom, stty</a></li>
+    <li><a href="#pitfalls">Common pitfalls and how to debug them</a></li>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="about">What UART is &mdash; and isn't</h2>
+
+<p>A <strong>UART</strong> is the silicon block that converts parallel bytes inside an MCU into a stream of bits on a single wire, and back. The name is an acronym from the dial-up era &mdash; <em>Universal Asynchronous Receiver / Transmitter</em> &mdash; and the word "Universal" is doing real work: a UART is configurable enough to talk to a 110-baud teletype from 1965, to a 6-Mbaud modern Bluetooth transport, and almost everything in between, with the same handful of registers.</p>
+
+<p>The defining traits, none of which you can change without ceasing to be a UART:</p>
+
+<ul>
+  <li><strong>Asynchronous.</strong> No clock line is shared between the two ends. Each side runs its own clock, and they agree up front on a <em>baud rate</em> &mdash; the bit-time on the wire. The receiver re-synchronises on the falling edge of every start bit, then samples each subsequent bit roughly in its middle.</li>
+  <li><strong>Point-to-point.</strong> Exactly one transmitter and one receiver per direction. There is no addressing, no arbitration, no multi-drop in the base protocol. (RS-485 bolts multi-drop on the wire side; the bytes still flow to one peer at a time.)</li>
+  <li><strong>Full-duplex by default.</strong> TX and RX are separate wires; data can flow both ways simultaneously. Half-duplex variants exist (one-wire UART, RS-485 with the receiver muted while transmitting), but they are downgrades of the base.</li>
+  <li><strong>Byte-oriented frames.</strong> A UART transmits one <em>character</em> at a time, where a character is 5&ndash;9 bits of payload framed by a start bit and one or two stop bits. There is no concept of a "packet" at the UART level &mdash; that is your problem to define on top.</li>
+</ul>
+
+<p>What a UART <em>is not</em>:</p>
+
+<ul>
+  <li><strong>It is not USB.</strong> USB carries serial data, but with framing, error correction, addressing, descriptors, and a 1-ms-tick host master. A USB CDC-ACM endpoint <em>emulates</em> a UART so host software can keep using <code>/dev/ttyACM0</code>, but the wire underneath is utterly unrelated.</li>
+  <li><strong>It is not RS-232.</strong> RS-232 is the line-driver standard from 1960 that puts &plusmn;3&ndash;15 V swing on a connector. Modern MCUs run a UART at 3.3 V or 1.8 V TTL; you bolt on a MAX3232 only when you want to talk to a real RS-232 device.</li>
+  <li><strong>It is not Modbus, SLIP, NMEA, AT, or any other "serial protocol."</strong> Those all sit <em>on top of</em> a UART link. UART moves bytes; framing and meaning are layered above.</li>
+  <li><strong>It is not synchronous (despite the U/S in some chips).</strong> A "USART" peripheral can also do synchronous serial (clocked SPI-ish modes). When asynchronous, it is just a UART.</li>
+</ul>
+
+<div class="callout info">
+  <span class="label">why it is everywhere</span>
+  Two wires. One configuration parameter (the baud rate, plus a couple of byte-format bits). Predictable behaviour at any clock speed from kHz to MHz. No external reference, no addressing, no master/slave roles to negotiate. <em>Every</em> MCU has at least one UART, and the bring-up "I see characters!" moment is usually the first sign that an unknown board is alive at all.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="frame">Frame format &mdash; start, data, parity, stop</h2>
+
+<p>The UART line is held <strong>idle high</strong> (logic 1, also called the <em>mark</em> state, a holdover from teletype current-loop days where current-flowing was the resting condition). To transmit a character the sender drives the line low for one bit-time &mdash; the <strong>start bit</strong> &mdash; and then shifts out the data bits, optional parity, and one or more stop bits returning the line to idle.</p>
+
+<h3>Frame field-by-field</h3>
+
+<table>
+<thead><tr><th>Field</th><th>Width</th><th>Polarity</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td>Idle</td><td>any</td><td>High (mark)</td><td>Default line state. The receiver waits here for a falling edge.</td></tr>
+<tr><td>Start bit</td><td>1 bit</td><td>Low (space)</td><td>Falling edge re-syncs the receiver clock; a stable low half-bit-time later confirms it isn't noise.</td></tr>
+<tr><td>Data bits</td><td>5, 6, 7, 8, or 9</td><td>LSB-first by convention</td><td>The payload character. 8 bits is the modern default; 7 lingers in legacy ASCII-only links; 9 is used by some address-frame protocols.</td></tr>
+<tr><td>Parity bit</td><td>0 or 1 bit</td><td>Even / odd / mark / space / none</td><td>One-bit error detection; modern systems almost always use <em>none</em> and rely on higher layers.</td></tr>
+<tr><td>Stop bit(s)</td><td>1, 1.5, or 2 bits</td><td>High (mark)</td><td>Guarantees a high-time gap so the next start bit's falling edge is unambiguous.</td></tr>
+</tbody>
+</table>
+
+<p>The conventional shorthand <strong>8N1</strong> means "8 data bits, No parity, 1 stop bit" &mdash; that is the modern default and what 99 % of debug consoles use. 7E1 (7 data + Even parity + 1 stop) shows up in older industrial gear; 8E1, 8O1, and 8N2 occasionally in oddball legacy. Always state the format alongside the baud rate; "115200" alone is ambiguous.</p>
+
+<h3>Worked example: sending the ASCII character "A" (0x41) at 8N1</h3>
+
+<p>0x41 is binary <code>0100&nbsp;0001</code>. UART is LSB-first on the wire, so the bits leave the shift register in the order <code>1&nbsp;0&nbsp;0&nbsp;0&nbsp;0&nbsp;0&nbsp;1&nbsp;0</code>, framed by start (low) and stop (high):</p>
+
+<pre><code>      |&lt; 1 bit time &gt;|
+      |              |
+idle  | s  d0 d1 d2 d3 d4 d5 d6 d7 sp |  idle
+______          ____             ___________
+      |        |    |           |
+       \      /      \_________/
+        \____/
+
+bit:    S  1  0  0  0  0  0  1  0  P
+        ^                          ^
+        start                      stop
+        bit  (LSB-first payload)   bit
+
+decoded:    bit0=1 bit1=0 bit2=0 bit3=0 bit4=0 bit5=0 bit6=1 bit7=0
+            =&gt; 0b01000001  =&gt;  0x41  =&gt;  'A'</code></pre>
+
+<p>At 115200 baud each bit lasts 1 / 115200 s &asymp; 8.68 &micro;s, so the entire 10-bit frame for "A" occupies 86.8 &micro;s on the wire. At 9600 baud the same frame takes 1.04 ms. The character throughput is therefore <code>baud / 10</code> for 8N1 (or <code>baud / 11</code> with one parity bit).</p>
+
+<div class="callout">
+  <span class="label">where the receiver samples</span>
+  A standard UART receiver oversamples the line at 8&times; or 16&times; the baud rate. On the falling edge of the start bit it waits half a bit-time, re-checks (rejects if it has gone back to high &mdash; the original edge was noise), then samples the centre of each subsequent bit. With a 16&times; oversample clock, the receiver can absorb up to roughly &plusmn;5 % aggregate clock mismatch over a 10-bit frame before it samples the wrong half of the stop bit.
+</div>
+
+<h3>The 9-bit "address" mode</h3>
+
+<p>9-bit data plus stop is a legacy convention used by some industrial multi-drop networks (notably 9-bit RS-485 setups, and a handful of automotive buses): the 9th bit is treated as an address-flag, set on the first byte of a packet and clear on subsequent data. Receivers with a hardware <em>multi-processor mode</em> can wake up only on address bytes and ignore data destined for other nodes. You almost never see it on a debug console.</p>
+
+<h3>Parity: present, mostly vestigial</h3>
+
+<p>Parity adds one bit at the end of the data field. The transmitter computes it so the count of 1s in (data + parity) matches a parity rule, and the receiver checks the count on arrival.</p>
+
+<table>
+<thead><tr><th>Parity</th><th>Rule</th><th>Use</th></tr></thead>
+<tbody>
+<tr><td><code>none</code></td><td>No parity bit transmitted.</td><td>The default everywhere. Higher layers (CRC, framing) catch errors.</td></tr>
+<tr><td><code>even</code></td><td>Total 1s in data+parity is even.</td><td>Detects single-bit errors. Common in older industrial links.</td></tr>
+<tr><td><code>odd</code></td><td>Total 1s in data+parity is odd.</td><td>Same detection power as even, just a different convention.</td></tr>
+<tr><td><code>mark</code></td><td>Parity bit always 1.</td><td>Used as a 9th data bit hack &mdash; e.g. driver enable on RS-485.</td></tr>
+<tr><td><code>space</code></td><td>Parity bit always 0.</td><td>Same hack, opposite polarity.</td></tr>
+</tbody>
+</table>
+
+<p>Single-bit parity is a famously weak error detector: it cannot catch double-bit errors and adds one bit of overhead per character. A real link should rely on a CRC or message-level integrity check; parity persists only because changing it would break compatibility with a million field-deployed devices. For a debug console: <code>none</code>.</p>
+
+<!-- =========================================================== -->
+<h2 id="baud">Baud rates and rate tolerance</h2>
+
+<p>The <strong>baud rate</strong> is the symbol rate on the wire &mdash; for plain UART, equivalent to the bit rate, since each symbol is one bit. The two ends of a link must agree on it; mismatch is the single most common cause of "garbage characters" during bring-up.</p>
+
+<h3>Common baud rates</h3>
+
+<table>
+<thead><tr><th>Baud</th><th>Bit time</th><th>Char time (8N1, 10 bits)</th><th>Where you see it</th></tr></thead>
+<tbody>
+<tr><td><code>9600</code></td><td>104.2 &micro;s</td><td>1.04 ms</td><td>Old AT modems, GPS NMEA, ESP8266 pre-flash boot ROM, "safe" default for noisy long cables.</td></tr>
+<tr><td><code>19200</code></td><td>52.1 &micro;s</td><td>521 &micro;s</td><td>Industrial Modbus, some legacy embedded.</td></tr>
+<tr><td><code>38400</code></td><td>26.0 &micro;s</td><td>260 &micro;s</td><td>Older Linux serial consoles, some BMC headers.</td></tr>
+<tr><td><code>57600</code></td><td>17.4 &micro;s</td><td>174 &micro;s</td><td>Bluetooth HCI default on a few stacks, occasional console.</td></tr>
+<tr><td><code>115200</code></td><td>8.68 &micro;s</td><td>86.8 &micro;s</td><td><strong>The canonical embedded default.</strong> U-Boot, Zephyr, Linux kernel, almost every MCU debug console out of the box.</td></tr>
+<tr><td><code>230400</code></td><td>4.34 &micro;s</td><td>43.4 &micro;s</td><td>Faster log-streaming; works on most USB-serial bridges.</td></tr>
+<tr><td><code>460800</code></td><td>2.17 &micro;s</td><td>21.7 &micro;s</td><td>Bulk firmware upload over UART, e.g. ESP32 esptool.</td></tr>
+<tr><td><code>921600</code></td><td>1.085 &micro;s</td><td>10.85 &micro;s</td><td>Upper edge of "reliable" on a clean board with a short cable. Many CH340/CP2102 bridges support it; SI degrades fast above this.</td></tr>
+<tr><td><code>1500000 (1.5M)</code></td><td>667 ns</td><td>6.67 &micro;s</td><td>Bluetooth HCI on H4/H5 transports, log dumps where you control both ends.</td></tr>
+<tr><td><code>3000000 (3M)</code></td><td>333 ns</td><td>3.33 &micro;s</td><td>Modern WiFi/BT combo HCI, FT232H high-speed mode. Demands clean signalling.</td></tr>
+<tr><td><code>6000000 (6M)</code></td><td>167 ns</td><td>1.67 &micro;s</td><td>Top end of FTDI parts, some BLE controllers. PCB-level routing, no flying leads.</td></tr>
+</tbody>
+</table>
+
+<h3>Why 115200 is the canonical default</h3>
+
+<p>It is fast enough that a few KB of boot log doesn't take painful seconds, slow enough that almost any USB-serial bridge supports it, and it falls out of nearly every common MCU clock as a near-perfect divider:</p>
+
+<ul>
+  <li>From a 12 MHz crystal: 12 000 000 / 115200 = 104.17, error 0.16 %.</li>
+  <li>From a 48 MHz peripheral clock with a 16&times;-oversampling UART: 48 000 000 / 16 / 115200 = 26.04, the fractional 0.04 trims out via the divider's fractional part.</li>
+  <li>From the RP2350's typical 125 MHz peripheral clock: 125 000 000 / 16 / 115200 = 67.82, well within the UART's fractional divider range.</li>
+</ul>
+
+<p>By the time a board is shipping, "115200 8N1" has become a tribal handshake: stick a TTL-serial cable on the header, open <code>tio /dev/ttyACM0</code>, and you almost certainly see something legible.</p>
+
+<h3>Rate tolerance &mdash; the &plusmn;2.5 % rule</h3>
+
+<p>A UART receiver samples each bit near its centre. The cumulative timing error budget over a single character (start + 8 data + stop = 10 bit-times) is roughly &plusmn;5 % aggregate before the stop-bit sample lands in the wrong half. By convention each end is allowed up to <strong>&plusmn;2.5 %</strong> of clock error so the worst-case sum stays under the budget. That is why MCUs always reach for a crystal (typically &plusmn;20 ppm = &plusmn;0.002 %) for the system clock when a UART is involved &mdash; the internal RC oscillator on most parts is &plusmn;1&ndash;3 % over temperature and that eats most of your budget by itself.</p>
+
+<p>At higher baud rates the absolute error tightens: 2.5 % of 6 Mbaud is 150 kHz, and most internal RC oscillators can swing further than that across temperature. So 6 Mbaud requires a crystal-quality reference, properly terminated traces, and short cables. The typical breakdown isn't bit-time error per se &mdash; it's <em>jitter</em> from PLL stages or PIO state-machine wakeup that pushes individual edges out of tolerance.</p>
+
+<h3>The baud-rate generator</h3>
+
+<p>Inside an MCU, the UART block contains a programmable divider that takes the peripheral clock down to <code>16 &times; baud</code> (or <code>8 &times; baud</code> on lower-cost cores). On older parts the divider was integer-only, and many baud rates were unreachable from common crystals (3.6864 MHz crystals exist precisely because they are an integer multiple of every standard baud rate). Modern UARTs &mdash; including the RP2350's PL011-derived block &mdash; use a <strong>fractional divider</strong>: an integer part plus a 6-bit fractional part, so the divider can hit any baud rate within a tiny error margin from any reasonable peripheral clock. See the RP2350 datasheet, <em>UART</em> chapter, for the exact register layout.</p>
+
+<!-- =========================================================== -->
+<h2 id="levels">Logic levels &amp; line standards</h2>
+
+<p>The UART <em>protocol</em> says nothing about voltages on the wire. Several different physical-layer standards sit underneath the same byte-format. They are distinguished by signalling type (single-ended vs differential), voltage swing, drive strength, and how they handle multi-drop.</p>
+
+<table>
+<thead><tr><th>Standard</th><th>Signalling</th><th>Driver level (typ.)</th><th>Receiver threshold</th><th>Max length / rate</th><th>Topology</th></tr></thead>
+<tbody>
+<tr><td><strong>TTL UART</strong></td><td>Single-ended vs GND</td><td>0 V / Vcc (1.8, 3.3 V)</td><td>~Vcc/2</td><td>≲ 1 m / up to ~6 Mbaud on PCB</td><td>Point-to-point, full duplex</td></tr>
+<tr><td><strong>RS-232</strong></td><td>Single-ended vs GND</td><td>&minus;3 to &minus;15 V (mark) / +3 to +15 V (space)</td><td>&plusmn;3 V hysteresis</td><td>~15 m at 19200 / ~3 m at 115200</td><td>Point-to-point, full duplex (DTE&harr;DCE)</td></tr>
+<tr><td><strong>RS-422</strong></td><td>Differential pair (A,B)</td><td>&plusmn;2 to &plusmn;6 V differential</td><td>200 mV differential</td><td>~1200 m at 100 kbaud / 12 m at 10 Mbaud</td><td>One driver, up to 10 receivers</td></tr>
+<tr><td><strong>RS-485</strong></td><td>Differential pair (A,B)</td><td>&plusmn;1.5 to &plusmn;6 V differential</td><td>200 mV differential</td><td>~1200 m at 100 kbaud / 12 m at 10 Mbaud</td><td>Up to 32 (or 256 with low-load tx) drivers, multi-drop</td></tr>
+</tbody>
+</table>
+
+<h3>TTL UART &mdash; the MCU-native level</h3>
+
+<p>Inside an MCU and on a typical dev-board header, "UART" means single-ended swing between 0 V and the I/O supply (3.3 V on most modern parts, 1.8 V on the latest ULP families). High = idle = mark = 1; low = active = space = 0. This is what every Zephyr / Pi Pico / Arduino tutorial implicitly assumes when it says "connect TX to RX."</p>
+
+<p>TTL UART is happy on a few centimetres of jumper wire at 115200, and on a clean PCB up to maybe 6 Mbaud. It is <em>not</em> happy across a desk on flying leads &mdash; cable capacitance rounds the edges off, ground bounce shifts the threshold, and the receiver starts seeing phantom edges. If your "serial" cable is more than about 30 cm and runs more than 230400 baud, expect to add a level shifter or move to a differential standard.</p>
+
+<h3>RS-232 &mdash; the ancestor</h3>
+
+<p>RS-232 dates from 1960 and was specified for connecting a Data Terminal Equipment (DTE, your computer) to Data Communications Equipment (DCE, a modem). The physical layer uses inverted polarity vs TTL and large voltage swings: a "1" (mark) is &minus;3 to &minus;15 V, a "0" (space) is +3 to +15 V, both measured against signal ground. The wide swing buys it noise margin and reach over multi-metre cables.</p>
+
+<p>Modern MCUs do not produce RS-232 levels &mdash; they produce TTL. A MAX3232 or similar charge-pump driver chip translates between TTL and RS-232 voltages. This is why the cheap "USB-to-serial" cables in a parts drawer almost always come with RS-232 levels at the connector end (a DB9 or 3.5 mm jack); they expect to talk to a real legacy device. <strong>Never plug an RS-232 cable directly into a 3.3 V GPIO &mdash; the 12 V swing will likely destroy the pin.</strong></p>
+
+<div class="callout warn">
+  <span class="label">don't mix levels</span>
+  TTL-into-RS-232 input does nothing (the receiver sits in an undefined zone). RS-232-into-TTL input <em>damages</em> the MCU pin (the silicon ESD diodes clamp briefly, then fail open). USB-to-serial dongles labelled "RS-232" need a MAX3232-class chip in series before they touch your board. USB-to-serial dongles labelled "TTL" or "3.3 V" can connect direct &mdash; check the dongle's datasheet, every brand handles this slightly differently.
+</div>
+
+<h3>RS-422 &mdash; differential, point-to-point, longer reach</h3>
+
+<p>RS-422 keeps the UART byte format but moves the wire-side to a <em>differential</em> pair: each direction uses two wires (A and B) and the receiver compares them. Differential signalling rejects common-mode noise, so cables can run hundreds of metres. RS-422 is full-duplex (separate A/B pair per direction = 4 wires plus ground) and supports one driver and up to ten receivers per pair.</p>
+
+<p>Use RS-422 when you need to reach more than 10 m, or you are crossing an industrial environment with motors and contactors throwing transients onto everything, or you need a deterministic point-to-point UART link between two boards in different chassis.</p>
+
+<h3>RS-485 &mdash; differential, multi-drop</h3>
+
+<p>RS-485 is RS-422's multi-drop cousin: same differential signalling, same voltage levels, but the drivers are tri-stateable so multiple devices can share one twisted pair. Half-duplex (one A/B pair total = 2 wires plus ground) is the common case; full-duplex RS-485 (two pairs) is rare. The standard supports up to 32 unit-load drivers per segment, and modern low-load transceivers extend that to 256.</p>
+
+<p>RS-485 is the dominant link in industrial protocol stacks like <strong>Modbus RTU</strong>, <strong>Profibus DP</strong>, <strong>DMX-512</strong>, and most building-automation buses (BACnet MS/TP, KNX). The catch is that someone must coordinate <em>who is transmitting when</em> &mdash; usually a master/slave protocol on top, with the master polling each slave by address. The transceiver chip needs a <em>driver-enable (DE)</em> input that the firmware drives high while transmitting and low otherwise; getting the DE timing wrong (releasing too early, holding too long) causes mysterious dropped bytes that Modbus stacks have folklore about.</p>
+
+<div class="callout info">
+  <span class="label">picking the line standard</span>
+  <strong>TTL</strong> for anything on the same PCB or stacked board. <strong>RS-232</strong> only for talking to legacy gear that demands it (industrial PLCs, old test equipment). <strong>RS-422</strong> for a long point-to-point link where you control both ends. <strong>RS-485</strong> for a multi-drop industrial bus. The <em>byte format</em> (8N1 etc.) and the <em>baud rate</em> stay the same across all four; only the line driver and receiver chip change.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="flow">Flow control &mdash; none / RTS-CTS / XON-XOFF</h2>
+
+<p>Without flow control, a transmitter that pumps bytes faster than the receiver can drain its FIFO will eventually overrun the RX hardware: bytes arrive while the FIFO is full and the UART silently drops them (and raises the OVERRUN error flag &mdash; see <a href="#errors">below</a>). Flow control is how the receiver tells the transmitter to pause.</p>
+
+<h3>Three flavours</h3>
+
+<table>
+<thead><tr><th>Mode</th><th>Mechanism</th><th>Wires</th><th>Pros</th><th>Cons</th></tr></thead>
+<tbody>
+<tr><td><strong>None</strong></td><td>Pray.</td><td>TX, RX, GND</td><td>Simple, cheap, works at any rate the firmware can keep up with.</td><td>Drops data on overrun. Fine if the receiver is faster than the transmitter, which it usually is.</td></tr>
+<tr><td><strong>Hardware (RTS/CTS)</strong></td><td>Out-of-band wires.</td><td>TX, RX, RTS, CTS, GND</td><td>Byte-transparent (works for binary). Fast response. Reliable.</td><td>Needs two extra wires. RTS/CTS wiring polarity is a perennial source of confusion (see below).</td></tr>
+<tr><td><strong>Software (XON/XOFF)</strong></td><td>In-band magic bytes.</td><td>TX, RX, GND</td><td>No extra wires.</td><td>Reserves 0x11 (XON, DC1) and 0x13 (XOFF, DC3) &mdash; cannot send binary data through the link without escaping.</td></tr>
+</tbody>
+</table>
+
+<h3>RTS/CTS in detail</h3>
+
+<p>The names are aggressively unhelpful; they mean different things on a DTE (your computer) versus a DCE (a modem). The original IBM 1960s convention:</p>
+
+<ul>
+  <li>DTE drives <strong>RTS</strong> high to say "I'm Ready To Send."</li>
+  <li>DCE responds by driving <strong>CTS</strong> high to say "Clear To Send, go ahead."</li>
+</ul>
+
+<p>Then, in real-world implementations, RTS got reinterpreted as "Ready To Receive" (asserted while my RX FIFO has space, deasserted when full). Today essentially all hardware flow control uses the second meaning; documentation uses the first. The modern, sane wiring between two MCUs is:</p>
+
+<pre><code>   MCU A                       MCU B
+  ┌──────┐                    ┌──────┐
+  │  TX  │ ─────────────────→ │  RX  │
+  │  RX  │ ←───────────────── │  TX  │
+  │ RTS  │ ─────────────────→ │ CTS  │     A asserts RTS when its RX FIFO has room.
+  │ CTS  │ ←───────────────── │ RTS  │     B asserts RTS when its RX FIFO has room.
+  │ GND  │ ─────────────────  │ GND  │
+  └──────┘                    └──────┘</code></pre>
+
+<p>(That is, MCU&nbsp;A's RTS connects to MCU&nbsp;B's CTS and vice versa &mdash; a "crossover" or "null modem" wiring.) This is the cabling the canonical "null-modem cable" provides and is what 99 % of MCU-to-MCU UART links assume. If you see "RTS to RTS" in a schematic, it is wrong.</p>
+
+<h3>XON/XOFF</h3>
+
+<p>Software flow control reserves two ASCII control codes: <strong>0x11 (DC1, XON)</strong> means "resume" and <strong>0x13 (DC3, XOFF)</strong> means "pause." When the receiver's FIFO fills up it sends an XOFF; when it drains it sends an XON.</p>
+
+<p>This works fine when the link only carries text (terminal sessions, AT modem commands), and falls over the moment you try to send binary data: the byte 0x13 in your firmware blob is indistinguishable from a real XOFF, and it will pause the link until something happens to send 0x11. Some implementations <em>escape</em> 0x11/0x13 in the data stream, doubling the encoding burden. <strong>For any binary-data link, prefer hardware flow control or no flow control.</strong></p>
+
+<!-- =========================================================== -->
+<h2 id="modem">Modem control signals &mdash; DTR, DSR, DCD, RI</h2>
+
+<p>The full RS-232 connector defines <em>nine</em> signals (the DB9 pinout), only three of which (TX, RX, GND) are needed for a basic UART link. The rest are <strong>modem control lines</strong> originally specified for DTE-to-modem ("DCE") communication in the 1960s. Most are unused on MCU-to-MCU links, but they survive because USB CDC-ACM emulates them &mdash; and host-side serial drivers expose them as <code>TIOCMSET</code> ioctls on Linux, <code>EscapeCommFunction</code> on Windows.</p>
+
+<table>
+<thead><tr><th>Signal</th><th>Direction</th><th>Original meaning</th><th>Modern (mis)use</th></tr></thead>
+<tbody>
+<tr><td><strong>DTR</strong> (Data Terminal Ready)</td><td>DTE &rarr; DCE</td><td>"My terminal is alive and listening."</td><td>Often abused as a reset / boot-mode strap on dev boards (Arduino, ESP32). On USB CDC-ACM, the host driver toggles DTR when an application opens the port.</td></tr>
+<tr><td><strong>DSR</strong> (Data Set Ready)</td><td>DCE &rarr; DTE</td><td>"My modem is alive and connected."</td><td>Rarely used on modern hardware. Some USB-serial chips let firmware read it.</td></tr>
+<tr><td><strong>DCD</strong> (Data Carrier Detect)</td><td>DCE &rarr; DTE</td><td>"Carrier tone present &mdash; the line is up."</td><td>Vestigial. Some serial-console BMCs use it as a connection indicator.</td></tr>
+<tr><td><strong>RI</strong> (Ring Indicator)</td><td>DCE &rarr; DTE</td><td>"The phone line is ringing."</td><td>Almost never used. Some PC BIOSes still let you "wake on RI."</td></tr>
+<tr><td><strong>RTS</strong> (Request To Send)</td><td>DTE &rarr; DCE</td><td>"I want to transmit."</td><td>Repurposed as "I have RX FIFO space" for hardware flow control. Also abused as a boot-mode strap.</td></tr>
+<tr><td><strong>CTS</strong> (Clear To Send)</td><td>DCE &rarr; DTE</td><td>"Go ahead, transmit."</td><td>Repurposed as "the other side has RX FIFO space" for hardware flow control.</td></tr>
+</tbody>
+</table>
+
+<h3>Why these still matter on USB CDC-ACM</h3>
+
+<p>The CDC-ACM (Abstract Control Model) USB class was designed to emulate a modem, so it carries DTR, DSR, DCD, RI, RTS, CTS as <em>state bits</em> in its setup-packet protocol. On the host they appear in the standard tty layer; on the device-side firmware (Zephyr USB-Device-Next, TinyUSB, etc.) you get callbacks when the host changes them.</p>
+
+<p>The classic abuse is the Arduino "auto-reset" trick:</p>
+
+<ul>
+  <li>The bootloader runs on POR for ~1 second listening for an upload command.</li>
+  <li>The PC-side IDE opens the serial port, which drives DTR low.</li>
+  <li>A capacitor on the board converts the DTR falling edge into a brief reset pulse on the MCU.</li>
+  <li>The bootloader hears the upload command before the timeout.</li>
+</ul>
+
+<p>The same pattern, with DTR and RTS together, drives ESP32 boards into the ROM serial-bootloader by simultaneously asserting boot-mode (GPIO0 low) and pulsing reset. On edevkit1 we deliberately do <em>not</em> wire DTR/RTS to anything mechanical &mdash; the dev-host can open and close the port freely without rebooting the target, which matters for a debug probe whose job is to keep talking to a target across host disconnects. See <a href="edevkit1.html">edevkit1.html</a> &sect;6.4 for the rationale.</p>
+
+<!-- =========================================================== -->
+<h2 id="errors">Errors &mdash; framing, parity, overrun, break</h2>
+
+<p>The UART hardware reports four classes of error condition. Each is a flag bit in the status register that the driver can read after every received byte. Your firmware should at minimum log them; in production you usually count them per-second and surface a metric to higher layers.</p>
+
+<table>
+<thead><tr><th>Error</th><th>Cause</th><th>Symptom</th><th>What to do</th></tr></thead>
+<tbody>
+<tr><td><strong>Framing</strong></td><td>Stop bit was not high when the receiver sampled it.</td><td>Garbled characters, bursts of bad bytes after a noise event.</td><td>Almost always a baud-rate mismatch or a bad cable. Re-check both ends' baud + format. Check for ground loops.</td></tr>
+<tr><td><strong>Parity</strong></td><td>Received parity bit didn't match the data.</td><td>Single bytes corrupted, flagged.</td><td>Treat the byte as suspect (drop or escalate to higher-layer CRC). If it happens often: bad cable, EMI, or a parity-mode mismatch (e.g. one side configured for even, the other for odd).</td></tr>
+<tr><td><strong>Overrun</strong></td><td>RX FIFO was full when a new byte arrived; the new byte is dropped.</td><td>Missing characters, length mismatches, "the device sent N bytes but I only see N&minus;1."</td><td>Drain the FIFO faster (DMA or higher-priority IRQ) or add hardware flow control. <em>Software overrun</em> &mdash; where the FIFO drained but the driver's ring buffer overflowed &mdash; is a separate, software-side variant.</td></tr>
+<tr><td><strong>Break</strong></td><td>The line was held in the space (low) state for longer than one full frame time.</td><td>A "break" event in your driver, often used to signal "reset" or "attention."</td><td>If unintended: usually a connector dropout or a peer that powered off mid-transmit. If intended: someone is sending you a break on purpose, e.g. a Linux <code>BRK</code> from the host.</td></tr>
+</tbody>
+</table>
+
+<h3>The "junk first byte after wake-up" gotcha</h3>
+
+<p>A very common bring-up bug: the very first byte after the link comes up is garbled, but every subsequent byte is fine.</p>
+
+<p>The cause is the difference between <em>line state</em> and <em>line idle</em>. After power-up or reset the TX pin is floating until the UART block is configured and enabled; an external pull-up may or may not yet be present; the wire might be at any voltage between 0 and Vcc. The first time the transmitter drives a real start bit, the receiver may already be mid-sample on garbage. The fix is to <strong>configure the UART, drive TX high, wait at least one bit-time, and only then start sending data</strong>. On boards where the TX pin's reset state is high-Z, add an external 10-100 k&Omega; pull-up to Vcc &mdash; cheap insurance.</p>
+
+<p>The matching receive-side fix: if your driver reports a single framing-error on the first byte after enabling RX, swallow it &mdash; it's the line settling, not real data.</p>
+
+<!-- =========================================================== -->
+<h2 id="hw-vs-pio">Hardware UART vs PIO / bit-banged UART</h2>
+
+<p>An MCU has <em>hardware</em> UART blocks &mdash; dedicated state-machine peripherals that run independently of the CPU and offload all the bit-shifting work. They are configured by writing a few registers, and they raise interrupts when bytes arrive or the TX FIFO drains. The RP2350 has two PL011-derived UART blocks (UART0 and UART1).</p>
+
+<h3>What you get from a hardware UART</h3>
+
+<ul>
+  <li><strong>FIFOs.</strong> Both directions buffer 32 bytes (RP2350) before the CPU has to intervene, so a 16&times;-oversampled receiver at 921600 still gives the CPU ~280 &micro;s of slack between interrupts.</li>
+  <li><strong>DMA hooks.</strong> Each UART connects to a DMA channel, so the CPU can sleep through a 100-byte transfer entirely.</li>
+  <li><strong>Interrupt sources for every condition</strong> &mdash; TX empty, RX threshold, RX timeout, error, modem-state change.</li>
+  <li><strong>Predictable timing.</strong> The state machine is hardware; baud accuracy is exactly the divider math.</li>
+  <li><strong>Hardware flow control.</strong> RTS/CTS is wired through the peripheral; no firmware involvement once configured.</li>
+</ul>
+
+<h3>What you give up vs PIO bit-banging</h3>
+
+<ul>
+  <li><strong>Pin choice.</strong> Hardware UART pins are fixed by the silicon (with a few mux options). PIO can drive UART on <em>any</em> GPIO.</li>
+  <li><strong>Format flexibility.</strong> Hardware UART supports the RS-232 frame zoo (5/6/7/8/9 data, parity, 1/1.5/2 stop). PIO can do those <em>and</em> any other framing &mdash; a 12-bit "frame," a custom inter-byte gap, a non-NRZ encoding, whatever you can write in PIO assembly.</li>
+  <li><strong>Custom break behaviour.</strong> Want to send a 1.7-bit-time break for a LIN-bus header? PIO. Want to detect a malformed break and recover? PIO.</li>
+  <li><strong>Number of channels.</strong> RP2350 has 2 hardware UARTs. Each PIO state machine can be a UART, giving you 12 simultaneous UART channels (3 PIOs &times; 4 SMs) if you want.</li>
+</ul>
+
+<h3>edevkit's mix</h3>
+
+<p>edevkit1 uses the two RP2350 hardware UARTs for its two main UART bridges (target log and test) because they need to run reliably at high baud rates with FIFO/DMA support and minimal CPU overhead. We also reserve one PIO state machine for SWO trace decoding (which is itself a UART-like signal at unusual baud rates &mdash; see <a href="platform_pio.html">platform_pio.html</a> for the PIO budget). For arbitrary-format serial bus emulation (e.g. a custom three-wire UART variant on a target chip we are pretending to be), PIO is the escape hatch.</p>
+
+<div class="callout">
+  <span class="label">when to reach for PIO UART</span>
+  Use the hardware UART unless you have a specific reason not to. Reasons to go PIO: pin assignment is fixed and the hardware mux can't reach it; you need an unusual baud or format; you need more than two simultaneous UARTs; you are sniffing a third-party UART (the hardware UART can transmit and receive but not "passively listen") and need to capture exact edge timing; or you are emulating a peripheral whose UART has bus-specific quirks (LIN, K-Line, ISO 7816 reset semantics).
+</div>
+
+<!-- =========================================================== -->
+<h2 id="edevkit">edevkit1's twin-UART setup</h2>
+
+<p>edevkit1 carries <strong>two completely independent UART bridges</strong>, one per voltage domain. They never share wires, never share ground references except through the chassis, and never share configuration. The host sees them as two separate <a href="usb_cdc_acm.html">USB CDC-ACM</a> serial endpoints (typically <code>/dev/ttyACM1</code> and <code>/dev/ttyACM2</code>; <code>ttyACM0</code> is the CMSIS-DAP / shell endpoint).</p>
+
+<table>
+<thead><tr><th>Property</th><th>Target Log UART</th><th>Test UART</th></tr></thead>
+<tbody>
+<tr><td>Hardware</td><td>RP2350 UART0</td><td>RP2350 UART1</td></tr>
+<tr><td>GPIO pins</td><td>GP0 (TX), GP1 (RX)</td><td>GP2 (TX), GP3 (RX)</td></tr>
+<tr><td>Voltage domain</td><td><strong>Vtgt</strong> &mdash; auto-sensed from the target's I/O supply</td><td><strong>Vio</strong> &mdash; user-selectable 3.3 V or 1.8 V</td></tr>
+<tr><td>Level shift</td><td>LVC8T245 directional buffer, dir-controlled by firmware</td><td>LVC8T245 / TXS0108E for low-Vio</td></tr>
+<tr><td>Default baud</td><td>115200 8N1</td><td>115200 8N1, runtime-configurable</td></tr>
+<tr><td>Max baud</td><td>~3 Mbaud (limited by USB CDC-ACM throughput)</td><td>~3 Mbaud</td></tr>
+<tr><td>Flow control</td><td>None on header (saves pins); USB-side back-pressure naturally throttles host</td><td>Optional RTS/CTS via configurable pin map</td></tr>
+<tr><td>USB endpoint</td><td>CDC-ACM #1</td><td>CDC-ACM #2</td></tr>
+<tr><td>Intended use</td><td>The target's <code>printk</code> / U-Boot console / Linux <code>console=ttyS0</code></td><td>Talking to a third-party device under test &mdash; sensor AT modem, BLE module, etc.</td></tr>
+</tbody>
+</table>
+
+<h3>Why two domains, never tied</h3>
+
+<p>The Target Log UART references <strong>Vtgt</strong> &mdash; whatever I/O voltage the target board is using (1.8 V on a low-power BLE chip, 3.3 V on a generic ARM dev board, sometimes 5 V on an old AVR). edevkit auto-senses Vtgt with an ADC channel and configures its level shifter accordingly. This way, plugging into a 1.8 V target doesn't require any user action.</p>
+
+<p>The Test UART, by contrast, references <strong>Vio</strong> &mdash; a voltage <em>you</em> picked from the GUI/CLI (3.3 V or 1.8 V) before plugging in a third-party device. Vio is generated locally on edevkit by a switching regulator + LDO chain, and is current-limited by the eFuse so a misconfigured external device can't damage anything.</p>
+
+<p>The two domains <strong>must not be tied together</strong>: a target running at 1.8 V and an external sensor running at 3.3 V will fight if their grounds drift, and no level shifter can rescue you if their I/O supplies are bonded by accident. edevkit1's silkscreen calls this out next to the connectors. <a href="edevkit1.html">edevkit1.html</a> &sect;6 covers the routing and ESD considerations.</p>
+
+<div class="callout warn">
+  <span class="label">vtgt &lt; 1.65 V</span>
+  The LVC8T245 buffer's data sheet specifies a minimum Vcc of 1.65 V on the low-voltage side. Below that, output drive degrades and the input thresholds shift unpredictably. Firmware detects Vtgt &lt; 1.65 V via the ADC and routes traffic through TXS0108E channels instead, which work down to 1.2 V. The shell prints a one-time warning so the user knows the path changed.
+</div>
+
+<h3>How a target log byte travels</h3>
+
+<pre><code>Target MCU (say, an STM32WB55 at 3.3 V)
+  │
+  │ printk("Hello\n");
+  │
+  ▼
+[STM32 UART TX pin] ── 3.3 V TTL ──► [edevkit GP0]
+                                     │
+                                     │ RP2350 UART0 RX
+                                     │ → ring buffer (4 KB)
+                                     │ → CDC-ACM IN endpoint
+                                     │
+                                     ▼
+                        [USB FS, EP3 IN, 64-byte packets]
+                                     │
+                                     ▼
+                          host [/dev/ttyACM1]
+                                     │
+                                     ▼
+                           tio /dev/ttyACM1
+                                     │
+                                     ▼
+                           "Hello\n" appears on stdout</code></pre>
+
+<p>Notably, the 4 KB SRAM ring buffer between the UART and CDC-ACM endpoint exists because USB FS only schedules a CDC-ACM bulk IN once per USB frame (1 ms): if the target dumps a kilobyte burst at 921600 baud, that's ~10 ms of stream, but USB only drains it 64 bytes at a time. Without the ring buffer, the UART would overrun. With it, the ring smooths the burst into the USB pipe with no data loss as long as long-term throughput stays under USB FS's ~10 Mbps usable.</p>
+
+<!-- =========================================================== -->
+<h2 id="zephyr">Zephyr UART API &mdash; concrete code</h2>
+
+<p>Zephyr ships three UART API tiers: <em>polling</em> (simple, blocking), <em>interrupt-driven</em> (the workhorse), and <em>asynchronous</em> (DMA-backed, callback-style). They live behind the same <code>struct device *</code> handle and are selected by which functions you call. The interrupt and async APIs are mutually exclusive for the same device when <code>CONFIG_UART_EXCLUSIVE_API_CALLBACKS</code> is set (default on).</p>
+
+<h3>Devicetree binding</h3>
+
+<p>edevkit1's overlay (<code>boards/rpi_pico2.overlay</code>) wires up both UARTs:</p>
+
+<pre><code>/* boards/rpi_pico2.overlay (edevkit1) */
+&amp;uart0 {                           /* Target Log UART, on Vtgt */
+    status         = "okay";
+    current-speed  = &lt;115200&gt;;
+    pinctrl-0      = &lt;&amp;uart0_default&gt;;
+    pinctrl-names  = "default";
+};
+
+&amp;uart1 {                           /* Test UART, on Vio */
+    status         = "okay";
+    current-speed  = &lt;115200&gt;;
+    pinctrl-0      = &lt;&amp;uart1_default&gt;;
+    pinctrl-names  = "default";
+};
+
+/ {
+    chosen {
+        zephyr,console = &amp;cdc_acm_uart0;       /* edevkit shell on USB */
+        zephyr,shell-uart = &amp;cdc_acm_uart0;
+    };
+
+    aliases {
+        target-log = &amp;uart0;
+        test-uart  = &amp;uart1;
+    };
+};</code></pre>
+
+<h3>Polling API &mdash; simplest possible "send + receive a line"</h3>
+
+<pre><code>#include &lt;zephyr/device.h&gt;
+#include &lt;zephyr/devicetree.h&gt;
+#include &lt;zephyr/drivers/uart.h&gt;
+
+static const struct device *const uart_dev =
+    DEVICE_DT_GET(DT_ALIAS(test_uart));
+
+void uart_send_line(const char *s)
+{
+    while (*s) {
+        uart_poll_out(uart_dev, *s++);   /* blocks until TX FIFO has room */
+    }
+}
+
+int uart_read_byte_blocking(uint8_t *out)
+{
+    while (uart_poll_in(uart_dev, out) != 0) {
+        k_yield();                        /* yield so other threads run */
+    }
+    return 0;
+}</code></pre>
+
+<p>Polling APIs are useful for a quick bring-up smoke test or a once-at-boot configuration write to a peripheral. They do not scale &mdash; CPU is busy 100 % of a transfer.</p>
+
+<h3>Interrupt-driven API &mdash; the production default</h3>
+
+<pre><code>#include &lt;zephyr/device.h&gt;
+#include &lt;zephyr/drivers/uart.h&gt;
+#include &lt;zephyr/sys/ring_buffer.h&gt;
+#include &lt;zephyr/logging/log.h&gt;
+LOG_MODULE_REGISTER(test_uart, LOG_LEVEL_INF);
+
+static const struct device *const uart_dev =
+    DEVICE_DT_GET(DT_ALIAS(test_uart));
+
+RING_BUF_DECLARE(rx_rb, 1024);
+
+static void uart_isr(const struct device *dev, void *user_data)
+{
+    ARG_UNUSED(user_data);
+
+    while (uart_irq_update(dev) &amp;&amp; uart_irq_is_pending(dev)) {
+        if (uart_irq_rx_ready(dev)) {
+            uint8_t buf[32];
+            int n = uart_fifo_read(dev, buf, sizeof(buf));
+            if (n &gt; 0) {
+                uint32_t pushed = ring_buf_put(&amp;rx_rb, buf, n);
+                if (pushed != (uint32_t)n) {
+                    LOG_WRN("rx ring overflow, dropped %u bytes", n - pushed);
+                }
+            }
+        }
+    }
+}
+
+int test_uart_init(void)
+{
+    if (!device_is_ready(uart_dev)) {
+        LOG_ERR("uart dev not ready");
+        return -ENODEV;
+    }
+
+    struct uart_config cfg = {
+        .baudrate  = 115200,
+        .parity    = UART_CFG_PARITY_NONE,
+        .stop_bits = UART_CFG_STOP_BITS_1,
+        .data_bits = UART_CFG_DATA_BITS_8,
+        .flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
+    };
+    int err = uart_configure(uart_dev, &amp;cfg);
+    if (err) {
+        LOG_ERR("uart_configure: %d", err);
+        return err;
+    }
+
+    uart_irq_callback_set(uart_dev, uart_isr);
+    uart_irq_rx_enable(uart_dev);
+
+    LOG_INF("test UART up at 115200 8N1");
+    return 0;
+}</code></pre>
+
+<p>The pattern: configure the UART, register an ISR, enable RX interrupts, drain the hardware FIFO into a ring buffer in the ISR, consume from the ring in a worker thread. This survives bursts up to (ring-buffer-size / character-time) without back-pressure; beyond that you need either flow control or a bigger ring.</p>
+
+<h3>Async API &mdash; for DMA-driven bulk transfers</h3>
+
+<pre><code>#include &lt;zephyr/drivers/uart.h&gt;
+
+static uint8_t rx_dma_buf[2][512];   /* double-buffered */
+
+static void uart_async_cb(const struct device *dev,
+                          struct uart_event *evt, void *user_data)
+{
+    switch (evt-&gt;type) {
+    case UART_RX_RDY:
+        /* evt-&gt;data.rx.buf, .offset, .len describe the chunk */
+        process_chunk(&amp;evt-&gt;data.rx);
+        break;
+    case UART_RX_BUF_REQUEST:
+        /* the driver wants the next buffer; provide one */
+        uart_rx_buf_rsp(dev, rx_dma_buf[1], sizeof(rx_dma_buf[1]));
+        break;
+    case UART_RX_BUF_RELEASED:
+        /* the driver is done with this buffer */
+        break;
+    case UART_RX_DISABLED:
+        /* re-arm if you want continuous RX */
+        uart_rx_enable(dev, rx_dma_buf[0], sizeof(rx_dma_buf[0]), 100);
+        break;
+    default:
+        break;
+    }
+}</code></pre>
+
+<p>The async API is what Zephyr's high-throughput drivers use under the hood &mdash; LoRa concentrators, NMEA log capture, etc. It is overkill for a 115200-baud debug console, but the right choice when you are pumping multi-MByte/s through PIO-DMA-backed UART channels. See the Zephyr <a href="https://docs.zephyrproject.org/latest/hardware/peripherals/uart.html">UART API docs</a> for the full event vocabulary.</p>
+
+<h3>Bridging UART &harr; USB CDC-ACM in firmware</h3>
+
+<p>edevkit1's bridge is essentially a forever loop in two directions:</p>
+
+<pre><code>/* simplified pseudo-code; real code uses async API for both sides */
+static void target_log_bridge_thread(void)
+{
+    uint8_t buf[256];
+
+    for (;;) {
+        /* drain UART -&gt; ring -&gt; CDC */
+        size_t n = ring_buf_get(&amp;uart_rx_rb, buf, sizeof(buf));
+        if (n) {
+            (void)uart_fifo_fill(cdc_dev, buf, n);
+        }
+        /* drain CDC -&gt; ring -&gt; UART */
+        n = ring_buf_get(&amp;cdc_rx_rb, buf, sizeof(buf));
+        if (n) {
+            (void)uart_fifo_fill(uart_dev, buf, n);
+        }
+        k_msleep(1);
+    }
+}</code></pre>
+
+<p>In practice the worker is interrupt-coalesced; the explicit <code>k_msleep(1)</code> is illustrative and would be a <code>k_poll</code> on real ring-buffer events.</p>
+
+<!-- =========================================================== -->
+<h2 id="tooling">Host tooling &mdash; tio, screen, picocom, stty</h2>
+
+<h3>The terminal options</h3>
+
+<table>
+<thead><tr><th>Tool</th><th>Platforms</th><th>Strengths</th><th>Caveats</th></tr></thead>
+<tbody>
+<tr><td><code>tio</code></td><td>Linux, macOS (brew), BSD, WSL</td><td>Modern, sane defaults; auto-reconnect; built-in hex view; <code>--log</code> writes a session log; clean Ctrl-T menu.</td><td>Not in every distro yet; install from upstream or homebrew.</td></tr>
+<tr><td><code>picocom</code></td><td>Linux, macOS</td><td>Tiny, scriptable, stable for decades.</td><td>Quitting requires <code>Ctrl-A Ctrl-X</code>; first-time UX is rough.</td></tr>
+<tr><td><code>screen</code></td><td>Universal</td><td>Always available on a Linux host.</td><td>The "you opened it inside a tmux inside an ssh and now you can't get out" school of UX. Unforgiving.</td></tr>
+<tr><td><code>minicom</code></td><td>Linux</td><td>Old-school menu-driven UI; xmodem upload.</td><td>Configuration files everywhere; baud-rate dropdown stops at 115200 by default; a 1990s vibe.</td></tr>
+<tr><td><code>PuTTY</code></td><td>Windows (also Linux/Mac builds)</td><td>The Windows default. Works.</td><td>No log streaming by default; the serial config is buried under "Connection &rarr; Serial."</td></tr>
+<tr><td><code>CoolTerm</code></td><td>Mac, Windows, Linux</td><td>GUI, hex view, easy logging.</td><td>Closed-source. Fine for casual use, less suited to scripted CI.</td></tr>
+</tbody>
+</table>
+
+<h3>The recommended default: tio</h3>
+
+<p>For new edevkit users on Linux/macOS we recommend <code>tio</code>. It does everything you want a serial terminal to do, with no surprises:</p>
+
+<pre><code># open the target log UART at 115200 8N1
+tio /dev/ttyACM1
+
+# same, with explicit settings (defaults are 115200 8N1 already)
+tio -b 115200 -d 8 -p none -s 1 /dev/ttyACM1
+
+# log the session to a file (timestamped)
+tio /dev/ttyACM1 --log session.log --log-strip
+
+# auto-reconnect when the device drops (useful while flashing/resetting)
+tio /dev/ttyACM1 --no-reconnect=false
+
+# show inbound bytes as hex
+# Ctrl-T, then 'h'  --  toggles hex display
+
+# exit:  Ctrl-T, then 'q'</code></pre>
+
+<p>Install:</p>
+
+<pre><code># macOS
+brew install tio
+
+# Debian / Ubuntu (recent)
+sudo apt install tio
+
+# Fedora
+sudo dnf install tio
+
+# from source
+git clone https://github.com/tio/tio
+cd tio
+meson setup build
+ninja -C build
+sudo ninja -C build install</code></pre>
+
+<h3>stty &mdash; configuring the line from a shell</h3>
+
+<p><code>stty</code> sets line parameters on a tty without opening a terminal. Useful for scripts and one-shot flashing tools that wrap <code>cat &gt; /dev/ttyUSB0</code>:</p>
+
+<pre><code># inspect current settings
+stty -F /dev/ttyACM1 -a
+
+# set 115200 8N1, no flow control, "raw" (no echo, no line discipline)
+stty -F /dev/ttyACM1 115200 cs8 -cstopb -parenb -ixon -ixoff -crtscts raw -echo
+
+# set 921600 baud
+stty -F /dev/ttyACM1 921600
+
+# Macs: device path is /dev/cu.usbmodem* and stty looks slightly different
+stty -f /dev/cu.usbmodem1101 115200 cs8 -cstopb -parenb raw -echo
+
+# read a line from the shell:
+cat /dev/ttyACM1                 # Ctrl-C to stop
+
+# write a string:
+echo "AT" &gt; /dev/ttyACM1</code></pre>
+
+<p><code>stty</code> flags worth memorising: <code>cs8</code> sets 8 data bits; <code>-cstopb</code> means 1 stop bit (the minus disables 2-stop-bits); <code>-parenb</code> disables parity; <code>raw</code> turns off all line-discipline cooking; <code>-echo</code> stops the kernel echoing typed characters back. Without <code>raw</code>, the kernel will eat your binary data alive.</p>
+
+<h3>Capturing a session</h3>
+
+<pre><code># tio: built-in
+tio /dev/ttyACM1 --log session.log
+
+# screen: keystroke H, or:
+screen -L /dev/ttyACM1 115200
+
+# picocom:
+picocom --baud 115200 --logfile session.log /dev/ttyACM1
+
+# raw cat (after stty):
+stty -F /dev/ttyACM1 115200 raw -echo
+cat /dev/ttyACM1 | tee session.log</code></pre>
+
+<h3>The Linux ModemManager problem</h3>
+
+<p>Modern Linux desktops ship <strong>ModemManager</strong>, a daemon that probes new serial devices to see if they're 3G/LTE modems. When you plug in edevkit, ModemManager opens <code>/dev/ttyACM*</code> and sends AT commands to it &mdash; which conflicts with your shell session and produces mysterious "device busy" errors or random characters appearing in the buffer.</p>
+
+<p>The fix is a udev rule that tells ModemManager to ignore edevkit's USB VID/PID:</p>
+
+<pre><code># /etc/udev/rules.d/77-edevkit.rules
+# Block ModemManager from probing edevkit's CDC-ACM endpoints.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000a", \
+  ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# Make the device readable by anyone in 'plugdev'
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000a", \
+  GROUP="plugdev", MODE="0660"</code></pre>
+
+<p>(Replace <code>000a</code> with edevkit's actual product ID once allocated; see <a href="edevkit1.html">edevkit1.html</a> &sect;7 for the registered VID/PID.) Reload with <code>sudo udevadm control --reload-rules &amp;&amp; sudo udevadm trigger</code>. macOS and Windows do not have this problem; on macOS the device just appears as <code>/dev/cu.usbmodem*</code>.</p>
+
+<!-- =========================================================== -->
+<h2 id="pitfalls">Common pitfalls and how to debug them</h2>
+
+<h3>1. Wrong baud rate</h3>
+
+<p><strong>Symptom:</strong> Clean garbage on the screen &mdash; characters that look almost ASCII but with the high bit set, or repeating patterns of bytes that don't match anything sane. Sometimes only every Nth character is right.</p>
+
+<p><strong>Diagnosis:</strong> The two ends are running at different baud rates (or one end mis-configured a fractional divider). The character pattern often hints at the ratio: if the receiver is at half the transmitter's baud, you'll see mostly 0xFE / 0xFF / 0x80 patterns as it samples in the wrong half of every bit.</p>
+
+<p><strong>Fix:</strong> Step down to 9600 baud on both sides until you see clean output, then ratchet up to find the highest reliable rate. Verify the transmitter's actual on-wire baud with a logic analyser if you have one &mdash; some MCUs have surprisingly inaccurate dividers.</p>
+
+<h3>2. TX/RX swapped</h3>
+
+<p><strong>Symptom:</strong> Total silence in both directions, but the cable is plugged in and the LED is on.</p>
+
+<p><strong>Diagnosis:</strong> Cable manufacturers do not agree on what "TX" and "RX" mean on a labelled wire. Some ship <em>through</em> wiring (TX on the cable's TX wire = TX on both ends), others ship <em>crossover</em> wiring (TX on the cable's TX wire = RX on the other end). Both conventions are out there. The labels on dev-board headers also vary &mdash; sometimes "TX" means "TX of the board" (the board's transmit pin), sometimes "TX" means "to be wired to your transmit," which is the opposite.</p>
+
+<p><strong>Fix:</strong> Swap TX and RX. If both still show silence, swap and try the cable in the other orientation. As a sanity check, scope the TX pin while sending data &mdash; a real TX wiggles, a wrongly-connected one stays high.</p>
+
+<h3>3. Wrong logic level</h3>
+
+<p><strong>Symptom:</strong> Either total silence, total noise, or smoke.</p>
+
+<p><strong>Diagnosis:</strong> One side is RS-232 (&plusmn;12 V), the other is TTL (3.3 V). RS-232 into a TTL receiver damages the input; TTL into an RS-232 receiver may silently work, may produce garbage, or sometimes does nothing.</p>
+
+<p><strong>Fix:</strong> Check both sides' datasheets. Use a MAX3232 between RS-232 and TTL. Use a level-translator (LSF010x, TXS0108E, LVC8T245) between 5 V and 3.3 V or between 3.3 V and 1.8 V.</p>
+
+<h3>4. No common ground</h3>
+
+<p><strong>Symptom:</strong> Intermittent garbage that worsens when you touch the cable, "ghost" reception when the cable is unplugged, errors that change with hand position.</p>
+
+<p><strong>Diagnosis:</strong> Two devices powered from different supplies with no GND wire between them are floating relative to each other. The receiver's logic threshold is meaningless &mdash; "high" and "low" are referenced to <em>local</em> ground, and they disagree.</p>
+
+<p><strong>Fix:</strong> Always include a GND wire. For longer cables, consider a star-grounded power scheme; for noisy environments, switch to RS-422/485 differential, which is immune to (some) ground offset.</p>
+
+<h3>5. ModemManager (Linux)</h3>
+
+<p><strong>Symptom:</strong> The first character or two from the device is missing, or you see "<code>AT</code>", "<code>ATQ0</code>", or other modem strings appearing in your log right after plug-in.</p>
+
+<p><strong>Fix:</strong> Add the udev rule from the <a href="#tooling">tooling section</a>. Or, as a quick test, kill ModemManager: <code>sudo systemctl stop ModemManager</code>.</p>
+
+<h3>6. Half-byte garbage on first character after wake-up</h3>
+
+<p><strong>Symptom:</strong> The first byte after enabling the UART is corrupt or flagged with framing-error; subsequent bytes are clean.</p>
+
+<p><strong>Fix:</strong> See <a href="#errors">the line-state vs line-idle gotcha</a>. Drive TX high before enabling, wait one bit-time, then send. On RX, swallow the first framing error after enabling.</p>
+
+<h3>7. RS-485 driver-enable timing</h3>
+
+<p><strong>Symptom:</strong> Last byte (or two) of every transmit is corrupt; protocol stack times out waiting for response.</p>
+
+<p><strong>Diagnosis:</strong> The RS-485 transceiver's DE pin was deasserted before the last byte fully shifted out, cutting off the stop bit and leaving the line in an undefined state for the receiver.</p>
+
+<p><strong>Fix:</strong> Hold DE asserted until the TX-complete (TC) flag fires &mdash; the actual end of the stop bit, not just "FIFO empty." On Zephyr's UART API that's the <code>UART_TX_DONE</code> async event.</p>
+
+<h3>8. Hardware overrun under bursty traffic</h3>
+
+<p><strong>Symptom:</strong> Mostly works; occasionally drops bytes during high-traffic moments (the boot log dump, a long Modbus frame).</p>
+
+<p><strong>Fix:</strong> Move from polling to interrupt-driven, or interrupt-driven to DMA. Increase the ISR's priority above any interfering interrupt. Add hardware flow control if the protocol allows. As a last resort, lower the baud rate.</p>
+
+<h3>9. The "endianness" confusion</h3>
+
+<p><strong>Symptom:</strong> Multi-byte values come out byte-reversed.</p>
+
+<p><strong>Diagnosis:</strong> UART itself is byte-by-byte; "endianness" appears at the protocol level. If you call <code>uart_send(&amp;u32_val, 4)</code> on a little-endian MCU, the first byte on the wire is the LSB of the u32; if your peer reassembles it big-endian, the value is reversed.</p>
+
+<p><strong>Fix:</strong> Define your wire format up front. Pick big-endian (network byte order) for portable interop, or explicitly serialize byte-by-byte. Don't punning-cast structs onto the wire.</p>
+
+<h3>10. The cable is bad</h3>
+
+<p><strong>Symptom:</strong> Inexplicable, intermittent, hardware-dependent failures.</p>
+
+<p><strong>Fix:</strong> When in doubt, swap the cable. Cheap dupont jumper wires fail constantly &mdash; the crimp loosens, the wire breaks inside the insulation, the female end loses spring tension. A 30-second cable swap saves an hour of debugging silicon.</p>
+
+<div class="callout good">
+  <span class="label">debugging order</span>
+  When a serial link doesn't work, check in this order: (1) GND connected, (2) TX/RX not swapped, (3) baud rate matches, (4) levels match, (5) no ModemManager interference, (6) cable is fresh. About 95 % of bring-up failures are in this list.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<ul>
+  <li><strong>Sparkfun's "Serial Communication" tutorial</strong> &mdash; <a href="https://learn.sparkfun.com/tutorials/serial-communication">learn.sparkfun.com/tutorials/serial-communication</a>. The friendly diagrams that teach UART to most people for the first time. Good background on the line standards.</li>
+  <li><strong>Wikipedia: Universal asynchronous receiver-transmitter</strong> &mdash; <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter">en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter</a>. Surprisingly thorough, especially the historical UART chip lineage (8250, 16550A, etc.) that explains why "16550-compatible" still means something.</li>
+  <li><strong>RP2350 datasheet, "UART" chapter</strong> &mdash; <a href="https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf">datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf</a>. Register-level reference for the silicon edevkit1 uses, including the fractional baud-rate generator math.</li>
+  <li><strong>Pi Pico C/C++ SDK, UART hardware library</strong> &mdash; <a href="https://www.raspberrypi.com/documentation/microcontrollers/c_sdk.html">raspberrypi.com/documentation/microcontrollers/c_sdk.html</a>. Bare-metal API on the same silicon, useful when you want to peek under Zephyr's abstraction.</li>
+  <li><strong>Zephyr UART subsystem</strong> &mdash; <a href="https://docs.zephyrproject.org/latest/hardware/peripherals/uart.html">docs.zephyrproject.org/latest/hardware/peripherals/uart.html</a>. Authoritative reference for the API edevkit firmware uses.</li>
+  <li><strong>Analog Devices, "UART: A Hardware Communication Protocol"</strong> &mdash; <a href="https://www.analog.com/en/resources/analog-dialogue/articles/uart-a-hardware-communication-protocol.html">analog.com/en/resources/analog-dialogue/articles/uart-a-hardware-communication-protocol.html</a>. Concise and accurate, written by people who design the silicon.</li>
+  <li><strong>TIA-232-F (RS-232 standard)</strong>, <strong>TIA-422-B (RS-422)</strong>, <strong>TIA-485-A (RS-485)</strong> &mdash; the actual standards documents, available from the TIA. Worth at least skimming if you ship industrial gear.</li>
+  <li><strong>Sealevel, "Basics of RS-422 and RS-485 Communications"</strong> &mdash; <a href="https://www.sealevel.com/basics-of-rs-422-and-rs-485-communications">sealevel.com/basics-of-rs-422-and-rs-485-communications</a>. Practical wiring &amp; topology guidance from a vendor who's seen every failure mode.</li>
+</ul>
+
+<h3>Related edevkit docs</h3>
+
+<ul>
+  <li><a href="usb_cdc_acm.html">usb_cdc_acm.html</a> &mdash; how the host sees a UART through USB, and the gotchas of CDC-ACM emulation.</li>
+  <li><a href="proto_i2c.html">proto_i2c.html</a> &mdash; the synchronous, multi-drop, addressed cousin of UART.</li>
+  <li><a href="proto_spi.html">proto_spi.html</a> &mdash; the synchronous, point-to-point, full-duplex cousin of UART.</li>
+  <li><a href="platform_pio.html">platform_pio.html</a> &mdash; the RP2350 PIO state machines, including how to bit-bang a UART when the hardware blocks aren't enough.</li>
+  <li><a href="edevkit1.html">edevkit1.html</a> &mdash; the v1 design spec; &sect;6 covers the twin-UART hardware in detail.</li>
+</ul>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="proto_spi.html"><span class="dir">← Previous</span><span class="cat">Protocols</span><span class="title">SPI bus protocol</span></a>
+<a class="next" href="proto_ws2812.html"><span class="dir">Next →</span><span class="cat">Protocols</span><span class="title">WS2812 / NeoPixel timing protocol</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit &middot; protocol reference &middot; UART asynchronous serial.
+  Last revised against Zephyr 4.x and RP2350 datasheet rev B.
+  Patches welcome &mdash; this doc lives at <code>tools/web/pages/proto_uart.html</code>.
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body></html>

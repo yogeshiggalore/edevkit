@@ -1,0 +1,1329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — USB device stack overview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A focused reference on USB — the bus, the descriptor model, enumeration, classes, embedded device stacks (Zephyr USB-Device-Next, TinyUSB), composite devices, and how edevkit1 lays out its USB endpoints.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    /* graticule background — top-faded so it doesn't overwhelm */
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar (sticky nav + theme toggle) ────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── OS cards (Linux / macOS / Windows) ────────────────────────────── */
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  /* ── numbered step ─────────────────────────────────────────────────── */
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── checklist ─────────────────────────────────────────────────────── */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  // pre-paint theme — prevents FOUC
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">USB · overview</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · usb stack · overview</div>
+  <h1>USB device stack — the bits that matter for an MCU</h1>
+  <p class="small">A practical reference for engineers writing firmware that lives on the device-side of a USB connection. Walks through what USB <em>is</em> (bus topology, speed tiers, NRZI signalling), the descriptor model, the enumeration handshake, the standard classes worth knowing, the embedded device stacks you'll actually use (Zephyr USB-Device-Next, TinyUSB, vendor SDKs), and the composite-device gotchas that bite every team eventually. Closes with the concrete USB layout edevkit1 ships.</p>
+  <p class="small">Cross-references: <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> goes deep on the CMSIS-DAP v2 vendor protocol and SWO over bulk; <a href="usb_cdc_acm.html">usb_cdc_acm.html</a> covers the CDC ACM (virtual serial port) class in detail; <a href="arm_architecture.html">arm_architecture.html</a> and <a href="arm_cortex_m33.html">arm_cortex_m33.html</a> for the CPU side; <a href="edevkit1.html">edevkit1.html</a> for the v1 design spec and the rationale behind every choice on this page.</p>
+  <p class="small"><strong>Audience:</strong> firmware engineers new to USB or coming from a chip-vendor SDK who want a vendor-neutral mental model before reading the Zephyr code. Doesn't try to replace the spec; assumes you'll dive into <a href="https://www.usb.org/documents">usb.org</a> when you need the byte-perfect rules.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">The bus</span>
+  <ol>
+    <li><a href="#what-is-usb">What USB is, and the bits that matter for an MCU</a></li>
+    <li><a href="#topology">Topology — host, hub, device, endpoints</a></li>
+    <li><a href="#transfer-types">Transfer types — control, bulk, interrupt, isochronous</a></li>
+  </ol>
+  <span class="heading">The protocol surface</span>
+  <ol>
+    <li><a href="#descriptors">Descriptors — the device's self-description</a></li>
+    <li><a href="#enumeration">Enumeration — what happens at plug-in</a></li>
+    <li><a href="#classes">Standard classes vs. vendor-specific</a></li>
+    <li><a href="#ms-os">Microsoft OS descriptors and WinUSB</a></li>
+  </ol>
+  <span class="heading">Embedded implementation</span>
+  <ol>
+    <li><a href="#stacks">USB device stacks for embedded MCUs</a></li>
+    <li><a href="#composite">Composite-device gotchas (IAD, endpoint numbering)</a></li>
+    <li><a href="#zephyr-next">Zephyr USB-Device-Next — concrete usage</a></li>
+  </ol>
+  <span class="heading">edevkit specifics</span>
+  <ol>
+    <li><a href="#edevkit-layout">edevkit1's USB layout</a></li>
+    <li><a href="#bandwidth">Bandwidth budgeting — the 10 Mbps rule</a></li>
+  </ol>
+  <span class="heading">Onward</span>
+  <ol>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="what-is-usb">What USB is, and the bits that matter for an MCU</h2>
+
+<p>USB — <strong>Universal Serial Bus</strong> — is a serial bus designed in the mid-1990s to replace the zoo of PC peripheral connectors (PS/2, RS-232, parallel, ADB, MIDI, joystick) with a single hot-pluggable, self-configuring, self-powered cable. Three properties of the design carry through every later layer and are worth keeping in mind when reading anything else:</p>
+
+<ol>
+  <li><strong>Host-controller-centric.</strong> A USB device never speaks unless spoken to. The host (your PC, phone, embedded host SoC) is the only entity allowed to initiate transfers; devices respond to polls. This makes the protocol cheap on the device end (you're a slave, not a peer), and is why a USB device can never wake itself up faster than the host's poll rate.</li>
+  <li><strong>Polled, not packet-switched.</strong> Even "bulk" transfers happen inside fixed-size frames (1 ms on Full Speed, 125 µs microframes on High Speed and above). Latency is bounded by the frame structure — there is no async push from device to host.</li>
+  <li><strong>Self-describing.</strong> When a device is plugged in, the host asks it a sequence of standard questions, the device answers with descriptors describing what it is, and the host then loads (or has already loaded) a class driver that knows how to talk to it. The driver model is fully data-driven from the device's descriptors.</li>
+</ol>
+
+<h3 id="speeds">Speed tiers</h3>
+
+<p>The bus has shipped five physical-layer speeds. They are <em>not</em> separate protocols — they share the descriptor and enumeration model — but the wiring, signalling, encoding, and frame timing differ.</p>
+
+<table>
+  <tr><th>Tier</th><th>Speed</th><th>Year</th><th>Wires</th><th>Notes</th></tr>
+  <tr><td><strong>Low Speed (LS)</strong></td><td>1.5 Mbit/s</td><td>1996</td><td>D+/D- (twisted pair, no shielding)</td><td>USB 1.0/1.1. Mice, keyboards, cheap HID. Uses 3 ft max cable. Signalled via NRZI on D+/D-, with idle = D- high, K state, 1.5 K pull-up on D-.</td></tr>
+  <tr><td><strong>Full Speed (FS)</strong></td><td>12 Mbit/s</td><td>1996</td><td>D+/D-</td><td>USB 1.0/1.1. Same wires as LS; speed advertised by which line has the 1.5 K pull-up (D+ for FS). Native bus speed of every RP-series silicon (RP2040, RP2350) and most low-end MCUs. <strong>This is what edevkit speaks.</strong></td></tr>
+  <tr><td><strong>High Speed (HS)</strong></td><td>480 Mbit/s</td><td>2000 (USB 2.0)</td><td>D+/D- (with HS chirp negotiation)</td><td>Adds High-Speed signalling on top of FS wires using a chirp handshake at attach. STM32H7, NXP iMX-RT, Tegra etc. Need a dedicated PHY (often external ULPI, sometimes integrated). MCU support is much narrower than FS.</td></tr>
+  <tr><td><strong>SuperSpeed (SS)</strong></td><td>5 Gbit/s</td><td>2008 (USB 3.0)</td><td>SSTX±, SSRX± (additional differential pairs alongside D+/D-)</td><td>USB 3.0/3.1 Gen 1. Different physical lanes from USB 2 — a USB 3 cable carries both 2.0 and 3.0 wires. Almost no microcontrollers do SS natively; you'll see it on FPGAs, SoCs, and dedicated bridge chips (FX3, e.g.).</td></tr>
+  <tr><td><strong>SuperSpeed+ (SS+)</strong></td><td>10 / 20 Gbit/s</td><td>2013+ (USB 3.1 Gen 2 / 3.2)</td><td>Same SSTX/SSRX pairs, different encoding (128b/132b, optionally dual-lane on USB-C)</td><td>USB 3.1 Gen 2 = 10 Gbit/s; USB 3.2 Gen 2x2 = 20 Gbit/s on USB-C. Phone/laptop territory. Out of scope for embedded.</td></tr>
+</table>
+
+<p>The RP2350 USB block is a hard-IP <strong>Full Speed (12 Mbit/s)</strong> device controller plus a bare-bones host controller. There is no High-Speed PHY on the chip, so edevkit's USB ceiling is 12 Mbit/s gross.</p>
+
+<div class="callout info">
+  <span class="label">Rule of thumb · 10 Mbps usable</span>
+  Of FS's nominal 12 Mbit/s, you lose ~17% to bit-stuffing (NRZI), framing (1-ms SOF tokens, sync, EOP), per-transaction handshakes (token + data + ACK), and address/endpoint overhead. <strong>Plan for ~10 Mbit/s of payload throughput</strong> on a healthy bus, and rather less if your endpoints have small packet sizes. This is edevkit's hard bandwidth ceiling — see <a href="#bandwidth">Bandwidth budgeting</a>.
+</div>
+
+<h3 id="signalling">A bit about NRZI and bit-stuffing (skim if you don't care)</h3>
+
+<p>USB encodes bits using <strong>NRZI</strong> (Non-Return-to-Zero Inverted) on the D+/D- differential pair. A <code>0</code> bit causes a transition; a <code>1</code> bit is a hold. To prevent long runs of <code>1</code>s from making the receiver lose its clock, USB inserts a <strong>stuffed zero after every six consecutive ones</strong>, then strips it on the receive side. This is invisible to higher layers but explains the ~17% framing tax. The receiver's PLL re-locks on every transition.</p>
+
+<p>SE0 (single-ended zero — both D+ and D- driven low) signals <strong>reset</strong> when held for ≥10 ms, and EOP (end of packet) when held for ~2 bit-times. Speed is communicated by which line has the 1.5 KΩ pull-up: <strong>D+ = FS, D- = LS</strong>.</p>
+
+<h3 id="power">Power</h3>
+
+<p>USB supplies power on VBUS (5 V on USB 2/USB-A; up to 20 V at higher current via USB-C and PD). Devices that draw &gt; 100 mA must declare a <code>bMaxPower</code> in their Configuration descriptor, and a host can refuse to enumerate them if the upstream port can't supply it. <strong>Bus-powered devices</strong> negotiate this in the descriptor; <strong>self-powered devices</strong> set the <code>SELF_POWERED</code> bit in <code>bmAttributes</code>. edevkit is bus-powered: USB-C 5 V → buck → 3.3 V system rail.</p>
+
+<!-- =========================================================== -->
+<h2 id="topology">Topology — host, hub, device, endpoints</h2>
+
+<p>USB is a <strong>tiered star</strong>: one host root, hubs branching out from it, and leaf devices on hubs. There is exactly one host on a bus. Hubs can cascade up to 5 deep, and a single host can address up to 127 devices (7-bit address space).</p>
+
+<pre><code>┌────────────┐
+│    HOST    │  (PC, phone, SBC) — sole transaction master
+│  Root Hub  │
+└──┬─────┬───┘
+   │     │
+   │     ▼
+   │   ┌──────────┐
+   │   │ External │
+   │   │   Hub    │ (powered or bus-powered)
+   │   └──┬───┬───┘
+   │      │   │
+   │      ▼   ▼
+   │   [dev] [dev]
+   ▼
+[EDEVKIT]   ← appears to host as one or more interfaces, each with endpoints</code></pre>
+
+<h3 id="device-vs-interface">Device vs. interface vs. function</h3>
+
+<p>A USB device exposes one or more <strong>configurations</strong> (almost always exactly one in practice — the spec allows several, but Windows for instance won't switch between them). A configuration contains one or more <strong>interfaces</strong>. An interface contains one or more <strong>endpoints</strong>. Each <strong>endpoint</strong> is a unidirectional data pipe between host and device buffer.</p>
+
+<pre><code>Device
+└─ Configuration #1
+   ├─ Interface #0 (CDC ACM control)        ← claimed by serial driver
+   │  └─ Endpoint 0x82 (interrupt IN, 8 B)
+   ├─ Interface #1 (CDC ACM data)
+   │  ├─ Endpoint 0x01 (bulk OUT, 64 B)
+   │  └─ Endpoint 0x81 (bulk IN, 64 B)
+   └─ Interface #2 (vendor — CMSIS-DAP)     ← claimed by WinUSB / libusb
+      ├─ Endpoint 0x03 (bulk OUT, 64 B)
+      └─ Endpoint 0x83 (bulk IN, 64 B)</code></pre>
+
+<p><strong>Compound</strong> vs. <strong>composite</strong> is a constant source of confusion:</p>
+
+<ul>
+  <li><strong>Compound device</strong> — physically, a hub plus one or more devices in the same shell (e.g. a USB-C dock that has a hub, an Ethernet controller, and a card reader internally; the OS sees several distinct USB device addresses).</li>
+  <li><strong>Composite device</strong> — logically, one device with multiple <em>interfaces</em> bound to different OS drivers (e.g. edevkit: two CDC ACM interfaces + one vendor interface, all on one address). Composite is the path you almost always want for an MCU.</li>
+</ul>
+
+<h3 id="endpoint-zero">The control pipe at endpoint 0</h3>
+
+<p>Every USB device has a <strong>bidirectional control endpoint at address 0</strong> (Endpoint Zero / EP0). This is the <em>only</em> endpoint that exists before enumeration completes — the host uses it to send <code>SETUP</code> packets that ask the device to describe itself, change its address, or activate a configuration. EP0 is bidirectional in the sense that one endpoint number serves both directions (0x00 OUT and 0x80 IN are the same logical pipe). Class drivers also send class-specific control requests through EP0, e.g. <code>CDC_SET_LINE_CODING</code> for serial baud-rate changes.</p>
+
+<!-- =========================================================== -->
+<h2 id="transfer-types">Transfer types — control, bulk, interrupt, isochronous</h2>
+
+<p>Endpoints come in four flavours. The flavour is fixed at descriptor time and determines how the host schedules transactions to that endpoint.</p>
+
+<table>
+  <tr><th>Type</th><th>Use case</th><th>Latency</th><th>Throughput</th><th>Error handling</th></tr>
+  <tr><td><strong>Control</strong></td><td>Enumeration, class-specific small commands</td><td>~1 frame (1 ms)</td><td>Reserved 10% of bandwidth on FS</td><td>Hardware retransmits on error; bounded transfer.</td></tr>
+  <tr><td><strong>Bulk</strong></td><td>Best-effort high-throughput data — file transfer, debug streams</td><td>Unbounded (gets leftover bandwidth)</td><td>Highest sustainable on FS (~10 Mbit/s payload). Up to 64 B max packet on FS, 512 B on HS</td><td>Hardware retries; data integrity guaranteed.</td></tr>
+  <tr><td><strong>Interrupt</strong></td><td>Periodic polled small messages — HID input reports, status updates</td><td>Bounded by polling interval (1–255 ms on FS)</td><td>Low — 64 B per poll × 1000 polls/s = 64 KB/s max on FS</td><td>Hardware retries.</td></tr>
+  <tr><td><strong>Isochronous</strong></td><td>Real-time streams — audio, video, where freshness beats correctness</td><td>Strictly periodic (every frame)</td><td>Reserved bandwidth — guaranteed</td><td><strong>No retries</strong>; bad packets dropped.</td></tr>
+</table>
+
+<p>Picking the right type is one of the few real design decisions you make in a USB device:</p>
+
+<ul>
+  <li><strong>Bulk</strong> — anything where you care about throughput and can tolerate jitter. Mass storage, CDC ACM data path, vendor-specific debug streams. CMSIS-DAP v2 uses bulk IN/OUT.</li>
+  <li><strong>Interrupt</strong> — anything where bytes are scarce but latency matters. HID keyboards, mouse buttons, status LEDs that the host polls. CDC ACM uses an interrupt endpoint for line-state notifications (DCD/DSR/RING) but a bulk pair for actual data.</li>
+  <li><strong>Isochronous</strong> — anything streaming. UAC2 audio, UVC video. <strong>Avoid for MCU side-projects</strong>: scheduling is finicky, drivers are unforgiving of dropped packets even though the spec says they're allowed, and most MCU stacks don't do iso well.</li>
+  <li><strong>Control</strong> — never explicitly chosen for a data path. You get EP0 for free, and you can pass small class-specific commands through it.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="descriptors">Descriptors — the device's self-description</h2>
+
+<p>A descriptor is a packed C struct living in the device's flash that the host reads via <code>GET_DESCRIPTOR</code> requests on EP0. The hierarchy is fixed:</p>
+
+<pre><code>Device descriptor                        ← 1 per device
+└─ Configuration descriptor              ← 1 (or rarely more) per device
+   ├─ (optional) IAD — Interface Association Descriptor
+   ├─ Interface descriptor               ← 1+ per configuration
+   │  ├─ (optional) class-specific descriptors
+   │  └─ Endpoint descriptor             ← 1+ per interface
+   ├─ Interface descriptor
+   │  └─ Endpoint descriptor(s)
+   └─ ...
+
+String descriptors                        ← referenced by index from above
+BOS (Binary Object Store) descriptor     ← USB 2.1+; carries platform capabilities</code></pre>
+
+<h3 id="device-descriptor-bytes">Device descriptor — concrete bytes</h3>
+
+<p>The Device descriptor is 18 bytes. Here it is for a hypothetical edevkit unit:</p>
+
+<pre><code>Offset Field                Size  Value     Meaning
+─────  ───────────────────  ────  ────────  ──────────────────────────────
+ 0     bLength               1    0x12      Descriptor length = 18 bytes
+ 1     bDescriptorType       1    0x01      DEVICE
+ 2     bcdUSB                2    0x0210    USB 2.10 (BCD; needed for BOS)
+ 4     bDeviceClass          1    0xEF      Misc — required for IAD-based composite
+ 5     bDeviceSubClass       1    0x02      Common Class
+ 6     bDeviceProtocol       1    0x01      Interface Association Descriptor
+ 7     bMaxPacketSize0       1    0x40      EP0 max packet size = 64 bytes
+ 8     idVendor              2    0x2E8A    Raspberry Pi (RP-series silicon)
+10     idProduct             2    0x10XX    edevkit-assigned PID
+12     bcdDevice             2    0x0100    Device version 1.00 (BCD)
+14     iManufacturer         1    0x01      String index → "edevkit"
+15     iProduct              1    0x02      String index → "edevkit1"
+16     iSerialNumber         1    0x03      String index → "EDV-XXXX-YYYY-ZZZZ"
+17     bNumConfigurations    1    0x01      One configuration</code></pre>
+
+<p>Key choices to notice:</p>
+
+<ul>
+  <li><strong><code>bDeviceClass = 0xEF</code>, <code>SubClass = 0x02</code>, <code>Protocol = 0x01</code></strong> — this is the magic three-tuple that says "this is a composite device that uses Interface Association Descriptors". Without it, Windows in particular will mis-bind drivers on the second-and-later interfaces of multi-function devices.</li>
+  <li><strong><code>idVendor = 0x2E8A</code></strong> — Raspberry Pi Trading Ltd's Vendor ID. RP-series silicon ships with this VID and a bank of available PIDs. Open-source projects can use it without licensing fees as long as they pick a PID outside Pi's reserved range.</li>
+  <li><strong><code>iSerialNumber</code></strong> — non-zero string index telling the host "ask me for a serial". The string itself is constructed at first boot from the RP2350's 64-bit chip ID (see edevkit1.html §11). Hosts use this serial to remember per-device settings (COM port assignments on Windows, /dev/serial/by-id symlinks on Linux).</li>
+</ul>
+
+<h3 id="config-descriptor">Configuration descriptor</h3>
+
+<p>The Configuration descriptor is read in two stages: first 9 bytes (the header), then the host re-reads with the larger length specified in <code>wTotalLength</code> to grab everything below it (interfaces, endpoints, class-specific descriptors) as one packed blob. Skeleton:</p>
+
+<pre><code>0x09  bLength
+0x02  bDescriptorType         (CONFIGURATION)
+0xXX  wTotalLength            (LSB)
+0xXX  wTotalLength            (MSB)  ← total bytes incl. all sub-descriptors
+0xNN  bNumInterfaces          (e.g. 0x05 for edevkit)
+0x01  bConfigurationValue
+0x00  iConfiguration          (no string)
+0xC0  bmAttributes            (0x80 = bus-powered, 0xC0 = self-powered hint)
+0x32  bMaxPower               (in 2-mA units; 0x32 = 100 mA)</code></pre>
+
+<h3 id="interface-and-endpoint">Interface and Endpoint descriptors</h3>
+
+<pre><code>Interface descriptor (9 B):
+  bLength=9, type=4, bInterfaceNumber, bAlternateSetting, bNumEndpoints,
+  bInterfaceClass, bInterfaceSubClass, bInterfaceProtocol, iInterface
+
+Endpoint descriptor (7 B):
+  bLength=7, type=5,
+  bEndpointAddress (0x81 = EP1 IN, 0x02 = EP2 OUT, etc.),
+  bmAttributes (00=control, 01=iso, 02=bulk, 03=interrupt),
+  wMaxPacketSize (8/16/32/64 on FS),
+  bInterval (interrupt poll period in ms; ignored for bulk)</code></pre>
+
+<h3 id="string-descriptors">String descriptors</h3>
+
+<p>Strings are <strong>UTF-16LE</strong> with no NUL terminator and a 2-byte header:</p>
+
+<pre><code>String descriptor #0 — language IDs:
+  0x04 0x03 0x09 0x04
+  └─ length, type=STRING, LangID = 0x0409 (US English, little-endian)
+
+String descriptor #1 — manufacturer:
+  0x10 0x03 'e'\0 'd'\0 'e'\0 'v'\0 'k'\0 'i'\0 't'\0
+  └─ length=16, type=STRING, "edevkit" in UTF-16LE</code></pre>
+
+<p>String index <code>0x00</code> is reserved for the language-IDs descriptor. All other strings are referenced by 1-based index from other descriptors (<code>iManufacturer</code>, <code>iProduct</code>, <code>iInterface</code>, etc.). <strong>Index 0xEE is special</strong> — Windows uses it to detect Microsoft OS Descriptors (see <a href="#ms-os">below</a>).</p>
+
+<h3 id="bos">BOS descriptor (USB 2.1+)</h3>
+
+<p>The Binary Object Store descriptor was added in USB 2.1 to carry "platform capabilities" — things like USB 3 LPM support, container IDs, and (relevantly for us) <strong>Microsoft OS 2.0 descriptors</strong>. A device declares <code>bcdUSB = 0x0210</code> in its Device descriptor to opt in. The BOS descriptor itself is short; the interesting payload is the platform-capability sub-descriptors it contains.</p>
+
+<!-- =========================================================== -->
+<h2 id="enumeration">Enumeration — what happens at plug-in</h2>
+
+<p>Plugging in a USB device kicks off a fixed handshake. Understanding it is essential when something goes wrong, because the <em>stage</em> at which enumeration fails tells you exactly which descriptor is malformed.</p>
+
+<pre><code>1.  ATTACH         Device pulled D+ high (FS) or D- high (LS).
+                   Host sees attach via root-hub status change.
+
+2.  RESET          Host drives SE0 for ≥10 ms.
+                   Device clears all state, returns to default address 0.
+
+3.  GET_DESCRIPTOR(Device, 8 B)
+                   Host fetches just the first 8 bytes — enough to read
+                   bMaxPacketSize0 (so it knows EP0's packet size).
+
+4.  RESET (again)  Some hosts re-reset here to be safe.
+
+5.  SET_ADDRESS(N)
+                   Host assigns the device a 7-bit address (1..127).
+                   From here on, all subsequent requests use this address.
+
+6.  GET_DESCRIPTOR(Device, 18 B)
+                   Full Device descriptor.
+
+7.  GET_DESCRIPTOR(Configuration #0, 9 B)
+                   First 9 bytes, just to read wTotalLength.
+
+8.  GET_DESCRIPTOR(Configuration #0, wTotalLength)
+                   Full configuration tree — every interface, endpoint,
+                   and class-specific descriptor in one buffer.
+
+9.  GET_DESCRIPTOR(String #0)        — language IDs
+   GET_DESCRIPTOR(String #iMfr)
+   GET_DESCRIPTOR(String #iProduct)
+   GET_DESCRIPTOR(String #iSerial)
+
+10. (Windows only) GET_DESCRIPTOR(String #0xEE)
+                   If device responds with the magic MS OS String, host
+                   issues vendor request 0x?? to fetch MS OS descriptors.
+
+11. SET_CONFIGURATION(1)
+                   Activates the chosen configuration. Endpoints become
+                   available. Class drivers are bound and start their
+                   own initialisation (CDC SET_LINE_CODING, MSC inquiry,
+                   etc.).
+
+12. (Class-specific bring-up)
+    e.g. CDC ACM:  SET_LINE_CODING, SET_CONTROL_LINE_STATE
+         MSC:      INQUIRY, READ_CAPACITY, READ(10) of MBR
+         HID:      SET_IDLE, GET_REPORT_DESCRIPTOR
+
+13. Device ready — endpoints exchange data freely.</code></pre>
+
+<h3 id="enum-failures">Common failure modes</h3>
+
+<table>
+  <tr><th>Symptom</th><th>Likely cause</th></tr>
+  <tr><td>Device descriptor truncated, host gives up at step 3</td><td><code>bMaxPacketSize0</code> wrong, or EP0 stalls before the first 8 bytes ship.</td></tr>
+  <tr><td>Endless reset loop ("USB device not recognized")</td><td>Device doesn't respond to <code>SET_ADDRESS</code> within the spec's 50 ms; usually a stack init bug or wrong VBUS sense.</td></tr>
+  <tr><td>Host fetches all descriptors then gives up at <code>SET_CONFIGURATION</code></td><td><code>wTotalLength</code> wrong, or one of the embedded interface/endpoint descriptors has a malformed length, or a class-specific descriptor is missing a field.</td></tr>
+  <tr><td>Windows binds wrong driver to a composite device's later interfaces</td><td>Missing IAD, or Device descriptor's class triple isn't <code>0xEF/0x02/0x01</code>.</td></tr>
+  <tr><td>Linux works, macOS works, Windows shows "Unknown Device"</td><td>Almost always a missing or wrong Microsoft OS descriptor for a vendor-class interface. See <a href="#ms-os">below</a>.</td></tr>
+  <tr><td>Wrong VID/PID — host has a cached driver from an earlier device</td><td>Windows in particular caches by VID/PID. If you change descriptors during dev, you may need to <code>devmgmt.msc</code> → "Show hidden devices" → uninstall old phantom, then re-plug.</td></tr>
+  <tr><td>Serial number changes between boots</td><td>Hosts can't track per-unit settings. Always derive from chip-unique ID and store immutably (see edevkit1 §11).</td></tr>
+</table>
+
+<div class="callout warn">
+  <span class="label">Debug tip</span>
+  Use <code>dmesg</code> on Linux, <code>system_profiler SPUSBDataType</code> on macOS, or USBView / USBlyzer / a Beagle USB analyzer on Windows to see exactly which step is failing. <code>lsusb -v -d &lt;vid:pid&gt;</code> dumps the descriptor tree as the host actually parsed it — invaluable for catching off-by-one length errors.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="classes">Standard classes vs. vendor-specific</h2>
+
+<p>Once enumeration completes, the host needs a driver. There are two paths:</p>
+
+<ol>
+  <li><strong>Standard class</strong> — your interface declares one of the well-known class codes (<code>bInterfaceClass</code> in the Interface descriptor), and the OS's built-in driver claims it. No driver install. Constrains your protocol.</li>
+  <li><strong>Vendor-specific</strong> — class code <code>0xFF</code>, your own protocol on bulk/interrupt endpoints, host-side library does the heavy lifting. Free choice of protocol; need to handle host-driver matching yourself.</li>
+</ol>
+
+<p>The classes worth knowing for embedded:</p>
+
+<table>
+  <tr><th>Class</th><th>Code</th><th>Used for</th><th>Driver on host</th><th>Notes</th></tr>
+  <tr><td><strong>HID</strong></td><td>0x03</td><td>Mouse, keyboard, gamepad, generic-HID for tiny custom protocols</td><td>Built-in everywhere</td><td>Polled via interrupt EPs. Report descriptors are their own bytecode language. <code>hidraw</code> on Linux gives raw access; HID API on Windows. Limited to ~64 B per report on FS.</td></tr>
+  <tr><td><strong>MSC (Mass Storage)</strong></td><td>0x08</td><td>USB drives, drag-and-drop bootloaders (UF2, etc.)</td><td>Built-in</td><td>SCSI command set over bulk. Easy to expose a flash file system. Comes with quirks — Windows aggressively scans inserted volumes (System Volume Information, Recycle Bin), which can wear flash.</td></tr>
+  <tr><td><strong>CDC ACM (serial)</strong></td><td>0x02 (Communications) / 0x0A (Data)</td><td>Virtual serial ports (target log, console, AT modems)</td><td>Built-in on Linux/macOS; needs <code>.inf</code> on legacy Windows, native since Win10 1809</td><td>Two interfaces per port (control + data). Bulk for data, interrupt for line-state. See <a href="usb_cdc_acm.html">usb_cdc_acm.html</a>.</td></tr>
+  <tr><td><strong>Audio (UAC1/UAC2)</strong></td><td>0x01</td><td>Speakers, mics, MIDI</td><td>Built-in</td><td>Iso endpoints. Notoriously fiddly. UAC2 supports 24-bit/96 kHz+ but Windows only added native UAC2 in Win10 1703.</td></tr>
+  <tr><td><strong>Video (UVC)</strong></td><td>0x0E</td><td>Webcams</td><td>Built-in</td><td>Iso. Even fiddlier than audio. Use a UVC-capable bridge chip if you can.</td></tr>
+  <tr><td><strong>DFU</strong></td><td>0xFE / 0x01</td><td>Bootloader update mode</td><td>Tools like <code>dfu-util</code></td><td>Stateful protocol over EP0. Stick to it for legacy compatibility; modern alternatives are MCUboot + SMP (edevkit's choice) or vendor-specific.</td></tr>
+  <tr><td><strong>Vendor-specific</strong></td><td>0xFF</td><td>Anything not above — debug probes, sensors, instruments</td><td>libusb (Linux/macOS), WinUSB (Win10+), driver of your choice</td><td>What CMSIS-DAP v2 uses. See <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a>. Pair with Microsoft OS descriptors for driverless Windows.</td></tr>
+</table>
+
+<h3 id="when-to-go-vendor">When to use a class vs. roll your own</h3>
+
+<p>Default to a standard class wherever it fits. The wins are huge: zero driver install on every modern OS, immediate compatibility with shell tools (<code>cat /dev/ttyACM0</code>, <code>screen</code>, file-explorer drag-drop), and a body of tooling you don't have to build.</p>
+
+<p>Go vendor-specific when:</p>
+
+<ul>
+  <li>Throughput requires bulk endpoints with <em>no</em> per-byte protocol overhead (MSC's SCSI wrapping costs ~30 B/transfer; CDC ACM is fine for raw bytes but its line-coding/control negotiation adds latency at open).</li>
+  <li>You need bidirectional binary message framing that isn't a stream (CMSIS-DAP, Saleae Logic, BMP probe protocols).</li>
+  <li>You want host-side flexibility — libusb gives you full control over packet boundaries, timeouts, and stalls.</li>
+  <li>You're integrating with an existing host library that expects vendor-specific endpoints (probe-rs talks raw to CMSIS-DAP, OpenOCD has its own bulk transports).</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="ms-os">Microsoft OS descriptors and WinUSB</h2>
+
+<p>Linux and macOS bind <code>libusb</code>/<code>IOUSBLib</code> to any vendor-specific interface they see — you just <code>libusb_open()</code> and start reading. <strong>Windows does not.</strong> Without help, Windows shows your vendor interface as "Unknown Device" and demands an INF file.</p>
+
+<p>The fix that has been industry-standard since ~2008 is <strong>Microsoft OS descriptors</strong>: extra non-standard descriptors that tell Windows "use the built-in WinUSB driver for this interface, here's the device interface GUID to publish it under". Two generations exist:</p>
+
+<table>
+  <tr><th>Version</th><th>Trigger</th><th>Carrier</th><th>Status</th></tr>
+  <tr><td>MS OS 1.0</td><td>String descriptor index 0xEE</td><td>Vendor request returned via EP0</td><td>Works back to Windows XP. Still widely used.</td></tr>
+  <tr><td>MS OS 2.0</td><td>BOS descriptor (USB 2.1+)</td><td>Platform-capability descriptor inside BOS</td><td>Win 8.1+. Cleaner. Preferred for new designs.</td></tr>
+</table>
+
+<h3 id="msos-10-flow">MS OS 1.0 — the 0xEE String trick</h3>
+
+<p>When Windows sees a new device, after fetching the standard descriptors it issues:</p>
+
+<pre><code>GET_DESCRIPTOR(STRING, index=0xEE, langid=0x0000)</code></pre>
+
+<p>If the device returns a 0xEE string descriptor with the magic signature <code>"MSFT100"</code> followed by a vendor-request byte, Windows will then issue that vendor request to fetch:</p>
+
+<ul>
+  <li><strong>Extended Compat ID descriptor</strong> — tells Windows "for interface N, use driver X" (where X is one of the codes in the MS table — <code>"WINUSB"</code> is the one we want; <code>"RNDIS"</code>, <code>"PTP"</code>, <code>"MTP"</code>, <code>"BLUTUTH"</code>, <code>"XUSB20"</code> are others). The <a href="https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/microsoft-os-1-0-descriptors-specification">MS OS 1.0 spec</a> lists the full table.</li>
+  <li><strong>Extended Properties descriptor</strong> — additional registry keys, the most important being <code>DeviceInterfaceGUIDs</code> (a 128-bit GUID under which user-mode apps can enumerate this interface via <code>SetupDiGetClassDevs</code>).</li>
+</ul>
+
+<h3 id="msos-20-flow">MS OS 2.0 — via BOS</h3>
+
+<p>Cleaner, no magic string index. The device declares <code>bcdUSB = 0x0210</code>, exposes a BOS descriptor with a Microsoft platform-capability sub-descriptor, and the OS reads compatible-ID and properties from a single binary blob. Zephyr USB-Device-Next supports this directly through <code>USBD_DESC_BOS_VS_DEFINE</code>.</p>
+
+<div class="callout info">
+  <span class="label">Practical note</span>
+  Most teams ship <strong>both</strong> MS OS 1.0 and 2.0 descriptors and let the host pick. The 1.0 set keeps Windows 7/8 happy for any ancient PC the field engineer drags out of a closet; the 2.0 set is what modern Windows 10/11 actually consumes. Costs ~200 bytes of flash in total.
+</div>
+
+<h3 id="winusb-guid">WinUSB device interface GUID</h3>
+
+<p>edevkit's CMSIS-DAP v2 interface should publish a stable per-product GUID so host tools can find it via standard Windows enumeration. Pick one once with <code>uuidgen</code>, hard-code it in the Microsoft OS descriptor, and never change it across firmware revisions of the same product. The CMSIS-DAP v2 spec recommends a specific GUID (<code>{CDB3B5AD-293B-4663-AA36-1AAE46463776}</code>) so PC tools that hard-coded it can find any v2 probe.</p>
+
+<!-- =========================================================== -->
+<h2 id="stacks">USB device stacks for embedded MCUs</h2>
+
+<p>Five stacks dominate. Picking one is a one-way decision in practice — descriptor authoring, class implementation, and threading model differ enough that porting is rarely cheap.</p>
+
+<table>
+  <tr><th>Stack</th><th>Origin</th><th>License</th><th>RTOS-friendly</th><th>Code size</th><th>Descriptor model</th></tr>
+  <tr><td><strong>Zephyr USB-Device-Next</strong></td><td>Linux Foundation / Zephyr Project</td><td>Apache-2.0</td><td>Yes (native)</td><td>Medium (~25–35 KB)</td><td>Devicetree + <code>USBD_*</code> macros + runtime <code>usbd_register_class()</code></td></tr>
+  <tr><td><strong>TinyUSB</strong></td><td>hathach</td><td>MIT</td><td>Yes (RTOS-aware), or bare-metal</td><td>Small (~10–20 KB)</td><td>C arrays, configured by <code>tusb_config.h</code> + descriptor callbacks</td></tr>
+  <tr><td><strong>Pi Pico SDK USB (TinyUSB)</strong></td><td>Raspberry Pi (vendored TinyUSB)</td><td>MIT</td><td>Bare-metal default; FreeRTOS-aware</td><td>Same as TinyUSB</td><td>Same as TinyUSB</td></tr>
+  <tr><td><strong>ChibiOS USB-HAL</strong></td><td>ChibiOS</td><td>Apache-2.0 / GPL</td><td>Yes (native)</td><td>Medium</td><td>C structs in user code</td></tr>
+  <tr><td><strong>STM32Cube USB Device Library</strong></td><td>ST</td><td>ST permissive (binary-safe)</td><td>Bare-metal default; FreeRTOS support</td><td>Medium</td><td>STM32Cube generator + C structs</td></tr>
+  <tr><td><strong>FreeRTOS+USB</strong></td><td>AWS / FreeRTOS</td><td>MIT</td><td>FreeRTOS-only</td><td>Medium</td><td>C structs</td></tr>
+  <tr><td><strong>NXP USB stack (MCUXpresso)</strong></td><td>NXP</td><td>NXP permissive</td><td>FreeRTOS / bare-metal</td><td>Medium-large</td><td>C structs + generator</td></tr>
+</table>
+
+<h3 id="why-zephyr-next">Why edevkit picked Zephyr USB-Device-Next</h3>
+
+<p>edevkit firmware runs on Zephyr 4.x, so the realistic choices were Zephyr's own stacks: the <em>legacy</em> USB device stack (deprecated since Zephyr 3.4, and slated for removal) or USB-Device-Next, which was promoted to the default in Zephyr 3.6. The reasons to use the new one:</p>
+
+<ul>
+  <li><strong>Composite-device support is first-class.</strong> The legacy stack required hand-managing endpoint number assignments across classes and broke quietly under multi-class loads. USB-Device-Next allocates endpoints at <code>usbd_init()</code> time across all registered functions and refuses to enumerate if budgets don't fit, with a clear error.</li>
+  <li><strong>Devicetree-driven configuration.</strong> Each CDC ACM port, MSC instance, etc. is a node in the board overlay; classes are registered at runtime in code that walks the tree. This matches every other Zephyr subsystem and means board variants don't need code changes.</li>
+  <li><strong>BOS / MS OS 2.0 descriptors built in.</strong> <code>USBD_DESC_BOS_VS_DEFINE</code> lets you ship the Microsoft platform-capability blob without fighting the stack.</li>
+  <li><strong>Active development.</strong> The legacy stack only gets fixes; new classes (UAC2, UVC, RNDIS) land first on -Next.</li>
+  <li><strong>Same lifecycle as the rest of Zephyr.</strong> One Kconfig tree, one logging domain, one sample suite. No second build infrastructure.</li>
+</ul>
+
+<p>The trade-off: USB-Device-Next is younger and less battle-tested than TinyUSB. Zephyr's GitHub has open issues about endpoint allocation collisions in CDC + UAC2 composites (<a href="https://github.com/zephyrproject-rtos/zephyr/issues/103324">issue #103324</a> is a recent one). For edevkit's CDC + Vendor + MSC layout these aren't blockers, but it's worth tracking the issue tracker as the stack matures.</p>
+
+<!-- =========================================================== -->
+<h2 id="composite">Composite-device gotchas (IAD, endpoint numbering)</h2>
+
+<p>A "composite" device is one logical USB device with multiple interfaces bound to different drivers. Almost every interesting MCU project ends up composite — even a probe-and-CDC combo is composite. There are five things that bite teams:</p>
+
+<h3 id="iad">1. Interface Association Descriptor</h3>
+
+<p>If two of your interfaces logically belong together (CDC's control + data, or audio's control + streaming), they need an <strong>IAD</strong> immediately before the first interface descriptor in the configuration tree. Without it, Windows treats every interface as an independent function and binds <code>usbccgp.sys</code> as a parent — which is fine for some classes but wrong for CDC ACM (it'll bind <code>usbser.sys</code> only to the control interface and never connect the data interface).</p>
+
+<pre><code>IAD descriptor (8 bytes):
+  bLength = 0x08
+  bDescriptorType = 0x0B (INTERFACE_ASSOCIATION)
+  bFirstInterface              ← e.g. 0
+  bInterfaceCount              ← e.g. 2 (control + data)
+  bFunctionClass               ← 0x02 (CDC) for an ACM port
+  bFunctionSubClass            ← 0x02 (ACM)
+  bFunctionProtocol            ← 0x01 (AT commands)
+  iFunction                    ← string idx, e.g. "Target log UART"</code></pre>
+
+<p>And remember the trio at the Device descriptor level: <code>bDeviceClass=0xEF, bDeviceSubClass=0x02, bDeviceProtocol=0x01</code>. Without these, Windows ignores the IAD.</p>
+
+<h3 id="endpoint-numbering">2. Endpoint numbering matters</h3>
+
+<p>USB endpoints are 4-bit (0..15). On most MCUs each direction is a separate endpoint, so EP1-IN and EP1-OUT are <em>different</em> endpoints sharing a number. Some controllers (RP2350 included) have 16 endpoints per direction; some have only 8 (older STM32). When two classes both want "EP1 IN" you have a collision the stack must resolve — and bad stacks resolve it silently in a way that leaves one interface non-functional.</p>
+
+<p>USB-Device-Next does this allocation correctly at <code>usbd_init()</code>; TinyUSB requires you to set <code>CFG_TUD_*_EP_BUFSIZE</code> macros that influence layout; STM32Cube requires you to assign endpoints by hand in the descriptor template.</p>
+
+<h3 id="endpoint-budget">3. Endpoint count budget</h3>
+
+<p>RP2350's USB device controller has 15 IN + 15 OUT endpoints (plus EP0). Edevkit's worst-case layout uses ~10 endpoints (see <a href="#edevkit-layout">below</a>), so we have headroom. Tighter chips (G0xxx, M0+ silicon) have only 4-8 endpoints total and force you to pack hard.</p>
+
+<h3 id="windows-driver-quirks">4. Windows class-driver matching is order-sensitive</h3>
+
+<p>Windows iterates interfaces in declaration order and binds the first match it finds. If you put the vendor (CMSIS-DAP) interface <em>before</em> the CDC ACM pair, in some Win10 patch levels the CDC pair won't get <code>usbser.sys</code>. Conventional ordering is: <strong>CDC ACM(s) first, then HID, then MSC, then vendor-specific last.</strong> edevkit follows this.</p>
+
+<h3 id="alternate-settings">5. Alternate settings + endpoint zero</h3>
+
+<p>Audio and video classes use <code>bAlternateSetting</code> heavily — interface 0 alt-setting 0 has no endpoints (so the device idles and consumes no bandwidth), alt-setting 1+ defines the actual streaming endpoints. Hosts swap alt-settings to start/stop streams. Don't forget your descriptor parser has to handle alt-setting 0 specially — most stacks do this for you, but if you hand-roll it, this is a classic landmine.</p>
+
+<!-- =========================================================== -->
+<h2 id="zephyr-next">Zephyr USB-Device-Next — concrete usage</h2>
+
+<p>A minimal sketch of how edevkit's USB stack will look in Zephyr code. The full implementation will live at <code>firmware/app/src/usb/</code> when it lands; this is a roadmap.</p>
+
+<h3 id="kconfig-bringup">Kconfig</h3>
+
+<pre><code># prj.conf
+CONFIG_USB_DEVICE_STACK_NEXT=y     # use the new stack, not the legacy one
+CONFIG_USBD_CDC_ACM_CLASS=y        # register the CDC ACM class
+CONFIG_USBD_MSC_CLASS=y            # mass storage (planned)
+CONFIG_USBD_VENDOR_LOOPBACK=n      # Zephyr's example vendor class — disable
+                                   # (we ship our own CMSIS-DAP class)
+CONFIG_USBD_LOG_LEVEL_INF=y
+CONFIG_USB_DEVICE_PRODUCT="edevkit1"
+CONFIG_USB_DEVICE_MANUFACTURER="edevkit"
+CONFIG_USB_DEVICE_VID=0x2E8A
+CONFIG_USB_DEVICE_PID=0x10D0      # placeholder; reserve a real PID</code></pre>
+
+<h3 id="devicetree-bringup">Devicetree (board overlay)</h3>
+
+<pre><code>// boards/rpi_pico2.overlay
+/ {
+    cdc_acm_log: cdc_acm_log {
+        compatible = "zephyr,cdc-acm-uart";
+        label = "CDC_ACM_LOG";
+    };
+    cdc_acm_test: cdc_acm_test {
+        compatible = "zephyr,cdc-acm-uart";
+        label = "CDC_ACM_TEST";
+    };
+};
+
+&usbd {
+    cmsis_dap: cmsis_dap {
+        compatible = "edevkit,cmsis-dap-v2";
+        label = "CMSIS_DAP_V2";
+    };
+};</code></pre>
+
+<h3 id="device-bringup-c">C bringup (sketch)</h3>
+
+<pre><code>#include &lt;zephyr/usb/usbd.h&gt;
+
+USBD_DEVICE_DEFINE(edev_usbd, DEVICE_DT_GET(DT_NODELABEL(usbd)),
+                   0x2E8A,    /* VID */
+                   0x10D0);   /* PID */
+
+USBD_DESC_LANG_DEFINE(lang);
+USBD_DESC_MANUFACTURER_DEFINE(mfr,    "edevkit");
+USBD_DESC_PRODUCT_DEFINE(prod,        "edevkit1");
+USBD_DESC_SERIAL_NUMBER_DEFINE(sn);            /* derived from chip ID */
+USBD_DESC_CONFIG_DEFINE(fs_cfg, "FS Configuration");
+
+USBD_CONFIGURATION_DEFINE(fs_config,
+                          USB_SCD_SELF_POWERED,
+                          200,                    /* mA */
+                          &amp;fs_cfg);
+
+int edev_usb_init(void) {
+    int rc;
+    rc = usbd_add_descriptor(&amp;edev_usbd, &amp;lang);
+    rc |= usbd_add_descriptor(&amp;edev_usbd, &amp;mfr);
+    rc |= usbd_add_descriptor(&amp;edev_usbd, &amp;prod);
+    rc |= usbd_add_descriptor(&amp;edev_usbd, &amp;sn);
+    rc |= usbd_add_configuration(&amp;edev_usbd,
+                                  USBD_SPEED_FS,
+                                  &amp;fs_config);
+
+    /* Register the two CDC ACM ports. The class instances are auto-created
+     * from the matching devicetree nodes; we just bind them to a config. */
+    rc |= usbd_register_class(&amp;edev_usbd, "cdc_acm_0", USBD_SPEED_FS, 1);
+    rc |= usbd_register_class(&amp;edev_usbd, "cdc_acm_1", USBD_SPEED_FS, 1);
+
+    /* CMSIS-DAP v2 vendor class — defined in our own driver. */
+    rc |= usbd_register_class(&amp;edev_usbd, "cmsis_dap_v2", USBD_SPEED_FS, 1);
+
+    if (rc) return rc;
+    return usbd_init(&amp;edev_usbd) ?: usbd_enable(&amp;edev_usbd);
+}</code></pre>
+
+<p class="small">The exact macro names track Zephyr upstream — check <a href="https://docs.zephyrproject.org/latest/connectivity/usb/device_next/usb_device.html">docs.zephyrproject.org/latest/connectivity/usb/device_next/usb_device.html</a> for the current API surface; small renames are common between minor releases.</p>
+
+<!-- =========================================================== -->
+<h2 id="edevkit-layout">edevkit1's USB layout</h2>
+
+<p>edevkit1 enumerates as a single <strong>Full Speed composite device</strong> at VID <code>0x2E8A</code> (Raspberry Pi). The current planned interface tree:</p>
+
+<pre><code>edevkit1 USB device  (VID 0x2E8A, PID 0x10D0, FS only)
+│
+├─ Device descriptor:  bDeviceClass=0xEF/0x02/0x01  (composite + IAD)
+├─ Configuration #1:   bus-powered, ~200 mA
+│
+├─ IAD #1  ─────────────────────────────────────────────────────┐
+│  Interface 0: CDC ACM control   (class 0x02, subclass 0x02)   │  "Target log UART"
+│  └─ EP 0x82 (interrupt IN, 8 B, 64 ms)                        │
+│  Interface 1: CDC ACM data      (class 0x0A)                  │
+│  ├─ EP 0x01 (bulk OUT, 64 B)                                  │
+│  └─ EP 0x81 (bulk IN,  64 B)                                  ┘
+│
+├─ IAD #2  ─────────────────────────────────────────────────────┐
+│  Interface 2: CDC ACM control                                 │  "Test/dev UART"
+│  └─ EP 0x84 (interrupt IN, 8 B)                               │
+│  Interface 3: CDC ACM data                                    │
+│  ├─ EP 0x03 (bulk OUT, 64 B)                                  │
+│  └─ EP 0x83 (bulk IN,  64 B)                                  ┘
+│
+├─ Interface 4: Vendor-specific  (class 0xFF, "CMSIS-DAP v2")
+│  ├─ EP 0x05 (bulk OUT, 64 B)   ← debug commands from host
+│  ├─ EP 0x85 (bulk IN,  64 B)   ← responses + SWO trace stream (multiplexed)
+│  └─ (optional EP 0x86 interrupt IN — DAP_SWO_Status events)
+│
+└─ Interface 5: MSC  (class 0x08)  [PLANNED — profile uploads]
+   ├─ EP 0x07 (bulk OUT, 64 B)
+   └─ EP 0x87 (bulk IN,  64 B)
+
+String descriptors:
+  0x00:  LangID = 0x0409 (en-US)
+  0x01:  "edevkit"                    ← iManufacturer
+  0x02:  "edevkit1"                   ← iProduct
+  0x03:  "EDV-XXXX-YYYY-ZZZZ"         ← iSerial (chip-ID derived)
+  0x04:  "Target log UART"            ← iFunction for IAD #1
+  0x05:  "Test UART"                  ← iFunction for IAD #2
+  0x06:  "CMSIS-DAP v2"               ← iInterface for vendor IF
+  0xEE:  "MSFT100\xVR"                ← MS OS 1.0 magic
+
+BOS:
+  ├─ Microsoft OS 2.0 platform-capability descriptor
+  └─ (room for USB-IF Container ID, LPM if HS is ever added)</code></pre>
+
+<h3 id="cmsis-dap-multiplex">SWO multiplexed onto CMSIS-DAP bulk IN</h3>
+
+<p>One subtlety: SWO trace data does not get its own CDC port. It rides on the CMSIS-DAP v2 bulk IN endpoint as a tagged stream. The CMSIS-DAP v2 protocol defines a <code>DAP_SWO_*</code> command family and reserves a separate "SWO" endpoint pattern that the host (probe-rs, OpenOCD) auto-correlates with the active debug session. This is non-obvious — when you're tempted to "just expose SWO as another /dev/ttyACMx", don't. Host tools won't be able to merge it with the debug session, and you'll lose the timestamping that makes SWO useful. See <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> for the full DAP_SWO command set and ring-buffer design.</p>
+
+<h3 id="endpoint-budget-table">Endpoint budget summary</h3>
+
+<table>
+  <tr><th>Direction</th><th>Used</th><th>Available on RP2350</th><th>Headroom</th></tr>
+  <tr><td>IN  (device → host)</td><td>5 (0x81, 0x82, 0x83, 0x84, 0x85) + EP0</td><td>15 + EP0</td><td>10 free</td></tr>
+  <tr><td>OUT (host → device)</td><td>3 (0x01, 0x03, 0x05) + EP0</td><td>15 + EP0</td><td>12 free</td></tr>
+</table>
+
+<p>Plenty of headroom for v2 expansion (logic-analyzer streams, additional CDC ports for sniffer output).</p>
+
+<div class="callout">
+  <span class="label">Why two CDC ports, not one shared</span>
+  Target log UART and Test UART live in <em>different voltage domains</em> on the hardware (Vtgt vs Vio). Multiplexing them onto a single CDC and switching at runtime would need framing in the byte stream and would break <code>cat /dev/ttyACM0</code>. Two separate CDC interfaces gives the host two independent <code>/dev/ttyACM*</code> nodes that user tools can <code>screen</code>, <code>minicom</code>, or <code>tio</code> directly. Cost is two extra interfaces (5 endpoints) — well within budget.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="bandwidth">Bandwidth budgeting — the 10 Mbps rule</h2>
+
+<p>Full Speed nominal: 12 Mbit/s. Useful payload after framing/overhead: ~10 Mbit/s on a healthy bus, less if you're contending with other traffic. Per-frame (1 ms) budget on FS:</p>
+
+<table>
+  <tr><th>Resource</th><th>Per frame</th><th>Per second</th></tr>
+  <tr><td>Total bus capacity</td><td>1500 B</td><td>1.5 MB/s gross</td></tr>
+  <tr><td>Reserved for control transfers</td><td>~150 B (~10%)</td><td>~150 KB/s</td></tr>
+  <tr><td>Reserved for interrupt/iso (worst case)</td><td>~1023 B</td><td>up to ~1 MB/s</td></tr>
+  <tr><td>Available for bulk (best case)</td><td>~1280 B</td><td>~1.25 MB/s sustained</td></tr>
+  <tr><td>Bulk packet ceiling on FS</td><td>64 B/transaction × ~19 trans/frame</td><td>~1.2 MB/s</td></tr>
+</table>
+
+<p>edevkit's worst-case load looks like this — and it's a real concern, not a theoretical one:</p>
+
+<ul>
+  <li>SWD/JTAG debug session via CMSIS-DAP — bursts up to ~600 KB/s during flash programming.</li>
+  <li>SWO trace at 1 Mbit/s instrumented (typical) — ~125 KB/s sustained.</li>
+  <li>Two CDC ACM ports — typically a few KB/s each for log, but can burst much higher.</li>
+  <li>I²C / SPI sniffer — when active, generates the highest data rate on the bus, easily saturating FS.</li>
+</ul>
+
+<p>Total under "everything-on" can exceed 1.2 MB/s. <strong>USB FS is the bottleneck.</strong> The architectural mitigations are:</p>
+
+<ol>
+  <li><strong>Large device-side ring buffers in SRAM.</strong> The sniffer and SWO pumps each get a 32–64 KB ring in MCU SRAM. Bursts longer than the buffer cause back-pressure (described in edevkit1.html §6.5), not silent drops.</li>
+  <li><strong>Back-pressure-aware producers.</strong> When the ring fills, the producer (PIO state machine via DMA) gets stalled at the DMA channel. Capture data is never silently overrun.</li>
+  <li><strong>Configurable host-side polling cadence.</strong> The host CLI can request larger bulk-IN packets be queued; with NAK-aware bulk endpoints the device fills the wire as fast as it can.</li>
+  <li><strong>Active load shedding.</strong> If the host's read rate falls below produce rate for &gt; N ms, the firmware emits a marker into the stream and starts dropping the lowest-priority lane (typically SWO). This is a deliberate quality-of-service decision documented in edevkit1.html §9.</li>
+</ol>
+
+<div class="callout warn">
+  <span class="label">Don't be tempted to add HS</span>
+  RP2350 has no HS PHY. Adding one means a separate USB-HS bridge IC (e.g. an FE1.1 USB hub + a USB3300 PHY behind a real HS-capable MCU) — significantly more cost and complexity, and out of v1 scope. The right answer when FS isn't enough is to <em>narrow what's exposed at once</em>, not to widen the bus. See edevkit1.html §15 (Decision Log) for the rationale on staying FS-only for v1.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<p>USB has 30 years of public documentation. A subset is worth your time.</p>
+
+<h3 id="primary-sources">Primary sources (the spec itself)</h3>
+
+<ol>
+  <li><strong><a href="https://www.usb.org/documents">usb.org · Documents library</a></strong> — the USB 2.0 spec PDF (the bible — chapter 9 is the device framework, chapter 11 is hubs, chapter 7 is electrical), USB 3.2 spec, and class specs (CDC, HID, MSC, Audio, Video) in separate PDFs. Bookmark it; you'll come back.</li>
+  <li><strong><a href="https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/microsoft-os-1-0-descriptors-specification">Microsoft Learn · MS OS 1.0 descriptors</a></strong> — official Microsoft spec including the compatible-ID table. Pair with the MS OS 2.0 doc on the same site.</li>
+  <li><strong><a href="https://docs.zephyrproject.org/latest/connectivity/usb/device_next/usb_device.html">Zephyr · USB-Device-Next docs</a></strong> — the API reference for the stack edevkit uses. Read the index page first, then the per-class pages (CDC ACM, MSC, HID).</li>
+  <li><strong><a href="https://arm-software.github.io/CMSIS-DAP/latest/">CMSIS-DAP v2 spec</a></strong> — Arm's official protocol spec for the debug-probe class. See <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> for our annotated version.</li>
+</ol>
+
+<h3 id="tutorials">Tutorial-style introductions</h3>
+
+<ol>
+  <li><strong><a href="https://www.beyondlogic.org/usbnutshell/usb1.shtml">USB In a NutShell · beyondlogic.org</a></strong> — a free, well-illustrated walk through every USB 2.0 concept. The single best free starting point if you want a friendlier prose version of the spec.</li>
+  <li><strong>Jan Axelson, <em>USB Complete: The Developer's Guide</em> (5th ed., Lakeview Research, 2015)</strong> — the long-form book. If you can read only one thing on USB and you're paid to design devices, read this. The descriptor and enumeration chapters are the clearest treatment in print.</li>
+  <li><strong><a href="https://www.usbmadesimple.co.uk/">USB Made Simple</a></strong> — a much more compressed tutorial; good for skimming during onboarding. Less depth than NutShell but lower commitment.</li>
+  <li><strong><a href="https://github.com/hathach/tinyusb">TinyUSB source</a></strong> — even if you don't use TinyUSB, reading its descriptor templates is a fast way to absorb idiomatic device-side USB code. <code>examples/device/cdc_msc/</code> is a tight composite example.</li>
+</ol>
+
+<h3 id="tools">Tools you'll reach for</h3>
+
+<table>
+  <tr><th>Tool</th><th>Purpose</th><th>Platform</th></tr>
+  <tr><td><code>lsusb -v -d &lt;vid:pid&gt;</code></td><td>Dump descriptor tree as the host sees it</td><td>Linux, macOS (with <code>brew install lsusb</code>)</td></tr>
+  <tr><td><code>usbutils</code> + <code>dmesg</code></td><td>See enumeration step where things failed</td><td>Linux</td></tr>
+  <tr><td><code>system_profiler SPUSBDataType</code></td><td>Equivalent of lsusb on macOS</td><td>macOS</td></tr>
+  <tr><td><code>USBView</code> (Microsoft)</td><td>Descriptor + tree visualiser</td><td>Windows</td></tr>
+  <tr><td><code>USBlyzer</code> / <code>USB Trace</code></td><td>Software-level packet capture for Windows</td><td>Windows (commercial)</td></tr>
+  <tr><td><a href="https://www.totalphase.com/products/beagle-usb12/">Beagle USB 12 / 480</a></td><td>Hardware USB analyzer for protocol-level capture</td><td>Cross-platform — pricey but unmatched for hard bugs</td></tr>
+  <tr><td><a href="https://github.com/greatscottgadgets/cynthion">Cynthion (was LUNA)</a></td><td>Open-source USB analyzer + Python framework</td><td>Cross-platform; great for interactive exploration</td></tr>
+  <tr><td><a href="https://github.com/greatscottgadgets/Packetry">Packetry</a></td><td>Open-source USB protocol analyzer GUI</td><td>Cross-platform — pairs with Cynthion or other capture sources</td></tr>
+  <tr><td><code>libusb</code> + <code>pyusb</code></td><td>Host-side experiments against vendor classes</td><td>Cross-platform</td></tr>
+</table>
+
+<h3 id="related-docs">Related docs in this hub</h3>
+
+<ul>
+  <li><a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> — the CMSIS-DAP v2 protocol, SWO multiplexing, debug-session lifecycle.</li>
+  <li><a href="usb_cdc_acm.html">usb_cdc_acm.html</a> — CDC ACM in detail: the class hierarchy, line-coding, OS-side <code>/dev/ttyACM*</code> behaviour, common bring-up bugs.</li>
+  <li><a href="arm_architecture.html">arm_architecture.html</a> — the CPU side; covers exception model, MPU, and where USB ISRs land.</li>
+  <li><a href="arm_cortex_m33.html">arm_cortex_m33.html</a> — RP2350-specific M33 notes; useful when debugging USB ISR latency.</li>
+  <li><a href="edevkit1.html">edevkit1.html</a> — v1 design spec. §6.5 covers the protocol-engine bandwidth budgets in full; §9 covers QoS / load shedding; §11 covers the chip-ID-derived serial; §15 (Decision Log) records the FS-only stance and Zephyr-stack choice.</li>
+  <li><a href="installation.html">installation.html</a> — environment setup; needed before you can build the firmware that pulls all this together.</li>
+</ul>
+
+<div class="callout good">
+  <span class="label">When in doubt</span>
+  USB problems almost always reduce to "what does the descriptor look like, and does enumeration finish?". Capture <code>lsusb -v</code> output before and after your change, diff it, and you'll find 90% of bugs without ever picking up a logic analyzer.
+</div>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="usb_cdc_acm.html"><span class="dir">← Previous</span><span class="cat">USB stack</span><span class="title">USB CDC-ACM (serial-over-USB)</span></a>
+<a class="next" href="debug_jtag.html"><span class="dir">Next →</span><span class="cat">Debug</span><span class="title">JTAG (IEEE 1149.1) protocol</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit · tools/web/pages/usb_overview.html · part of the USB-stack reference set (overview · cmsis_dap · cdc_acm). Cross-references the <a href="edevkit1.html">edevkit1 design spec</a> and the <a href="https://www.usb.org/documents">USB-IF documents library</a>. Update this page when the descriptor layout in §<a href="#edevkit-layout">edevkit1's USB layout</a> changes.
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,1376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — CMSIS-DAP v2 protocol &amp; implementation</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A focused reference on the Arm CMSIS-DAP v2 debug-probe protocol — how it bridges USB bulk endpoints to a target's CoreSight Debug Access Port over SWD or JTAG, the full command surface, the WinUSB descriptor story, SWO transport, and how edevkit1 implements it on RP2350B + Zephyr.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    /* graticule background — top-faded so it doesn't overwhelm */
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar (sticky nav + theme toggle) ────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── OS cards (Linux / macOS / Windows) ────────────────────────────── */
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  /* ── numbered step ─────────────────────────────────────────────────── */
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── checklist ─────────────────────────────────────────────────────── */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  // pre-paint theme — prevents FOUC
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">&larr;</span> edevkit</span>
+    </a>
+    <span class="doc-tag">USB · CMSIS-DAP</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · usb stack · CMSIS-DAP</div>
+  <h1>CMSIS-DAP &mdash; the debug-probe protocol over USB</h1>
+  <p class="small">A focused reference on Arm's <strong>CMSIS-DAP</strong> — the standard that lets a USB-attached probe drive the <strong>SWD</strong> or <strong>JTAG</strong> pins of a target's CoreSight Debug Access Port. CMSIS-DAP is what every modern open-source debugger (probe-rs, pyOCD, OpenOCD) speaks to talk to a probe; it's also what <a href="edevkit1.html">edevkit1</a> implements over a USB bulk endpoint pair so the host doesn't have to install a vendor driver. This page is the working spec a firmware engineer needs when implementing or debugging that bridge.</p>
+  <p class="small"><strong>What's covered.</strong> What CMSIS-DAP is and why it exists; the difference between v1 (HID) and v2 (bulk); the full command surface with byte-level layouts; the mechanics of <code>DAP_Transfer</code> and how hosts pack many AP/DP register accesses into one USB transaction; the <code>DAP_SWJ_Sequence</code> bit-bang escapes (line reset, JTAG&rarr;SWD switch, dormant-state recovery); SWO transport over CMSIS-DAP v2; the WinUSB / Microsoft OS 2.0 descriptor dance that makes Windows enumerate without an INF; how <strong>edevkit1</strong> implements it on RP2350B + Zephyr USB-Device-Next; and how <code>probe-rs</code>, <code>pyOCD</code>, and <code>OpenOCD</code> use it on the host. Sister docs cover the wires (<a href="debug_swd.html">debug_swd.html</a>, <a href="debug_jtag.html">debug_jtag.html</a>, <a href="debug_swo.html">debug_swo.html</a>) and the rest of the USB stack (<a href="usb_overview.html">usb_overview.html</a>, <a href="usb_cdc_acm.html">usb_cdc_acm.html</a>).</p>
+  <p class="small"><strong>Audience.</strong> A firmware engineer who already knows what SWD and USB are at the wire level and wants to know what bytes to put on the bulk endpoint to make a target's PC start single-stepping. Or someone bringing up a probe and trying to figure out why <code>probe-rs list</code> sees a CMSIS-DAP device but <code>probe-rs info</code> hangs. The <a href="arm_architecture.html">arm_architecture.html</a> doc covers the debug architecture this protocol is steering.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">The big picture</span>
+  <ol>
+    <li><a href="#about">What CMSIS-DAP is, and why it exists</a></li>
+    <li><a href="#v1-v2">CMSIS-DAP v1 vs v2 &mdash; HID vs bulk</a></li>
+    <li><a href="#topology">Where CMSIS-DAP sits in the stack &mdash; host &harr; probe &harr; target</a></li>
+  </ol>
+  <span class="heading">The protocol surface</span>
+  <ol>
+    <li><a href="#frame">Frame format &mdash; one command, one response</a></li>
+    <li><a href="#cmd-general">General commands</a></li>
+    <li><a href="#cmd-swj">Common SWD/JTAG (SWJ) commands</a></li>
+    <li><a href="#cmd-swd-jtag">SWD- and JTAG-specific commands</a></li>
+    <li><a href="#cmd-swo">SWO commands</a></li>
+    <li><a href="#cmd-atomic">Atomic queueing commands</a></li>
+  </ol>
+  <span class="heading">The two key mechanics</span>
+  <ol>
+    <li><a href="#dap-transfer">DAP_Transfer mechanics &mdash; batching AP/DP register access</a></li>
+    <li><a href="#worked-example">Worked example &mdash; reading a core register over CMSIS-DAP</a></li>
+    <li><a href="#dap-swj-sequence">DAP_SWJ_Sequence &mdash; line reset, JTAG&rarr;SWD switch, dormant recovery</a></li>
+  </ol>
+  <span class="heading">SWO and Windows</span>
+  <ol>
+    <li><a href="#swo-transport">SWO over CMSIS-DAP v2 &mdash; the streaming endpoint</a></li>
+    <li><a href="#winusb">WinUSB / Microsoft OS 2.0 descriptors &mdash; driverless on Windows</a></li>
+  </ol>
+  <span class="heading">edevkit &amp; host tools</span>
+  <ol>
+    <li><a href="#edevkit">edevkit1's CMSIS-DAP implementation</a></li>
+    <li><a href="#host-tools">probe-rs, pyOCD, OpenOCD &mdash; how each speaks CMSIS-DAP</a></li>
+  </ol>
+  <span class="heading">When things break</span>
+  <ol>
+    <li><a href="#failures">Common failure modes</a></li>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="about">What CMSIS-DAP is, and why it exists</h2>
+
+<p><strong>CMSIS-DAP</strong> (Cortex Microcontroller Software Interface Standard &mdash; Debug Access Port) is an Arm-defined standard for the firmware that runs on a debug probe. It defines a USB protocol that the host's debugger speaks to a probe, and a set of commands that map onto operations on the target's CoreSight Debug Access Port (DP) over the <strong>Serial Wire Debug (SWD)</strong> or <strong>JTAG</strong> physical link. In short: it's the wire format between <em>your laptop</em> and <em>the dongle</em>; the dongle is what actually drives SWCLK / SWDIO / TCK / TMS.</p>
+
+<p>It exists because before CMSIS-DAP, every probe vendor shipped a proprietary protocol (Segger J-Link, ST-Link, IAR I-Jet, Keil ULINK, Atmel-ICE, …) plus a closed-source driver, plus a closed-source IDE plug-in. That meant&nbsp;&mdash; if you wanted to debug a Cortex-M from anyone else's IDE&nbsp;&mdash; the toolchain vendors had to reverse engineer or license each of those, or you bought the same probe twice. Arm's response, around the launch of the Cortex-M0+ and the Mbed initiative (~2013), was to publish a vendor-neutral specification that any probe could implement and any debugger could speak. CMSIS-DAP is that spec.</p>
+
+<div class="callout info">
+  <span class="label">key idea</span>
+  <strong>CMSIS-DAP is the Lingua Franca of open-source ARM debugging.</strong> probe-rs, pyOCD, OpenOCD, gdb-multiarch via OpenOCD, Eclipse CDT debug, VS Code's <code>cortex-debug</code>, Renode &mdash; every major open-source debugger talks CMSIS-DAP natively. If your probe speaks CMSIS-DAP v2, it works everywhere with no driver install. That property (no driver install) is the entire reason edevkit1 chose CMSIS-DAP v2 over a custom protocol &mdash; see <a href="edevkit1.html">edevkit1.html</a> §6.
+</div>
+
+<p>The reference implementation lives in the <a href="https://github.com/ARM-software/CMSIS_5/tree/develop/CMSIS/DAP">ARM-software/CMSIS_5/CMSIS/DAP</a> repository (and its CMSIS-6 successor): a portable C source tree that you drop into your probe firmware. The actual specification is encoded in the comments and the function signatures of that source &mdash; there is no separate PDF "CMSIS-DAP spec". The companion HTML reference is published at <a href="https://arm-software.github.io/CMSIS_5/DAP/html/index.html">arm-software.github.io/CMSIS_5/DAP/html/index.html</a> and is the canonical narrative description.</p>
+
+<h3 id="role">What problem the probe firmware actually solves</h3>
+
+<p>A target Cortex-M (or Cortex-A debug, or RISC-V with an ADIv5/v6-like DP) speaks SWD or JTAG on its debug pins. SWD is a 2-wire synchronous serial bus (clock + bidirectional data) at up to 100 MHz; JTAG is a 4- or 5-wire synchronous serial bus (TCK, TMS, TDI, TDO, optional TRST). Both expect <strong>tightly timed, half-duplex sequences with strict turnaround windows</strong>. A USB-attached host cannot drive these pins directly &mdash; USB has too much latency variability. So you need a small embedded MCU sitting next to the target whose firmware:</p>
+
+<ol>
+  <li>Listens on a USB endpoint for a CMSIS-DAP command from the host;</li>
+  <li>Decodes it (e.g. "read AP register 0x04 four times in a row");</li>
+  <li>Bit-bangs (or uses a hardware peripheral to bang) the SWD / JTAG pins precisely enough to satisfy the protocol's setup-and-hold;</li>
+  <li>Collects the reply data;</li>
+  <li>Packs the reply into a CMSIS-DAP response and sends it back over the USB endpoint.</li>
+</ol>
+
+<p>That's exactly what every CMSIS-DAP probe does. The probe's MCU is therefore a real-time bridge between the soft, jittery USB world and the hard, deterministic SWD/JTAG world. CMSIS-DAP is the protocol on the soft side.</p>
+
+<!-- =========================================================== -->
+<h2 id="v1-v2">CMSIS-DAP v1 vs v2 &mdash; HID vs bulk</h2>
+
+<p>CMSIS-DAP has shipped in two USB-transport flavors. Every modern probe implements v2; many also implement v1 as a fallback for legacy Windows hosts.</p>
+
+<table>
+  <tr><th>Property</th><th>CMSIS-DAP v1</th><th>CMSIS-DAP v2</th></tr>
+  <tr><td>USB device class</td><td>HID (Human Interface Device)</td><td>Vendor-specific with WinUSB descriptors</td></tr>
+  <tr><td>Endpoints</td><td>HID interrupt IN + OUT, 64-byte max</td><td>Bulk IN + Bulk OUT (+ optional 2nd Bulk IN for SWO streaming)</td></tr>
+  <tr><td>Driver requirement</td><td>None (HID is universally driverless)</td><td>None (WinUSB binds via OS 2.0 descriptors)</td></tr>
+  <tr><td>Max packet size</td><td>64 B (USB FS HID hard limit)</td><td>512 B at FS, 1024 B at HS &mdash; reported by <code>DAP_Info(0xFF)</code></td></tr>
+  <tr><td>Throughput (rough, FS)</td><td>~125 kB/s ceiling</td><td>~1.0&ndash;1.2 MB/s ceiling (FS bulk), much higher on HS</td></tr>
+  <tr><td>SWO transport</td><td>Polled via <code>DAP_SWO_Data</code> over the same endpoint</td><td>Streamed continuously on the second Bulk IN endpoint</td></tr>
+  <tr><td>Used by</td><td>Older mbed boards, tools that pre-date 2017</td><td>All current probes (DAPLink, edevkit1, J-Link OB, ST-Link CMSIS-DAP fw, Pi Pico debug-probe)</td></tr>
+</table>
+
+<p>The difference matters because <strong>v1 is throughput-bound by HID's 1 ms polling and 64 B packet ceiling</strong>. SWD register transfers in CMSIS-DAP are roughly 5 bytes of command for a 4-byte payload, so HID caps you at ~12 transfers per ms = ~12k/sec, which is fine for setting breakpoints but painful when reading large memory ranges (firmware images, RAM dumps). v2 lifts that ceiling by an order of magnitude, which is why every probe ships it now.</p>
+
+<div class="callout">
+  <span class="label">historical aside</span>
+  When CMSIS-DAP first shipped, HID was chosen because Windows binds HIDs without an INF file and Mbed boards needed to be plug-and-play on machines where students didn't have admin rights. WinUSB existed but required a vendor-supplied INF before Windows 8.1. The shift to v2 became practical when Microsoft added <strong>OS 2.0 descriptors</strong> (Windows 8.1+, fully supported by Windows 10) which let a USB device <em>tell</em> Windows "bind WinUSB to me" without any host-side cooperation. From that point on, v2 was strictly better.
+</div>
+
+<h3 id="discriminating">How a host distinguishes v1 from v2</h3>
+
+<p>A CMSIS-DAP firmware is required to set its USB <strong>product string descriptor</strong> to contain the literal substring <code>"CMSIS-DAP"</code>. Hosts walk the device tree and:</p>
+
+<ol>
+  <li>If the product string contains <code>"CMSIS-DAP"</code> <em>and</em> the device exposes a <strong>vendor-specific</strong> interface with two bulk endpoints (or one bulk pair + a 2nd bulk IN), it's v2. Use bulk transfer.</li>
+  <li>Else if the product string contains <code>"CMSIS-DAP"</code> <em>and</em> the device exposes a <strong>HID</strong> interface, it's v1. Use HID write/read.</li>
+  <li>Else it's not a CMSIS-DAP probe; ignore.</li>
+</ol>
+
+<p>The string-matching scheme is unfortunate (it would be nicer to identify by class triple) but it's what every host does &mdash; including <a href="https://github.com/probe-rs/probe-rs/blob/master/probe-rs/src/probe/cmsisdap/mod.rs">probe-rs</a> and <a href="https://github.com/pyocd/pyOCD/blob/main/pyocd/probe/cmsis_dap_probe.py">pyOCD</a>. It also means your firmware <em>must</em> set the product string correctly. A surprising amount of "my probe doesn't show up" debugging ends here.</p>
+
+<!-- =========================================================== -->
+<h2 id="topology">Where CMSIS-DAP sits in the stack</h2>
+
+<p>One picture before the byte tables. This is the layered view of what's on each wire.</p>
+
+<pre><code>┌───────────────────────────────────────┐
+│  Host (laptop / dev workstation)      │
+│                                       │
+│  gdb / IDE / probe-rs CLI / VS Code   │
+│   │                                   │
+│   ▼  GDB Remote Serial Protocol       │
+│  gdb-server  (probe-rs / pyOCD / OpenOCD)
+│   │                                   │
+│   ▼  CMSIS-DAP commands               │
+│  USB stack (libusb / WinUSB / IOKit)  │
+│   │                                   │
+└───┼───────────────────────────────────┘
+    │   USB cable (FS / HS bulk endpoints)
+    ▼
+┌───────────────────────────────────────┐
+│  Probe (edevkit1 / DAPLink / ...)     │
+│                                       │
+│  USB device stack                     │
+│   │                                   │
+│   ▼  CMSIS-DAP command dispatcher     │
+│  SWD / JTAG bit-bang engine           │
+│   (RP2350 PIO0 SM0 on edevkit1)       │
+│                                       │
+└───┬───────────────────────────────────┘
+    │   SWD ribbon (5–6 wires: SWCLK,
+    │   SWDIO, GND, Vtgt-sense, nRESET)
+    ▼
+┌───────────────────────────────────────┐
+│  Target (Cortex-M / Cortex-A / RV)    │
+│                                       │
+│  CoreSight DP  ─►  AP[0..255]         │
+│                     │                 │
+│                     ▼                 │
+│                   AHB-AP ─► system bus│
+│                              ─► CPU,  │
+│                                 RAM,  │
+│                                 flash │
+└───────────────────────────────────────┘
+</code></pre>
+
+<p>The top half (host) is plain Rust / Python / C with a USB library. The bottom half (target) is just CoreSight running on whatever silicon you've got. The middle (probe firmware) is what CMSIS-DAP standardises &mdash; and it's the only part you write if you're building a probe. Everything else is somebody else's problem.</p>
+
+<!-- =========================================================== -->
+<h2 id="frame">Frame format &mdash; one command, one response</h2>
+
+<p>The CMSIS-DAP wire protocol is dead simple by design. Every transaction is exactly:</p>
+
+<ul>
+  <li><strong>Request:</strong> one command-ID byte, followed by zero or more parameter bytes. Sent on Bulk OUT (or HID OUT in v1).</li>
+  <li><strong>Response:</strong> the same command-ID byte, followed by zero or more result bytes. Received on Bulk IN (or HID IN in v1).</li>
+</ul>
+
+<p>Each request packet must fit in a single USB transfer of size up to <code>DAP_PACKET_SIZE</code> (queryable via <code>DAP_Info(0xFF)</code>). The probe is required to begin processing only after a full packet arrives, and to emit the entire response in a single transfer too. There is no streaming inside a single command and no partial frames.</p>
+
+<p>If the probe doesn't recognise a command ID, it must respond with a single byte <code>0xFF</code>. (That convention lets a host probe a probe's capability set by trying commands and checking for <code>0xFF</code>, which is what older versions of pyOCD do; modern hosts use <code>DAP_Info(0xF0)</code> instead.)</p>
+
+<h3 id="endianness">Endianness, signing, padding</h3>
+
+<ul>
+  <li>Multi-byte fields are <strong>little-endian</strong> on the wire. A 32-bit word <code>0xDEADBEEF</code> is sent as <code>BE EF AD DE</code>.</li>
+  <li>All counts and IDs are unsigned. There are no negative numbers in the protocol.</li>
+  <li>There is no padding to USB packet boundaries. If your command + parameters total 7 bytes, you send 7 bytes; the USB stack handles short transfers.</li>
+  <li>The protocol is request/response; the probe never initiates a packet on its own &mdash; with one exception: <strong>SWO data on the second Bulk IN endpoint</strong> in v2, which streams asynchronously. See <a href="#swo-transport">§ SWO transport</a>.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="cmd-general">General commands</h2>
+
+<p>These are the commands every probe must implement. They handle identification, capability negotiation, connect/disconnect, and target reset. Command IDs below are taken from <a href="https://github.com/probe-rs/probe-rs/blob/master/probe-rs/src/probe/cmsisdap/commands/mod.rs">probe-rs's <code>CommandId</code> enum</a> &mdash; which mirrors the canonical CMSIS source.</p>
+
+<table>
+  <tr><th>ID</th><th>Command</th><th>Purpose</th><th>Request layout</th><th>Response layout</th></tr>
+  <tr><td class="mono">0x00</td><td><code>DAP_Info</code></td><td>Query identification strings or capabilities.</td><td><code>00 ID</code> (1 ID byte)</td><td><code>00 LEN [LEN bytes payload]</code></td></tr>
+  <tr><td class="mono">0x01</td><td><code>DAP_HostStatus</code></td><td>Tell the probe what state the host is in (e.g. "connected" — drives the USER LED).</td><td><code>01 TYPE STATUS</code></td><td><code>01 STATUS</code></td></tr>
+  <tr><td class="mono">0x02</td><td><code>DAP_Connect</code></td><td>Open a debug session in the chosen mode (SWD, JTAG, or auto).</td><td><code>02 PORT</code> &mdash; PORT: 0=Default, 1=SWD, 2=JTAG</td><td><code>02 PORT</code> &mdash; the mode actually selected</td></tr>
+  <tr><td class="mono">0x03</td><td><code>DAP_Disconnect</code></td><td>End the debug session and tristate SWD/JTAG outputs.</td><td><code>03</code></td><td><code>03 STATUS</code></td></tr>
+  <tr><td class="mono">0x04</td><td><code>DAP_TransferConfigure</code></td><td>Set wait retries, idle cycles, and match retry limits used by <code>DAP_Transfer</code>.</td><td><code>04 IDLE WAIT_LSB WAIT_MSB MATCH_LSB MATCH_MSB</code></td><td><code>04 STATUS</code></td></tr>
+  <tr><td class="mono">0x05</td><td><code>DAP_Transfer</code></td><td>The workhorse: batch many AP/DP register reads/writes.</td><td>see <a href="#dap-transfer">§ DAP_Transfer</a></td><td>see <a href="#dap-transfer">§ DAP_Transfer</a></td></tr>
+  <tr><td class="mono">0x06</td><td><code>DAP_TransferBlock</code></td><td>Optimised bulk read/write of one register repeatedly (fast memory dump).</td><td><code>06 IDX COUNT_LO COUNT_HI REQ [DATA × WriteCount]</code></td><td><code>06 COUNT_LO COUNT_HI ACK [DATA × ReadCount]</code></td></tr>
+  <tr><td class="mono">0x07</td><td><code>DAP_TransferAbort</code></td><td>Cancel a long-running <code>DAP_Transfer</code>. No response.</td><td><code>07</code></td><td>(none)</td></tr>
+  <tr><td class="mono">0x08</td><td><code>DAP_WriteABORT</code></td><td>Write the DP ABORT register (0x00) directly &mdash; recovers a stuck DP.</td><td><code>08 IDX ABORT0 ABORT1 ABORT2 ABORT3</code></td><td><code>08 STATUS</code></td></tr>
+  <tr><td class="mono">0x09</td><td><code>DAP_Delay</code></td><td>Block the probe for a specified number of microseconds.</td><td><code>09 DELAY_LO DELAY_HI</code></td><td><code>09 STATUS</code></td></tr>
+  <tr><td class="mono">0x0A</td><td><code>DAP_ResetTarget</code></td><td>Hold and release nRESET (or send a vendor-specific reset sequence).</td><td><code>0A</code></td><td><code>0A STATUS EXECUTE</code></td></tr>
+</table>
+
+<h3 id="dap-info-ids">DAP_Info ID values</h3>
+
+<p><code>DAP_Info</code> is the negotiation channel. The host sends a single ID byte; the probe replies with a length-prefixed payload describing that property.</p>
+
+<table>
+  <tr><th>ID</th><th>Returns</th><th>Why the host asks</th></tr>
+  <tr><td class="mono">0x01</td><td>Vendor name (UTF-8 string)</td><td>Display in UI</td></tr>
+  <tr><td class="mono">0x02</td><td>Product name (UTF-8 string)</td><td>Must contain "CMSIS-DAP" — used to identify the probe</td></tr>
+  <tr><td class="mono">0x03</td><td>Serial number (UTF-8)</td><td>Disambiguate multiple connected probes</td></tr>
+  <tr><td class="mono">0x04</td><td>CMSIS-DAP protocol version (UTF-8, e.g. "2.1.1")</td><td>Decide which optional commands are available</td></tr>
+  <tr><td class="mono">0x05</td><td>Target device vendor (if probe is bonded to a target)</td><td>DAPLink-style "I know what I'm attached to"</td></tr>
+  <tr><td class="mono">0x06</td><td>Target device name</td><td>Same as above</td></tr>
+  <tr><td class="mono">0x07</td><td>Target board vendor</td><td>"</td></tr>
+  <tr><td class="mono">0x08</td><td>Target board name</td><td>"</td></tr>
+  <tr><td class="mono">0x09</td><td>Product firmware version</td><td>UI display, bug reports</td></tr>
+  <tr><td class="mono">0xF0</td><td>Capabilities bitmap (1 or 2 bytes)</td><td>Advertise SWD, JTAG, SWO-UART, SWO-Manchester, atomic, test-domain timer, SWO streaming endpoint, UART-COM-port</td></tr>
+  <tr><td class="mono">0xF1</td><td>Test Domain Timer parameters (4 bytes, frequency in Hz)</td><td>For SWD timestamping</td></tr>
+  <tr><td class="mono">0xFB</td><td>UART RX buffer size (4 B)</td><td>Sizing for the optional CDC-like UART tunneled over CMSIS-DAP</td></tr>
+  <tr><td class="mono">0xFC</td><td>UART TX buffer size (4 B)</td><td>"</td></tr>
+  <tr><td class="mono">0xFD</td><td>SWO trace buffer size (4 B)</td><td>How much SWO the probe can hold before the host must drain</td></tr>
+  <tr><td class="mono">0xFE</td><td>Max packet count (1 B) — how many in-flight USB packets</td><td>Pipelining hint</td></tr>
+  <tr><td class="mono">0xFF</td><td>Max packet size (2 B) — bytes per USB transfer</td><td>Sets command-payload upper bound</td></tr>
+</table>
+
+<h3 id="capabilities-bitmap">DAP_Info(0xF0) capabilities bitmap</h3>
+
+<p>This is the single most important info ID. The byte (or 2 bytes) it returns is a bitmap of everything the probe can do:</p>
+
+<pre><code>bit 0  : SWD supported
+bit 1  : JTAG supported
+bit 2  : SWO UART supported (NRZ async)
+bit 3  : SWO Manchester supported
+bit 4  : Atomic Commands (DAP_QueueCommands / DAP_ExecuteCommands) supported
+bit 5  : Test Domain Timer (timestamps for transfers) supported
+bit 6  : SWO Streaming Trace supported (the second Bulk IN endpoint, v2 only)
+bit 7  : UART Communication Port supported
+                       — second byte (optional, v2.1+) —
+bit 0  : USB COM Port supported
+bit 1+ : reserved
+</code></pre>
+
+<p>edevkit1 returns <code>0x47</code> (bits 0, 1, 2, 6) &mdash; SWD, JTAG, SWO-UART, SWO-Streaming. Atomic queueing is not currently exposed; the probe firmware processes commands one at a time. See <a href="#edevkit">§ edevkit1's CMSIS-DAP implementation</a>.</p>
+
+<!-- =========================================================== -->
+<h2 id="cmd-swj">Common SWD/JTAG (SWJ) commands</h2>
+
+<p>These commands work in both SWD and JTAG modes &mdash; they handle clock speed, raw bit-bang sequences, and direct GPIO pin manipulation. The "SWJ" prefix is Arm's term for "the parts of CoreSight that look identical regardless of physical protocol".</p>
+
+<table>
+  <tr><th>ID</th><th>Command</th><th>Purpose</th><th>Request layout</th><th>Response layout</th></tr>
+  <tr><td class="mono">0x10</td><td><code>DAP_SWJ_Pins</code></td><td>Read or drive specific debug pins as raw GPIOs (used for nRESET, manual line-level escapes).</td><td><code>10 OUTPUT MASK WAIT_LO WAIT_MID WAIT_HI WAIT_TOP</code></td><td><code>10 INPUT</code> (pin state after WAIT µs)</td></tr>
+  <tr><td class="mono">0x11</td><td><code>DAP_SWJ_Clock</code></td><td>Set the SWCLK / TCK frequency in Hz.</td><td><code>11 FREQ_0 FREQ_1 FREQ_2 FREQ_3</code> (32-bit LE)</td><td><code>11 STATUS</code></td></tr>
+  <tr><td class="mono">0x12</td><td><code>DAP_SWJ_Sequence</code></td><td>Bit-bang an arbitrary sequence on SWDIO / TMS &mdash; line reset, JTAG&rarr;SWD switch, dormant recovery.</td><td><code>12 BITCOUNT [DATA bytes]</code> &mdash; <code>BITCOUNT</code>: 0 means 256, else N bits; data is LSB-first packed</td><td><code>12 STATUS</code></td></tr>
+</table>
+
+<h3 id="swj-pins-bits">DAP_SWJ_Pins bit layout</h3>
+
+<p>The OUTPUT and MASK bytes share the same bit assignment; INPUT in the response too:</p>
+
+<pre><code>bit 0 : SWCLK / TCK
+bit 1 : SWDIO / TMS
+bit 2 : TDI
+bit 3 : TDO
+bit 5 : nTRST     (JTAG-only; some probes drive it as nSRST too)
+bit 7 : nRESET    (the target's reset pin — drives SRST_n)
+</code></pre>
+
+<p>Use case: dropping nRESET low to put the target in reset, then continuing to bang it for the "connect-under-reset" idiom required for some MCUs whose ROM bootloader disables the DP unless reset is held.</p>
+
+<!-- =========================================================== -->
+<h2 id="cmd-swd-jtag">SWD- and JTAG-specific commands</h2>
+
+<table>
+  <tr><th>ID</th><th>Command</th><th>Purpose</th><th>Request layout</th><th>Response layout</th></tr>
+  <tr><td class="mono">0x13</td><td><code>DAP_SWD_Configure</code></td><td>Configure SWD turnaround period and DataPhase-on-WAIT/FAULT.</td><td><code>13 CONFIG</code> &mdash; bits[0:1] turnaround clocks (0..3 = 1..4); bit[2] DataPhase</td><td><code>13 STATUS</code></td></tr>
+  <tr><td class="mono">0x1D</td><td><code>DAP_SWD_Sequence</code></td><td>SWD-only generalised sequence: per-section direction + bit count + data. Used for the v2.x "non-standard SWD reset" handshakes.</td><td><code>1D NUMSEQ [INFO [DATA]] × NUMSEQ</code> &mdash; INFO[5:0] = bits, INFO[7] = DIN</td><td><code>1D STATUS [DATA] × NUMSEQ_in</code></td></tr>
+  <tr><td class="mono">0x14</td><td><code>DAP_JTAG_Sequence</code></td><td>Bit-bang an arbitrary JTAG sequence with per-segment TDI/TMS/TDO control.</td><td><code>14 NUMSEQ [INFO [TDI]] × NUMSEQ</code> &mdash; INFO[5:0] = bits, INFO[6] = TMS, INFO[7] = TDOcapture</td><td><code>14 STATUS [TDO]</code></td></tr>
+  <tr><td class="mono">0x15</td><td><code>DAP_JTAG_Configure</code></td><td>Tell the probe how many devices are in the JTAG chain and their IR lengths.</td><td><code>15 COUNT [IRLEN × COUNT]</code></td><td><code>15 STATUS</code></td></tr>
+  <tr><td class="mono">0x16</td><td><code>DAP_JTAG_IDCODE</code></td><td>Read the IDCODE of one device in the chain (uses prior <code>DAP_JTAG_Configure</code>).</td><td><code>16 INDEX</code></td><td><code>16 STATUS IDCODE_0 IDCODE_1 IDCODE_2 IDCODE_3</code></td></tr>
+</table>
+
+<p>The SWD turnaround configuration (<code>DAP_SWD_Configure</code>) deserves a footnote: SWD has a half-duplex direction-change penalty of <em>N</em> SWCLK cycles where the line is allowed to settle, with N defaulting to 1 but configurable up to 4 by writing CTRL/STAT. Some targets (especially long-cable scenarios or 1.65 V signalling) need 2&ndash;4 to avoid sampling glitches. See <a href="debug_swd.html">debug_swd.html</a> for the wire-level explanation.</p>
+
+<!-- =========================================================== -->
+<h2 id="cmd-swo">SWO commands</h2>
+
+<p>These commands configure and read out <strong>Serial Wire Output</strong> trace data &mdash; the asynchronous trace stream emitted by the target's <a href="debug_swo.html">ITM/TPIU</a> on a single pin (SWO). The probe captures it, optionally decodes the ITM framing, and ships the bytes to the host.</p>
+
+<table>
+  <tr><th>ID</th><th>Command</th><th>Purpose</th><th>Request layout</th><th>Response layout</th></tr>
+  <tr><td class="mono">0x17</td><td><code>DAP_SWO_Transport</code></td><td>Choose how the probe delivers SWO bytes to the host.</td><td><code>17 TRANSPORT</code> &mdash; 0=None, 1=DAP_SWO_Data polling, 2=Streaming (Bulk IN endpoint, v2 only)</td><td><code>17 STATUS</code></td></tr>
+  <tr><td class="mono">0x18</td><td><code>DAP_SWO_Mode</code></td><td>Choose SWO line decoding.</td><td><code>18 MODE</code> &mdash; 0=Off, 1=UART (NRZ async), 2=Manchester</td><td><code>18 STATUS</code></td></tr>
+  <tr><td class="mono">0x19</td><td><code>DAP_SWO_Baudrate</code></td><td>Set the SWO line rate in bits/s. Probe replies with the actually-achieved rate (rounded).</td><td><code>19 BAUD_0 BAUD_1 BAUD_2 BAUD_3</code> (32-bit LE)</td><td><code>19 ACTUAL_0 ACTUAL_1 ACTUAL_2 ACTUAL_3</code></td></tr>
+  <tr><td class="mono">0x1A</td><td><code>DAP_SWO_Control</code></td><td>Start or stop SWO capture (RX engine on/off).</td><td><code>1A CONTROL</code> &mdash; 0=stop, 1=start</td><td><code>1A STATUS</code></td></tr>
+  <tr><td class="mono">0x1B</td><td><code>DAP_SWO_Status</code></td><td>Read short status: trace running, overflow flag, bytes-available count.</td><td><code>1B</code></td><td><code>1B TRACE_STATUS COUNT_0 COUNT_1 COUNT_2 COUNT_3</code></td></tr>
+  <tr><td class="mono">0x1E</td><td><code>DAP_SWO_ExtendedStatus</code></td><td>Same as Status plus optional timestamp.</td><td><code>1E CONTROL</code></td><td>variable; see CMSIS-6 spec</td></tr>
+  <tr><td class="mono">0x1C</td><td><code>DAP_SWO_Data</code></td><td>Drain captured bytes (used when <code>DAP_SWO_Transport=1</code>).</td><td><code>1C COUNT_LO COUNT_HI</code> &mdash; max bytes to return</td><td><code>1C TRACE_STATUS COUNT_LO COUNT_HI [DATA]</code></td></tr>
+</table>
+
+<p>The interplay between Transport=1 (polling) and Transport=2 (streaming) is covered in <a href="#swo-transport">§ SWO transport</a>.</p>
+
+<!-- =========================================================== -->
+<h2 id="cmd-atomic">Atomic queueing commands</h2>
+
+<p>These two commands let the host submit a <em>queue</em> of CMSIS-DAP commands that the probe executes back-to-back without re-arbitrating with the USB stack. They were added in v1.1 and are advertised by capability bit 4.</p>
+
+<table>
+  <tr><th>ID</th><th>Command</th><th>Purpose</th><th>Notes</th></tr>
+  <tr><td class="mono">0x7E</td><td><code>DAP_QueueCommands</code></td><td>Append a sub-command sequence to the current atomic queue without executing yet.</td><td>Multiple QueueCommands packets accumulate.</td></tr>
+  <tr><td class="mono">0x7F</td><td><code>DAP_ExecuteCommands</code></td><td>Execute everything queued so far and return the concatenated responses.</td><td>Useful for "flash-write a 16 KB block as one transaction".</td></tr>
+</table>
+
+<p>Most modern hosts do <strong>not</strong> use atomic queueing in practice &mdash; <code>DAP_TransferBlock</code> already handles the dominant fast path (sequential reads/writes of a single AP register, which is the AHB-AP TAR/DRW pattern for memory dumps). Atomic queueing only wins when the queue interleaves <em>different</em> register accesses, which is rare. probe-rs supports atomic queueing as an opt-in optimisation; pyOCD currently doesn't use it. edevkit1 v1 firmware does not advertise capability bit 4.</p>
+
+<!-- =========================================================== -->
+<h2 id="dap-transfer">DAP_Transfer mechanics &mdash; batching AP/DP register access</h2>
+
+<p>This is the most important command in the protocol. <strong>Every</strong> meaningful debug operation &mdash; reading memory, writing a breakpoint comparator, halting the core, single-stepping, flashing &mdash; reduces to a sequence of AP/DP register accesses. <code>DAP_Transfer</code> is the host's way of packing many of those into one USB transaction so the round-trip cost is amortised across many SWD transfers.</p>
+
+<h3 id="dap-transfer-request">Request packet layout</h3>
+
+<pre><code>Byte 0   : 0x05                     Command ID
+Byte 1   : DAP_Index                JTAG chain index (0 in SWD; index of target on chain in JTAG)
+Byte 2   : Transfer Count           Number of (Request, [Data]) tuples that follow
+Byte 3.. : Transfer Block            ─┐
+   For each transfer:                 │
+     1 byte: Transfer Request         │  exactly TransferCount tuples
+     0 or 4 bytes: Transfer Data      │  (4 bytes only for writes, value-match, match-mask)
+                                    ─┘
+</code></pre>
+
+<h3 id="transfer-request-byte">Transfer Request byte (per transfer)</h3>
+
+<pre><code>bit 0     APnDP        0 = DP register access, 1 = AP register access
+bit 1     RnW          0 = write,              1 = read
+bit 2     A2           ┐ register address bits (A[3:2] of the DP/AP register map)
+bit 3     A3           ┘
+bit 4     Value Match  if 1 + RnW=1: read register repeatedly until masked-value matches Transfer Data
+bit 5     Match Mask   if 1 + RnW=0: write Transfer Data into the *match mask* (no SWD transfer issued)
+bit 6     reserved
+bit 7     TD_TimeStamp prepend a 32-bit Test Domain Timer timestamp to this transfer's response
+</code></pre>
+
+<p>Three things to notice:</p>
+
+<ol>
+  <li><strong>The "register" being accessed is identified by APnDP + A2 + A3 plus the currently-selected AP bank.</strong> The bank is set via the DP SELECT register, which is itself a DP write &mdash; so a typical transfer block starts with "write DP SELECT to bank X, then do a stream of AP reads/writes".</li>
+  <li><strong>Match-mask is a host-side configuration write</strong>, not a wire transaction. It tells the probe firmware "next time I issue a value-match read, AND the read result with this mask before comparing". So a typical poll-for-flag pattern is: write match-mask, then read with value-match for the wanted value.</li>
+  <li><strong>Posted reads:</strong> SWD AP reads are pipelined &mdash; the value returned by transfer N is the result of transfer N&minus;1. The probe firmware hides this by issuing one extra "trailing" read at the end of the block to flush the last value, but you should know it's happening &mdash; it explains why a single AP read returns "stale" data on some hosts.</li>
+</ol>
+
+<h3 id="dap-transfer-response">Response packet layout</h3>
+
+<pre><code>Byte 0   : 0x05                     Command ID echo
+Byte 1   : Transfer Count           Number of transfers actually completed (≤ requested)
+Byte 2   : Transfer Response        ACK + protocol error flags (see below)
+Byte 3.. : Read data and timestamps : 4 bytes per read transfer, in request order
+                                     (8 bytes if TD_TimeStamp was set on that transfer)
+</code></pre>
+
+<h3 id="transfer-response-byte">Transfer Response byte</h3>
+
+<pre><code>bit 0..2  ACK            0b001 = OK, 0b010 = WAIT, 0b100 = FAULT, 0b111 = NO_ACK
+bit 3     reserved (0)
+bit 4     Protocol Error  set if SWD parity or JTAG protocol violation
+bit 5     Value Mismatch  set if a value-match read timed out
+bits 6..7 reserved
+</code></pre>
+
+<p>If <em>any</em> transfer in the block returns a non-OK ACK or sets a protocol-error bit, processing stops there. The Transfer Count byte tells the host how many transfers actually succeeded; transfers beyond that index were not attempted.</p>
+
+<div class="callout warn">
+  <span class="label">subtle</span>
+  A <strong>WAIT</strong> ACK is normal under load &mdash; targets routinely return WAIT during a memory-AP read while the AHB master is still fetching from slow flash. The probe should retry up to <code>Wait Retry Count</code> times (set by <code>DAP_TransferConfigure</code>) before giving up. If you see "no response from target" on every other read, your TransferConfigure WAIT count is probably zero. Default of 100 retries is fine for most targets.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="worked-example">Worked example &mdash; reading a core register</h2>
+
+<p>Suppose the host wants to read register <strong>R0</strong> from a halted Cortex-M target. The actual SWD transactions needed are:</p>
+
+<ol>
+  <li>Write DP SELECT to bank where AHB-AP register CSW lives (bank 0).</li>
+  <li>Write AHB-AP CSW to <code>0x23000002</code> (32-bit access, auto-increment off).</li>
+  <li>Write AHB-AP TAR to <code>0xE000EDF4</code> &mdash; the DCRSR (Debug Core Register Selector Register).</li>
+  <li>Write AHB-AP DRW to <code>0x00000000</code> &mdash; selector value 0 = R0, RnW=0 means "read the register".</li>
+  <li>Write AHB-AP TAR to <code>0xE000EDF8</code> &mdash; the DCRDR (Debug Core Register Data Register).</li>
+  <li>Read AHB-AP DRW &mdash; this returns the value of R0.</li>
+</ol>
+
+<p>That's six SWD transfers. We pack them into a single <code>DAP_Transfer</code>:</p>
+
+<h3 id="example-bytes">Bytes on the wire (request)</h3>
+
+<pre><code>Byte 0  : 05                         DAP_Transfer
+Byte 1  : 00                         DAP_Index = 0 (SWD)
+Byte 2  : 06                         Transfer Count = 6
+
+# Transfer 1 — DP write to SELECT (A[3:2]=10 = 0x8 offset, APnDP=0, RnW=0)
+Byte 3  : 08                         APnDP=0, RnW=0, A2=0, A3=1  → DP SELECT
+Byte 4..7  : 00 00 00 00             Data: AP=0, AP-bank=0, DP-bank=0
+
+# Transfer 2 — AHB-AP CSW write (APnDP=1, RnW=0, A[3:2]=00 = 0x0)
+Byte 8  : 01                         APnDP=1, RnW=0, A2=0, A3=0  → AP[0] (CSW)
+Byte 9..12 : 02 00 00 23             Data: 0x23000002 (32-bit, increment off)
+
+# Transfer 3 — AHB-AP TAR write (A[3:2]=01 = 0x4)
+Byte 13 : 05                         APnDP=1, RnW=0, A2=1, A3=0  → AP[4] (TAR)
+Byte 14..17 : F4 ED 00 E0            Data: 0xE000EDF4 (DCRSR address)
+
+# Transfer 4 — AHB-AP DRW write (A[3:2]=11 = 0xC)
+Byte 18 : 0D                         APnDP=1, RnW=0, A2=1, A3=1  → AP[C] (DRW)
+Byte 19..22 : 00 00 00 00            Data: select R0 for read
+
+# Transfer 5 — AHB-AP TAR write (move pointer to DCRDR)
+Byte 23 : 05                         APnDP=1, RnW=0, A2=1, A3=0  → AP[4] (TAR)
+Byte 24..27 : F8 ED 00 E0            Data: 0xE000EDF8 (DCRDR)
+
+# Transfer 6 — AHB-AP DRW READ
+Byte 28 : 0F                         APnDP=1, RnW=1, A2=1, A3=1  → AP[C] (DRW), READ
+                                     (no data; reads have no payload in the request)
+                                     # Total request length: 29 bytes
+</code></pre>
+
+<h3 id="example-response">Bytes on the wire (response)</h3>
+
+<pre><code>Byte 0  : 05                         DAP_Transfer echo
+Byte 1  : 06                         Transfer Count completed = 6
+Byte 2  : 01                         Transfer Response: ACK=OK, no errors
+
+# Read data — only Transfer 6 produced a value
+Byte 3..6 : 78 56 34 12              R0 = 0x12345678 (little-endian on the wire)
+                                     # Total response length: 7 bytes
+</code></pre>
+
+<p>So the host paid <strong>one USB round-trip</strong> (~125 µs at FS) instead of six (~750 µs). At higher SWD clocks the savings get larger because the SWD-side time per transfer drops faster than the USB side. This is why <code>DAP_Transfer</code> is the workhorse of every CMSIS-DAP-based debugger.</p>
+
+<div class="callout info">
+  <span class="label">implementation note</span>
+  In practice, probe-rs and pyOCD don't construct the bytes directly &mdash; they have a <code>Transfer</code> struct that the dispatch layer serialises. But every commit to those projects' CMSIS-DAP backends has at some point traced through bytes that look exactly like the above. The <a href="https://github.com/probe-rs/probe-rs/blob/master/probe-rs/src/probe/cmsisdap/commands/transfer/mod.rs">probe-rs serialisation code</a> is the cleanest open reference if you want to compare.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="dap-swj-sequence">DAP_SWJ_Sequence &mdash; line reset, JTAG&rarr;SWD switch, dormant recovery</h2>
+
+<p>Some target operations don't fit in the framed <code>DAP_Transfer</code> model &mdash; they're raw bit-level patterns the probe must shift out on SWDIO/TMS. <code>DAP_SWJ_Sequence</code> is the escape hatch: send up to 256 bits of arbitrary data, LSB-first, with the line in output mode the whole time. The four canonical sequences every probe sends are:</p>
+
+<h3 id="line-reset">SWD line reset (50+ ones)</h3>
+
+<p>Resets the DP state machine on the target. After this, the next packet is interpreted from a known idle state.</p>
+
+<pre><code># 51 ones — bytes packed LSB-first
+Sequence (bits) : 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+                  1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+Bytes on wire   : FF FF FF FF FF FF 07           (last byte: 3 ones + 5 padding bits)
+Bit count       : 51
+Wire framing    : 12 33 FF FF FF FF FF FF 07
+                  ─┘ ─┘ ──────────────────────
+                   │  │   data
+                   │  └ bit count = 51 (0x33)
+                   └── DAP_SWJ_Sequence command ID
+</code></pre>
+
+<h3 id="jtag-to-swd">JTAG&rarr;SWD switch (the magic sequence)</h3>
+
+<p>The standard "selection sequence" defined in ADIv5 §B5.2.2. After a line reset, send 16 bits of <code>0xE79E</code> (0111 1001 1110 0111 LSB-first &rarr; bytes <code>0x9E 0xE7</code>) followed by another line reset. This puts an SWJ-DP into SWD mode regardless of what state it was in.</p>
+
+<pre><code># Full classic JTAG-to-SWD sequence:
+# Step 1: line reset (≥ 50 ones)
+# Step 2: 16 bits of 0xE79E
+# Step 3: line reset (≥ 50 ones)
+# Step 4: 8+ idle bits (zeros)
+
+Step 2 bytes: 9E E7
+   Bit pattern (LSB first): 0111 1001 1110 0111
+                          = 0x9E (low byte), 0xE7 (high byte) on wire
+
+# Three consecutive DAP_SWJ_Sequence commands:
+DAP_SWJ_Sequence(51, 0xFF FF FF FF FF FF 07)   # line reset
+DAP_SWJ_Sequence(16, 0x9E E7)                   # switch to SWD
+DAP_SWJ_Sequence(51, 0xFF FF FF FF FF FF 07)   # line reset
+DAP_SWJ_Sequence(8,  0x00)                      # idle
+</code></pre>
+
+<h3 id="dormant-recovery">Dormant-state recovery (Armv8-M parts)</h3>
+
+<p>Newer SoCs (RP2350, STM32H5, nRF54, anything Armv8-M-class with SWJ-DPv2) come up in <strong>dormant state</strong> at power-on. To wake them you have to send the dormant-leave selection alert: 8 cycles of SWCLK with SWDIO=1, then the 128-bit selection alert pattern, then a 4-bit zero, then a 8-bit "activation code" that names which protocol to enter (SWD or JTAG).</p>
+
+<pre><code># Selection alert (128 bits, MSB-first per the Arm spec, LSB-first on the wire):
+# Per Arm IHI 0031F §B5.3:
+#   0x49CF9046 A9B4A161 97F5BBC7 45703D98
+# Reverse-bit each byte, then LE-pack to feed DAP_SWJ_Sequence.
+
+Bytes on wire (already bit-reversed, LSB-first, little-endian within u32):
+  92 F3 09 62 95 8D 85 86 E9 AD DE F1 19 BC 0E B0
+
+# Sequence layout:
+1. 8 SWCLK cycles, SWDIO = 1                    DAP_SWJ_Sequence(8,  0xFF)
+2. 128-bit selection alert                      DAP_SWJ_Sequence(128, &lt;16 bytes above&gt;)
+3. 4 SWCLK cycles, SWDIO = 0                    DAP_SWJ_Sequence(4,   0x00)
+4. 8-bit activation code:
+     SWD activation : 0x1A                     DAP_SWJ_Sequence(8,  0x1A)
+     JTAG activation: 0x0A                     (use 0x0A instead)
+5. SWD line reset (50+ ones) + idle             DAP_SWJ_Sequence(51, 0xFF...)
+                                                DAP_SWJ_Sequence(8, 0x00)
+</code></pre>
+
+<div class="callout warn">
+  <span class="label">RP2350 detail</span>
+  The RP2350 boots in dormant state by default. probe-rs &ge; 0.24 sends the full dormant-recovery sequence automatically when it sees the RP2350 IDCODE; OpenOCD's <code>cmsis-dap</code> driver does the same when targeting <code>rp2350.cfg</code>. If you're writing your own host code for an RP2350 target, you cannot skip step 1&ndash;4 above &mdash; you'll get <code>NO_ACK</code> on every subsequent DP read because the DP is still asleep.
+</div>
+
+<h3 id="dual-protocol-alert">Dual-protocol selection alert (the "v2" entrance)</h3>
+
+<p>The same selection-alert mechanism is also how SWJ-DPv2 parts let a host pick SWD vs JTAG without going through the older 0xE79E switch. The activation code byte at the end (step 4) selects which physical protocol to enter. This is the "v2" entrance referenced in the Armv8-M Cortex-M33 docs &mdash; see <a href="arm_cortex_m33.html">arm_cortex_m33.html</a> for the M33 perspective.</p>
+
+<!-- =========================================================== -->
+<h2 id="swo-transport">SWO over CMSIS-DAP v2 &mdash; the streaming endpoint</h2>
+
+<p>SWO (Serial Wire Output) is a single-pin asynchronous serial line emitting trace data from the target's TPIU. The probe captures it &mdash; usually decoded as UART NRZ, occasionally Manchester &mdash; and ships it to the host. There are <strong>two delivery modes</strong>:</p>
+
+<table>
+  <tr><th>Transport</th><th>How it works</th><th>Pros / Cons</th></tr>
+  <tr><td><strong>0 — None</strong></td><td>SWO disabled. Probe doesn't capture the line.</td><td>Default if SWO not supported.</td></tr>
+  <tr><td><strong>1 — Polled</strong> (DAP_SWO_Data)</td><td>Probe captures into an internal ring buffer. Host periodically issues <code>DAP_SWO_Data</code> on the main Bulk OUT/IN endpoint pair, gets back as many bytes as fit in the response. Multiplexed with debug commands.</td><td>Works on v1 (HID) and v2. Trades throughput for protocol simplicity. Host has to poll fast enough to avoid buffer overrun.</td></tr>
+  <tr><td><strong>2 — Streaming</strong> (Bulk IN endpoint)</td><td>Probe exposes a <em>second</em> Bulk IN endpoint. SWO bytes are continuously flushed onto it as raw payload (no command framing). Host opens a separate read on that endpoint.</td><td>v2 only. Highest throughput; never blocks the debug command channel. Requires the probe firmware to manage two USB tx queues. <strong>edevkit1's choice.</strong></td></tr>
+</table>
+
+<h3 id="swo-streaming-bytes">What the streaming endpoint actually carries</h3>
+
+<p>One subtlety: the streaming endpoint carries <strong>raw SWO bytes after the probe has decoded the line into UART/Manchester octets</strong>. There is no framing on top &mdash; no length prefixes, no command IDs &mdash; the probe just shovels a continuous stream of decoded bytes onto the endpoint. The host's job is to interpret them as ITM packets per Arm IHI 0029 (see <a href="debug_swo.html">debug_swo.html</a> for the ITM frame format).</p>
+
+<p>This means the host can't distinguish between SWO bytes and "regular DAP responses" by inspecting the data &mdash; they're on different endpoints. The endpoint is the channel selector. probe-rs, pyOCD, and OpenOCD all open two read pipes (one per Bulk IN endpoint) and demux by source.</p>
+
+<h3 id="swo-setup-flow">Standard SWO setup flow</h3>
+
+<pre><code># Host turns on SWO streaming after debug session is established:
+
+DAP_SWO_Transport(2)         # streaming on Bulk IN #2
+DAP_SWO_Mode(1)              # UART (NRZ)
+DAP_SWO_Baudrate(2_000_000)  # request 2 Mbps
+   → response: actual = e.g. 1_968_750 (probe's nearest divisor)
+DAP_SWO_Control(1)           # start capture
+
+# Then host configures the target's TPIU/ITM via DAP_Transfer
+# to actually emit SWO at the matching baudrate.
+# Target TPIU prescaler must produce the same baud
+# the probe is decoding for, or you get garbage on the line.
+</code></pre>
+
+<div class="callout">
+  <span class="label">edevkit1 detail</span>
+  edevkit1 implements <strong>Transport=2 only</strong>. We don't support polled SWO because the host bandwidth penalty is too large &mdash; with two PIO state machines and a 4 KB ring buffer, the streaming endpoint can sustain ~25 Mbps SWO from a fast-running ITM trace, which is everything we want. The design rationale is in <a href="edevkit1.html">edevkit1.html §6.5</a>.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="winusb">WinUSB / Microsoft OS 2.0 descriptors &mdash; driverless on Windows</h2>
+
+<p>CMSIS-DAP v2 uses a <strong>vendor-specific</strong> USB interface (class <code>0xFF</code>), not a standard class. On Linux and macOS, that's fine &mdash; libusb (or IOKit's IOUSBHost on macOS) can claim any vendor-specific interface without needing a driver. <strong>Windows is the problem child:</strong> by default, Windows refuses to enumerate a vendor-specific device unless an INF file binds it to a driver. Without an INF, the device shows up in Device Manager with a yellow exclamation mark.</p>
+
+<p>The fix is <strong>Microsoft OS 2.0 descriptors</strong> (introduced in Windows 8.1 and fully supported in Windows 10+). These are USB descriptors the device emits at enumeration time that <em>tell Windows directly</em>: "please bind WinUSB to me." With OS 2.0 descriptors in place, Windows binds <code>winusb.sys</code> automatically and <code>libusb-1.0</code> on the host can claim the interface immediately. No driver install. No INF. No admin rights.</p>
+
+<h3 id="ms-os-20-set">What you need to emit</h3>
+
+<table>
+  <tr><th>Descriptor</th><th>Purpose</th></tr>
+  <tr><td>BOS (Binary Object Store) descriptor with a <strong>Microsoft OS 2.0 platform capability</strong> sub-descriptor</td><td>Advertises that the device speaks OS 2.0. Includes a vendor-defined GUID Microsoft uses to look up the descriptor set, and a <code>bMS_VendorCode</code> byte that the device will use to identify the OS 2.0 control request.</td></tr>
+  <tr><td>OS 2.0 descriptor set (returned via vendor request <code>bMS_VendorCode</code> on EP0)</td><td>Contains the WinUSB binding directive: <strong>compatible ID feature descriptor</strong> with CompatibleID <code>"WINUSB"</code>, and a <strong>registry property feature descriptor</strong> with the device interface GUID Windows should index the device under.</td></tr>
+</table>
+
+<h3 id="winusb-guid">The interface GUID</h3>
+
+<p>The registry property descriptor sets the <code>DeviceInterfaceGUIDs</code> registry value. Hosts that want to find your probe (probe-rs, pyOCD) call <code>SetupDiEnumDeviceInterfaces</code> with that GUID. The community-conventional GUID for CMSIS-DAP v2 probes is:</p>
+
+<pre><code>{CDB3B5AD-293B-4663-AA36-1AAE46463776}
+</code></pre>
+
+<p>This GUID was originally introduced by the <strong>DAPLink</strong> reference firmware and adopted by everyone since for compatibility &mdash; if you publish a CMSIS-DAP probe with a different GUID, hosts will work (they search by product-name string anyway), but third-party tools that hard-code this GUID won't find it. Use this GUID.</p>
+
+<h3 id="windows-landmines">The OS-specific landmines</h3>
+
+<ul>
+  <li><strong>Windows hates non-conforming descriptors silently.</strong> If your BOS descriptor has the wrong total length, Windows reads it once at first enumeration, caches the verdict ("not OS 2.0"), and never asks again &mdash; even after you fix the firmware. You have to delete the cached entry from the registry under <code>HKLM\SYSTEM\CurrentControlSet\Control\usbflags</code> for that VID/PID/bcdDevice, then replug. This is the #1 source of "I fixed my firmware but Windows still won't bind WinUSB" bug reports. Increment <code>bcdDevice</code> on every firmware revision during development to dodge the cache.</li>
+  <li><strong>Linux works regardless.</strong> Linux ignores OS 2.0 descriptors entirely; libusb doesn't need them. On Linux you only need a <code>udev</code> rule granting your user access to the device by VID/PID (see <a href="installation.html#udev">installation.html § udev rules</a>).</li>
+  <li><strong>macOS is somewhere between.</strong> macOS doesn't need OS 2.0 descriptors but is picky about IAD descriptors on composite devices &mdash; if your CMSIS-DAP interface is alongside a CDC ACM in the same device, you <em>must</em> emit Interface Association Descriptors or macOS won't expose the CDC. CMSIS-DAP alone works without IAD on macOS.</li>
+  <li><strong>USB 3.0 hosts behave differently than USB 2.0 hosts.</strong> Specifically, BOS descriptor handling on the USB 3.0 stack on Windows had bugs through Windows 10 1809; later builds are fine. If you're testing on truly old Windows 10, expect grief.</li>
+</ul>
+
+<div class="callout good">
+  <span class="label">verification</span>
+  After plugging an edevkit1 into a fresh Windows 10/11 install, <code>devmgmt.msc</code> &rarr; "Universal Serial Bus devices" should show <strong>"USB Test &amp; Measurement Device (CMSIS-DAP)"</strong> bound to <strong>WinUSB</strong>. If it shows up under "Other devices" with a yellow bang, the OS 2.0 descriptors didn't validate. Use <a href="https://www.usbview.com/">USB Tree View</a> to inspect the BOS and read what Windows actually parsed.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="edevkit">edevkit1's CMSIS-DAP implementation</h2>
+
+<p>edevkit1 implements CMSIS-DAP v2 as one interface in a USB composite device. The other interfaces (CDC ACM bridges for the two UARTs, MSC for the LittleFS, an SMP server for OTA) live alongside &mdash; see <a href="usb_overview.html">usb_overview.html</a> for the full composite layout.</p>
+
+<h3 id="edevkit-stack">Software stack</h3>
+
+<table>
+  <tr><th>Layer</th><th>Component</th><th>Source location</th></tr>
+  <tr><td>USB device stack</td><td>Zephyr USB-Device-Next (<code>CONFIG_USB_DEVICE_STACK_NEXT=y</code>)</td><td>Zephyr</td></tr>
+  <tr><td>Vendor-class interface registration</td><td>Custom Zephyr vendor-class driver</td><td><code>firmware/app/src/usb/cmsis_dap_vendor.c</code></td></tr>
+  <tr><td>Microsoft OS 2.0 descriptor set</td><td>Static C array — generated once</td><td><code>firmware/app/src/usb/msos20_descriptors.c</code></td></tr>
+  <tr><td>CMSIS-DAP command dispatcher</td><td>Per-command handler table; one packet in / one packet out</td><td><code>firmware/app/src/cmsis_dap/dispatch.c</code></td></tr>
+  <tr><td>SWD / JTAG bit-bang engine</td><td><strong>PIO0 SM0</strong> running compiled <code>.pio</code> programs (<code>swd_seq.pio</code>, <code>jtag_seq.pio</code>, <code>swj_seq.pio</code>)</td><td><code>firmware/app/pio/</code></td></tr>
+  <tr><td>SWO RX / decode</td><td><strong>PIO0 SM1</strong> + DMA into a 4 KB ring buffer in SRAM</td><td><code>firmware/app/pio/swo_uart.pio</code> + <code>firmware/app/src/cmsis_dap/swo_pump.c</code></td></tr>
+  <tr><td>USB descriptors</td><td>VID 0x2E8A (Raspberry Pi Foundation, by license / reservation TBD), PID per <a href="edevkit1.html">edevkit1.html §6</a>, product string includes "CMSIS-DAP"</td><td><code>firmware/app/src/usb/descriptors.c</code></td></tr>
+</table>
+
+<h3 id="edevkit-pin-budget">Pin budget</h3>
+
+<p>From the project memory's GPIO pin map:</p>
+
+<pre><code>GPIO 12  PIO0 SM0   SWCLK / TCK
+GPIO 13  PIO0 SM0   SWDIO / TMS
+GPIO 14  PIO0 SM1   SWO RX
+GPIO 15  PIO0 SM0   TDI (JTAG only)
+GPIO 16  GPIO       nRESET (open-drain)
+GPIO 17  ADC0       Vtgt sense (so probe firmware can refuse to drive
+                                a sub-1.65 V target without a level shifter)
+</code></pre>
+
+<p>The <strong>PIO0 SM0</strong> program implements the SWD/JTAG state machine in 32 instructions: it shifts out a request word, manages the turnaround period, samples on the negative edge, and pushes the read word into the RX FIFO. The dispatcher in <code>dispatch.c</code> just feeds it 32-bit words and reads results &mdash; the bit-banging is entirely on PIO0. See <a href="debug_swd.html">debug_swd.html</a> and <a href="debug_jtag.html">debug_jtag.html</a> for the wire-level details.</p>
+
+<h3 id="edevkit-throughput">Throughput targets</h3>
+
+<table>
+  <tr><th>Metric</th><th>Target</th><th>Bottleneck</th></tr>
+  <tr><td>Max SWD clock</td><td>25 MHz</td><td>RP2350 PIO clock divider; cable SI &gt; 6" degrades fast</td></tr>
+  <tr><td>USB FS bulk throughput</td><td>~10 Mbps usable</td><td>USB FS spec ceiling minus packet overhead</td></tr>
+  <tr><td>SWO line rate</td><td>up to 25 Mbps</td><td>RP2350 PIO + USB FS</td></tr>
+  <tr><td>DAP_Transfer round-trip latency</td><td>&lt; 200 µs (small packets)</td><td>USB scheduling + Zephyr USB stack</td></tr>
+  <tr><td>Memory dump speed (32-bit AHB-AP TAR auto-inc + DAP_TransferBlock)</td><td>~600 KB/s</td><td>Limited by SWD wire time at 25 MHz, not USB</td></tr>
+</table>
+
+<p>The throughput cap is <strong>USB FS</strong> &mdash; the RP2350 only ships a Full-Speed (12 Mbps) PHY. A future revision might use an external HS PHY for ~10x SWO bandwidth; the architecture is HS-ready in <a href="edevkit1.html">edevkit1.html</a> §15.</p>
+
+<h3 id="edevkit-capabilities-byte">edevkit1's <code>DAP_Info(0xF0)</code> capabilities byte</h3>
+
+<pre><code>Returned : 0x47
+
+bit 0 = 1  SWD supported
+bit 1 = 1  JTAG supported
+bit 2 = 1  SWO UART supported
+bit 3 = 0  SWO Manchester not implemented (no demand)
+bit 4 = 0  Atomic queueing not implemented (DAP_TransferBlock covers the
+           dominant fast path)
+bit 5 = 0  Test Domain Timer not implemented
+bit 6 = 1  SWO Streaming supported (the second Bulk IN endpoint)
+bit 7 = 0  UART Comm Port not implemented (we expose CDC ACMs separately)
+</code></pre>
+
+<p>The full design rationale for which bits to advertise lives in <a href="edevkit1.html">edevkit1.html</a> §6.4.</p>
+
+<!-- =========================================================== -->
+<h2 id="host-tools">probe-rs, pyOCD, OpenOCD &mdash; how each speaks CMSIS-DAP</h2>
+
+<h3 id="probe-rs">probe-rs</h3>
+
+<p><a href="https://probe.rs/"><strong>probe-rs</strong></a> is a Rust-native debugging library and CLI; it's the host-side stack edevkit's own CLI/GUI link against. The CMSIS-DAP backend is at <a href="https://github.com/probe-rs/probe-rs/tree/master/probe-rs/src/probe/cmsisdap"><code>probe-rs/src/probe/cmsisdap/</code></a>. Key files:</p>
+
+<table>
+  <tr><th>File</th><th>What it does</th></tr>
+  <tr><td class="mono">commands/mod.rs</td><td>The <code>CommandId</code> enum &mdash; canonical mapping from byte ID to command name. Source for the tables in this doc.</td></tr>
+  <tr><td class="mono">commands/transfer/mod.rs</td><td><code>DAP_Transfer</code> serialisation &mdash; constructs the byte stream from a <code>Vec&lt;Transfer&gt;</code>.</td></tr>
+  <tr><td class="mono">commands/swo/mod.rs</td><td>SWO sub-commands (transport, mode, baud, control, status, data).</td></tr>
+  <tr><td class="mono">tools.rs</td><td>USB device enumeration &mdash; walks all libusb devices, picks ones whose product string contains "CMSIS-DAP", picks v2 over v1 when both are present.</td></tr>
+</table>
+
+<p>Expected <code>probe-rs list</code> output when an edevkit1 is plugged in:</p>
+
+<pre><code>$ probe-rs list
+The following debug probes were found:
+[0]: edevkit1 (CMSIS-DAP) -- 2e8a:000c:EDV-1234-5678-9ABC (CMSIS-DAP)
+</code></pre>
+
+<p>The four-tuple is <code>vendor : product : serial : kind</code>. The serial number is the per-unit <code>EDV-XXXX-YYYY-ZZZZ</code> derived from the RP2350 chip ID. <code>probe-rs info --probe 2e8a:000c</code> then opens the device, walks the DP, and dumps IDCODE + AP discovery. If <code>info</code> hangs there, you've got a JTAG&rarr;SWD-switch problem &mdash; see <a href="#dap-swj-sequence">§ DAP_SWJ_Sequence</a>.</p>
+
+<h3 id="pyocd">pyOCD</h3>
+
+<p><a href="https://pyocd.io/"><strong>pyOCD</strong></a> is the original Python implementation of CMSIS-DAP, maintained by Arm. Its CMSIS-DAP backend is at <a href="https://github.com/pyocd/pyOCD/blob/main/pyocd/probe/cmsis_dap_probe.py"><code>pyocd.probe.cmsis_dap_probe</code></a>. Wire-level it does the same thing as probe-rs &mdash; same command IDs, same transfer-batching logic. It supports both v1 (HID) and v2 (bulk) and picks whichever the device exposes.</p>
+
+<pre><code>$ pyocd list
+  #   Probe/Board                                        Unique ID
+-----------------------------------------------------------------------------
+  0   edevkit1 (CMSIS-DAP) -- EDV-1234-5678-9ABC         EDV-1234-5678-9ABC
+</code></pre>
+
+<h3 id="openocd">OpenOCD</h3>
+
+<p><a href="https://openocd.org/"><strong>OpenOCD</strong></a> is the C/Tcl-based universal debugger. Its CMSIS-DAP driver lives in <code>src/jtag/drivers/cmsis_dap_usb_bulk.c</code> (v2) and <code>cmsis_dap_usb_hid.c</code> (v1). It's older and crustier than probe-rs but supports a wider range of obscure targets. To use it with edevkit1:</p>
+
+<pre><code>openocd -f interface/cmsis-dap.cfg -f target/rp2350.cfg
+# or for a non-RP2350 target:
+openocd -f interface/cmsis-dap.cfg \
+        -c "transport select swd" \
+        -c "adapter speed 4000" \
+        -f target/&lt;your-target&gt;.cfg
+</code></pre>
+
+<p>The configuration file <code>interface/cmsis-dap.cfg</code> is shipped with OpenOCD and just selects the cmsis-dap driver and walks USB looking for "CMSIS-DAP" in the product name &mdash; the same string-match every other host does.</p>
+
+<!-- =========================================================== -->
+<h2 id="failures">Common failure modes</h2>
+
+<p>What goes wrong in practice, in roughly decreasing order of frequency.</p>
+
+<table>
+  <tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr>
+  <tr><td>Probe doesn't show up in <code>probe-rs list</code>, <code>pyocd list</code>, or OpenOCD</td><td>Product string descriptor doesn't contain "CMSIS-DAP", or USB enumeration failed entirely</td><td>Check <code>lsusb -v</code> (Linux) / USB Tree View (Windows). The product string is a hard requirement &mdash; hosts match it case-sensitively.</td></tr>
+  <tr><td>Probe shows up on Linux/macOS but Windows lists it under "Other devices" with a yellow bang</td><td>Microsoft OS 2.0 descriptors are missing or malformed</td><td>See <a href="#winusb">§ WinUSB</a>. Increment <code>bcdDevice</code>, delete cached usbflags entry, replug.</td></tr>
+  <tr><td>Probe enumerates but <code>probe-rs info</code> hangs at "Reading IDCODE…"</td><td>JTAG&rarr;SWD switch sequence not sent, or target is in dormant state and the dormant-recovery sequence wasn't issued</td><td>For RP2350 / Armv8-M targets, ensure host sends the dormant-recovery alert. probe-rs ≥ 0.24 does this automatically. See <a href="#dap-swj-sequence">§ DAP_SWJ_Sequence</a>.</td></tr>
+  <tr><td>Connection works but every read after the first returns a different value than expected</td><td>Posted-read pipelining &mdash; you're reading transfer N's data but the AP returned transfer N&minus;1's value</td><td>The probe firmware should issue a flush read at the end of the block. If you're talking to the DP directly, read DP RDBUFF instead of the AP register at the end.</td></tr>
+  <tr><td>Probe enumerates twice and Windows binds two drivers</td><td>Composite device missing IAD (Interface Association Descriptors) on Windows, or descriptor count mismatch</td><td>Add IAD between the CMSIS-DAP interface and adjacent CDC interfaces. Verify with USB Tree View that the IADs are correctly anchoring each function.</td></tr>
+  <tr><td><code>DAP_Connect(mode=0)</code> picks the wrong protocol</td><td>"Auto" mode is ambiguous &mdash; the probe firmware has to guess. Some firmwares pick JTAG by default, some SWD. The host should pick explicitly.</td><td>Send <code>DAP_Connect(1)</code> for SWD or <code>DAP_Connect(2)</code> for JTAG. Don't trust mode 0.</td></tr>
+  <tr><td>SWO data arrives garbled or as gibberish</td><td>SWO baudrate on the probe doesn't match what the target's TPIU is emitting</td><td>Read <code>DAP_SWO_Baudrate</code>'s actual returned rate. Configure the target's TPIU prescaler from the actual rate, not the requested rate. Probes round to the nearest divisor.</td></tr>
+  <tr><td>Every other read returns <code>NO_ACK</code> / WAIT</td><td>SWD turnaround period too short for the cable, or target's DP is overrun</td><td>Try <code>DAP_SWD_Configure</code> with turnaround = 4 (longest setting), or lower the SWCLK frequency via <code>DAP_SWJ_Clock</code>.</td></tr>
+  <tr><td>SWO ring buffer overrun ("data lost") under load</td><td>Host isn't draining fast enough &mdash; only relevant in polled SWO transport (Transport=1)</td><td>Switch to Transport=2 (streaming endpoint) if the probe supports it, or increase host poll frequency.</td></tr>
+  <tr><td>Wrong VID/PID published by the probe</td><td>Custom firmware shipped a placeholder VID</td><td>Get a USB-IF VID, or adopt a public open-source VID like the pid.codes pool, or document a deliberate sub-licence from a known vendor (Raspberry Pi Foundation in our case).</td></tr>
+  <tr><td>Posted reads return stale data on a dead AP</td><td>The AP errored out mid-pipeline; the next read returns whatever was in the pipeline, not an actual error</td><td>After any unexpected NO_ACK, issue <code>DAP_WriteABORT</code> with all bits set, then re-read DP CTRL/STAT to confirm CSYSPWRUP/CDBGPWRUP are still acknowledged.</td></tr>
+</table>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<p>Primary sources, in roughly the order to consult them:</p>
+
+<ol>
+  <li><strong>Arm CMSIS-DAP reference repo</strong> &mdash; <a href="https://github.com/ARM-software/CMSIS_5/tree/develop/CMSIS/DAP">github.com/ARM-software/CMSIS_5/tree/develop/CMSIS/DAP</a> (and its <a href="https://github.com/ARM-software/CMSIS_6">CMSIS-6</a> successor). The C source is the canonical specification &mdash; read <code>Source/DAP.c</code> and <code>Source/DAP_vendor.c</code> for the dispatcher and <code>Include/DAP.h</code> for the command-ID #defines.</li>
+  <li><strong>Arm CMSIS-DAP HTML docs</strong> &mdash; <a href="https://arm-software.github.io/CMSIS_5/DAP/html/index.html">arm-software.github.io/CMSIS_5/DAP/html/index.html</a>. The narrative reference &mdash; per-command pages with byte layouts. Sometimes goes 404 on individual subgroups; if so, fall back to the source repo.</li>
+  <li><strong>probe-rs source</strong> &mdash; <a href="https://github.com/probe-rs/probe-rs/tree/master/probe-rs/src/probe/cmsisdap">probe-rs/src/probe/cmsisdap</a>. The cleanest open-source CMSIS-DAP host implementation. If you're building a host or want to verify a probe, this is what to grep.</li>
+  <li><strong>DAPLink reference firmware</strong> &mdash; <a href="https://github.com/ARMmbed/DAPLink">github.com/ARMmbed/DAPLink</a>. The Arm-blessed reference probe firmware, used by every K20 / nRF / STM32 dev kit's onboard debugger. Read <code>source/daplink/cmsis-dap/</code> for the dispatcher and <code>source/hic_hal/</code> for board-specific GPIO bit-bangers. The firmware is the model edevkit1's own implementation borrows from.</li>
+  <li><strong>pyOCD source</strong> &mdash; <a href="https://github.com/pyocd/pyOCD/tree/main/pyocd/probe">pyocd/probe</a>. Python reference; easier to read than the C if you don't speak Rust or low-level C.</li>
+  <li><strong>Arm Debug Interface Architecture Specification (ADIv5/ADIv6)</strong> — IHI 0031F (ADIv5) / IHI 0074C (ADIv6). The actual spec for what AP/DP register accesses <em>mean</em> on the wire. CMSIS-DAP is the transport; ADIv5 is the payload semantic. <a href="https://developer.arm.com/documentation/ihi0031">developer.arm.com/documentation/ihi0031</a>.</li>
+  <li><strong>USB Microsoft OS 2.0 Descriptors specification</strong> — <a href="https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/microsoft-os-2-0-descriptors-specification">learn.microsoft.com/.../microsoft-os-2-0-descriptors-specification</a>. The byte-level format of the BOS / OS 2.0 set descriptors. Required reading if you're emitting them.</li>
+  <li><strong>libusb FAQ on "WinUSB binding"</strong> — <a href="https://github.com/libusb/libusb/wiki/Windows#how-to-use-libusb-on-windows">github.com/libusb/libusb/wiki/Windows</a>. Practical Windows-side tips for verifying that a device is bound to WinUSB.</li>
+  <li><strong>Sister docs in this hub</strong> — <a href="usb_overview.html">usb_overview.html</a> for the rest of edevkit's USB composite layout, <a href="usb_cdc_acm.html">usb_cdc_acm.html</a> for the CDC ACM cousins, <a href="debug_swd.html">debug_swd.html</a> / <a href="debug_jtag.html">debug_jtag.html</a> / <a href="debug_swo.html">debug_swo.html</a> for the wires CMSIS-DAP drives, <a href="arm_architecture.html">arm_architecture.html</a> for general debug-architecture grounding, and <a href="edevkit1.html">edevkit1.html §6</a> for the design choices behind edevkit1's specific implementation.</li>
+</ol>
+
+<p class="small">When in doubt, the probe-rs and DAPLink sources are the ground truth &mdash; they're more maintained than the spec PDFs, and any disagreement between them and the docs has historically been resolved by updating the docs.</p>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="arm_cortex_m33.html"><span class="dir">← Previous</span><span class="cat">Architecture</span><span class="title">Cortex-M33 Deep Dive (Armv8-M Mainline + TrustZone-M)</span></a>
+<a class="next" href="usb_cdc_acm.html"><span class="dir">Next →</span><span class="cat">USB stack</span><span class="title">USB CDC-ACM (serial-over-USB)</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit · tools/web/pages/usb_cmsis_dap.html · written for firmware engineers implementing or debugging the CMSIS-DAP v2 transport on edevkit1 (RP2350B + Zephyr USB-Device-Next). Cross-references the <a href="edevkit1.html">edevkit1 design spec</a>, the <a href="arm_architecture.html">arm_architecture</a> primer, and the sibling <a href="debug_swd.html">SWD</a> / <a href="debug_jtag.html">JTAG</a> / <a href="debug_swo.html">SWO</a> wire-level docs. Update this file when capability bits or descriptor layouts change.
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body>
+</html>

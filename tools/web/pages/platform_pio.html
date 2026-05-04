@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — RP2350 PIO programming model</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A focused reference on the Programmable I/O subsystem on RP2040 and RP2350 — what a state machine is, how the four-instruction set works, side-set, FIFOs, IRQ, DMA chaining, the pioasm toolchain, and how edevkit1 fits SWD, JTAG, SWO, I²C, SPI, QSPI, and WS2812 into the same 12 state machines.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar ────────────────────────────────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">Platform · PIO</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · platform · PIO</div>
+  <h1>PIO — RP2350's Programmable I/O subsystem</h1>
+  <p class="small">A focused reference on the <strong>Programmable I/O</strong> (PIO) subsystem that gives the RP2040 / RP2350 their disproportionate I/O power. PIO is what lets a $1 chip with no dedicated SWD, JTAG, SWO, QSPI-master, WS2812, DPI-video, or Ethernet-MAC peripheral nevertheless implement <em>all of them</em> simultaneously — three small CPUs that share registers with the M33 cores and run independent custom programs against the GPIO pads, every cycle, deterministically. This document covers the hardware model (PIO blocks, state machines, FIFOs, side-set, IRQ, DMA chaining), the four-instruction ISA, the <code>pioasm</code> toolchain, the pre-shipped Pico-SDK PIO programs, the timing model for sub-MHz to multi-hundred-MHz protocols, and how edevkit1 partitions its 12 state machines across SWD, JTAG, SWO, I²C, SPI/QSPI, and WS2812.</p>
+  <p class="small"><strong>Audience.</strong> A firmware engineer who has poked at SWD/JTAG/SPI on a "real" SoC with dedicated peripherals, and now needs to understand <em>how</em> a PIO state machine implements those same protocols, when to write a new <code>.pio</code> program, and which design choices the RP2350 PIO model makes that you should plan around. By the end you should be able to read any <code>.pio</code> source file end-to-end, understand why <code>side-set</code> and <code>delay</code> matter, lay out FIFOs and DMA chains for a new protocol, and partition a new feature across edevkit1's already-busy PIO budget.</p>
+  <p class="small"><strong>Sister docs.</strong> Every protocol doc on the hub builds on this one. Once PIO is clear, read: <a href="debug_swd.html">debug_swd.html</a> and <a href="debug_jtag.html">debug_jtag.html</a> for the ARM-debug PIO programs; <a href="debug_swo.html">debug_swo.html</a> for the trace-receive PIO; <a href="proto_i2c.html">proto_i2c.html</a> / <a href="proto_spi.html">proto_spi.html</a> / <a href="proto_qspi.html">proto_qspi.html</a> for the protocol testers; <a href="edevkit1.html">edevkit1.html</a> §7 for the v1 PIO budget.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Why PIO</span>
+  <ol>
+    <li><a href="#why">Why a "tiny CPU near the pads" beats a fixed peripheral</a></li>
+    <li><a href="#rp2350-vs-2040">RP2040 vs RP2350 — what changed</a></li>
+  </ol>
+  <span class="heading">Hardware model</span>
+  <ol>
+    <li><a href="#blocks">PIO blocks &amp; state machines</a></li>
+    <li><a href="#sm-internal">Inside a state machine — registers, scratch, OSR/ISR, FIFOs</a></li>
+    <li><a href="#pinmap">Pin mapping — IN, OUT, SET, side-set, JMP-pin</a></li>
+    <li><a href="#clkdiv">Clock divider — fractional 16.8 timing</a></li>
+  </ol>
+  <span class="heading">Instruction set</span>
+  <ol>
+    <li><a href="#isa-overview">The four-bit opcode space</a></li>
+    <li><a href="#isa-jmp">JMP — the only branch</a></li>
+    <li><a href="#isa-wait">WAIT — synchronisation primitive</a></li>
+    <li><a href="#isa-in-out">IN / OUT — moving bits to and from pins</a></li>
+    <li><a href="#isa-pull-push">PULL / PUSH — FIFO interaction</a></li>
+    <li><a href="#isa-mov">MOV — the swiss-army instruction</a></li>
+    <li><a href="#isa-irq">IRQ — coordination across SMs and cores</a></li>
+    <li><a href="#isa-set">SET — small-immediate writes</a></li>
+    <li><a href="#sideset-delay">Side-set and delay — the secret weapons</a></li>
+  </ol>
+  <span class="heading">Glue and tooling</span>
+  <ol>
+    <li><a href="#fifo">FIFOs and back-pressure</a></li>
+    <li><a href="#dma">DMA chaining — back-to-back transactions</a></li>
+    <li><a href="#irqs-cpu">IRQ to the M33 cores</a></li>
+    <li><a href="#pioasm">pioasm — the assembler &amp; how Zephyr builds it</a></li>
+    <li><a href="#emulator">Simulating PIO programs without hardware</a></li>
+  </ol>
+  <span class="heading">edevkit1 layout</span>
+  <ol>
+    <li><a href="#budget">The v1 PIO budget — 12 SMs, 7 protocols</a></li>
+    <li><a href="#examples">Worked example — SWD on PIO0 SM0</a></li>
+    <li><a href="#pitfalls">Pitfalls and bring-up gotchas</a></li>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="why">Why a "tiny CPU near the pads" beats a fixed peripheral</h2>
+
+<p>Most microcontrollers contain a fixed menu of I/O peripherals: 2 UARTs, 1 SPI, 1 I²C, maybe a quadrature decoder. If your application needs a <em>third</em> UART, or a CAN controller on a part that doesn't have one, or a custom protocol that isn't in the catalog at all, you're stuck — bit-banging it from CPU is too slow and too jittery, and a hardware redesign means a different chip.</p>
+
+<p>The RP2040 (2021) and RP2350 (2024) take a fundamentally different approach: instead of <em>more</em> fixed peripherals, they include a small array of <strong>programmable peripherals</strong>. Each one is a 5-instruction-deep, 32-register, 9-instruction-wide tiny CPU sitting directly next to the GPIO pads, with deterministic per-cycle behaviour. You write a few dozen lines of assembly that implements <em>your</em> protocol (UART at 7.5 megabaud, DPI video at 33 MHz, WS2812 timing-perfect, SWD master, anything), and it runs autonomously — pulling work from a FIFO, driving the pins, signalling completion through DMA or IRQ.</p>
+
+<p>The trade-off, compared to a fixed UART: you have to <em>write</em> the UART. The win: that UART runs at any baud rate you can describe, supports parity any way you want, and there can be eight of them — limited only by the number of state machines, not by what the chip vendor decided to silicon-bake. PIO is "FPGA fabric for the rest of us" — far less flexible than a real FPGA, but in the price and power class of an MCU.</p>
+
+<div class="callout info">
+  <span class="label">The PIO promise</span>
+  PIO is what makes RP2040 / RP2350 unusually well-suited for tools like edevkit1 — devices that don't know in advance what protocols they will be asked to speak. CMSIS-DAP needs SWD; some users need JTAG; some need SWO; some need I²C, SPI, QSPI, UART; some need WS2812. A traditional MCU would need every one of these as a separate hardware peripheral. PIO lets the same silicon implement all of them, swap mid-session, and still leave headroom.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="rp2350-vs-2040">RP2040 vs RP2350 — what changed</h2>
+
+<table>
+  <tr><th></th><th>RP2040 (2021)</th><th>RP2350 (2024)</th></tr>
+  <tr><td>PIO blocks</td><td>2</td><td><strong>3</strong></td></tr>
+  <tr><td>State machines per block</td><td>4</td><td>4</td></tr>
+  <tr><td>Total SMs</td><td>8</td><td><strong>12</strong></td></tr>
+  <tr><td>Instruction memory per block</td><td>32 instructions, shared by all 4 SMs</td><td>32 instructions per block</td></tr>
+  <tr><td>FIFO depth (per SM)</td><td>4 words TX + 4 words RX (or 8+0 / 0+8 with FIFO joining)</td><td>4+4 or 8+0 / 0+8 (same)</td></tr>
+  <tr><td>Side-set bits</td><td>0–5</td><td>0–5</td></tr>
+  <tr><td>Delay field</td><td>0–31 cycles per instruction</td><td>0–31 cycles per instruction</td></tr>
+  <tr><td>Max pins addressable per IN/OUT</td><td>32 (mapped through GPIO mux)</td><td>32 (mapped through GPIO mux + new "high-bank" support)</td></tr>
+  <tr><td>System-clock max</td><td>133 MHz default, 200+ overclocked</td><td>150 MHz default, 200+ supported</td></tr>
+  <tr><td>SM IRQ index range</td><td>0..7 (8 IRQ flags shared across blocks)</td><td>0..15 (16 IRQ flags, per-block-or-shared selectable)</td></tr>
+  <tr><td>New instructions</td><td>—</td><td>None — ISA is unchanged</td></tr>
+  <tr><td>New micro-features</td><td>—</td><td>Per-SM <code>JMP_PIN</code> programmable; PIO-to-PIO IRQ routing; deeper pin-mux to 48 GPIOs</td></tr>
+</table>
+
+<p>The headline upgrade is <strong>3 PIO blocks instead of 2</strong>, giving 12 state machines instead of 8. For edevkit1, this is the difference between "I can fit SWD + I²C + SPI + WS2812 simultaneously" and "I can fit all of those plus QSPI and SWO and JTAG with room to spare". The ISA is a strict superset of RP2040's PIO; existing <code>.pio</code> programs assemble unchanged.</p>
+
+<div class="callout">
+  <span class="label">Backwards compatibility</span>
+  Every <code>.pio</code> program written for RP2040 — including the entire body of community PIO code on GitHub, the Pico-SDK examples, and the rp2040-pio-emulator's reference implementations — runs on RP2350 with no modifications. The pioasm toolchain accepts the same source and emits the same bytecode; you only need to recompile if you want to use the new IRQ index range.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="blocks">PIO blocks &amp; state machines</h2>
+
+<p>The unit of independence in PIO is the <strong>state machine</strong> (SM). RP2350 has 12 of them, organised into 3 <strong>blocks</strong> of 4. Within a block, the four SMs share:</p>
+
+<ul>
+  <li>One 32-instruction <strong>instruction memory</strong> (so all four SMs in a block run programs out of the same RAM, but each starts at a different program-counter address).</li>
+  <li>One set of 8 <strong>IRQ flags</strong> that they can raise or wait on (PIO0 IRQ flags don't reach PIO1 by default — they're block-local).</li>
+  <li>A common GPIO mapping window — every SM in PIO0 can address GPIOs 0..31, every SM in PIO1 can address its own 0..31 window, etc. (RP2350 extends this to 0..47.)</li>
+</ul>
+
+<p>Across blocks: SMs are <strong>fully independent</strong>. PIO0 SM0 cannot stall PIO1 SM3 by hogging the instruction memory. PIO0's instruction memory and PIO1's instruction memory are physically separate. The system bus is shared (so DMA channels feeding PIOs from RAM compete for bandwidth), but most other resources are per-block.</p>
+
+<pre><code>            ┌──────────────────────────────┐
+            │  PIO0  (instr mem 32 words)  │
+            │  ┌────┐ ┌────┐ ┌────┐ ┌────┐ │
+            │  │SM0 │ │SM1 │ │SM2 │ │SM3 │ │
+            │  └────┘ └────┘ └────┘ └────┘ │
+            │   FIFO   FIFO   FIFO   FIFO  │
+            └──────────────────────────────┘
+            ┌──────────────────────────────┐
+            │  PIO1  (instr mem 32 words)  │
+            │  ┌────┐ ┌────┐ ┌────┐ ┌────┐ │
+            │  │SM0 │ │SM1 │ │SM2 │ │SM3 │ │
+            │  └────┘ └────┘ └────┘ └────┘ │
+            └──────────────────────────────┘
+            ┌──────────────────────────────┐
+            │  PIO2  (instr mem 32 words)  │
+            │  ┌────┐ ┌────┐ ┌────┐ ┌────┐ │
+            │  │SM0 │ │SM1 │ │SM2 │ │SM3 │ │
+            │  └────┘ └────┘ └────┘ └────┘ │
+            └──────────────────────────────┘
+                       ▲
+                       │ APB bus (system clock)
+                       ▼
+              ┌─────────────────┐
+              │   M33 cores ×2  │
+              └─────────────────┘
+</code></pre>
+
+<p>The 32-instruction instruction memory limit is one of the key constraints when designing PIO programs. A complex protocol (say a full SWD master with line-recovery sequence, parity, ack, and turnaround) might take 25 instructions, leaving only 7 for the next program in the same block. <strong>You partition by block, not just by SM.</strong></p>
+
+<!-- =========================================================== -->
+<h2 id="sm-internal">Inside a state machine — registers, scratch, OSR/ISR, FIFOs</h2>
+
+<p>Each SM contains:</p>
+
+<table>
+  <tr><th>Element</th><th>Width</th><th>Role</th></tr>
+  <tr><td><code>X</code></td><td>32-bit</td><td>General-purpose scratch register. Loop counters, captured pin values, intermediate computations.</td></tr>
+  <tr><td><code>Y</code></td><td>32-bit</td><td>Second scratch register. Same role as X. Most loop bodies use one of X/Y as the loop counter.</td></tr>
+  <tr><td><code>OSR</code> (Output Shift Register)</td><td>32-bit</td><td>Holds the bits being shifted out to pins. Each <code>OUT</code> instruction shifts N bits out of the OSR onto the pin pads. Refilled from the TX FIFO via <code>PULL</code>.</td></tr>
+  <tr><td><code>ISR</code> (Input Shift Register)</td><td>32-bit</td><td>Mirror of OSR for input direction. Each <code>IN</code> instruction shifts N bits from pins into the ISR. When full, can be pushed into the RX FIFO via <code>PUSH</code>.</td></tr>
+  <tr><td>TX FIFO</td><td>4 × 32-bit (or 8 × 32-bit if joined)</td><td>Holds host-supplied data the SM hasn't yet shifted out. CPU or DMA writes; SM consumes via PULL.</td></tr>
+  <tr><td>RX FIFO</td><td>4 × 32-bit (or 8 × 32-bit if joined)</td><td>Holds SM-captured data the host hasn't yet read. SM produces via PUSH; CPU or DMA consumes.</td></tr>
+  <tr><td>PC</td><td>5-bit</td><td>Program counter — index into the block's 32-word instruction memory.</td></tr>
+  <tr><td>Status flags</td><td>—</td><td>"TX FIFO not full", "RX FIFO not empty", auto-pull threshold, auto-push threshold.</td></tr>
+</table>
+
+<p>The <strong>OSR/ISR are where most of the cleverness lives.</strong> A 32-bit OSR can be configured to auto-pull a new word from TX FIFO whenever it's been emptied past a threshold (so a streaming protocol never has to explicitly issue PULL); it can shift either MSB-first or LSB-first; it can be partially consumed (e.g. shift 4 bits at a time over 8 OUT instructions for a quad-IO protocol); and it can be moved bit-reversed via MOV.</p>
+
+<h3 id="join-fifo">FIFO joining</h3>
+
+<p>By default, an SM has a 4-word TX FIFO and a 4-word RX FIFO. If your SM only transmits (e.g. WS2812), the RX FIFO is wasted — you can <strong>join</strong> the FIFOs to get an 8-word TX (RX disabled) or 8-word RX (TX disabled). This is critical for protocols that need deeper buffers than 4 words to absorb DMA descriptor latency.</p>
+
+<pre><code>; Example sm_config in C-SDK style
+sm_config_set_fifo_join(&amp;c, PIO_FIFO_JOIN_TX);   ; 8-word TX, 0-word RX
+sm_config_set_fifo_join(&amp;c, PIO_FIFO_JOIN_RX);   ; 0-word TX, 8-word RX
+sm_config_set_fifo_join(&amp;c, PIO_FIFO_JOIN_NONE); ; default 4+4
+</code></pre>
+
+<!-- =========================================================== -->
+<h2 id="pinmap">Pin mapping — IN, OUT, SET, side-set, JMP-pin</h2>
+
+<p>Each SM has <em>five</em> independent pin "windows" — five different views of the GPIO array, each configured with its own base pin and width:</p>
+
+<table>
+  <tr><th>Window</th><th>Used by</th><th>Width</th><th>Typical use</th></tr>
+  <tr><td><code>IN</code> base</td><td><code>IN pins, N</code> instruction</td><td>1–32</td><td>Sample N pins into the ISR. Used by sniffers, slave-mode receivers.</td></tr>
+  <tr><td><code>OUT</code> base</td><td><code>OUT pins, N</code> instruction</td><td>1–32</td><td>Drive N pins from the OSR. Used by master-mode transmitters.</td></tr>
+  <tr><td><code>SET</code> base</td><td><code>SET pins, N</code> instruction</td><td>1–5</td><td>Drive a small immediate value to up to 5 pins. Used for short setup sequences (e.g. driving nCS low at start of a SPI transaction).</td></tr>
+  <tr><td><code>side-set</code> base</td><td>side-set field on every instruction</td><td>0–5</td><td>Drive 0–5 pins as a "free" side effect of every instruction. Used for clock generation — see below.</td></tr>
+  <tr><td><code>JMP-pin</code></td><td><code>JMP PIN, target</code> instruction</td><td>1 (single pin)</td><td>Read one pin and branch on its level. Used for protocol arbitration, error-detect paths, and edge-triggered handshakes.</td></tr>
+</table>
+
+<p>The five windows can overlap freely. A typical SPI master configuration uses: <code>SET</code> base = nCS pin (so SET 0 / SET 1 toggles nCS); <code>side-set</code> base = SCK pin (so every instruction can clock); <code>OUT</code> base = MOSI pin; <code>IN</code> base = MISO pin. All four windows are different pin numbers, but they're configured into the same SM and used as needed by the instruction stream.</p>
+
+<!-- =========================================================== -->
+<h2 id="clkdiv">Clock divider — fractional 16.8 timing</h2>
+
+<p>Each SM has its own <strong>clock divider</strong> that turns the system clock (150 MHz on RP2350) into the SM's instruction clock. The divider is a 16-bit integer plus an 8-bit fractional part — fractional dividers, not just integer — so you can hit baud rates exactly on common targets.</p>
+
+<pre><code>SM_clk = sysclk / (int + frac/256)
+</code></pre>
+
+<p>For example, to run an SM at 9600 Hz (1 instruction per 9600 Hz step) on a 150 MHz sysclk: divider = 150e6 / 9600 = 15625.0, so int=15625, frac=0. To hit 1 MHz: 150 exactly, int=150, frac=0. For an oddball baud like 230400: 150e6/230400 = 651.04..., int=651, frac=0.04*256≈10, so int=651, frac=10. The achieved rate is 150e6/(651+10/256) = 230400 Hz exactly, no jitter.</p>
+
+<p>The fractional divider matters because most protocols specify exact frequencies (UART baud rates, MIDI 31250 baud, I²C 100/400/3400 kHz) that don't divide evenly into 150 MHz. Without fractional dividers, every UART would have ±0.5% baud error.</p>
+
+<div class="callout">
+  <span class="label">Per-SM clocks</span>
+  All 12 SMs can have different clock dividers. PIO0 SM0 can run at 25 MHz while PIO0 SM1 runs at 50 kHz simultaneously. The instruction memory they share is read at sysclk; each SM's PC just advances at its own rate.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="isa-overview">The four-bit opcode space</h2>
+
+<p>PIO instructions are 16 bits wide. The top 3 bits are the opcode; the next 5 bits are the delay-and-side-set field; the bottom 8 bits are the operand. There are exactly <strong>nine</strong> instructions:</p>
+
+<table>
+  <tr><th>Opcode</th><th>Mnemonic</th><th>What it does</th></tr>
+  <tr><td><code>000</code></td><td><code>JMP</code></td><td>Conditional or unconditional branch within the program.</td></tr>
+  <tr><td><code>001</code></td><td><code>WAIT</code></td><td>Stall until a pin or IRQ flag matches the requested level.</td></tr>
+  <tr><td><code>010</code></td><td><code>IN</code></td><td>Shift bits from the IN pin window into the ISR.</td></tr>
+  <tr><td><code>011</code></td><td><code>OUT</code></td><td>Shift bits from the OSR onto the OUT pin window.</td></tr>
+  <tr><td><code>100</code></td><td><code>PUSH / PULL</code></td><td>Move data between FIFOs and the shift registers (one opcode, distinguished by a flag).</td></tr>
+  <tr><td><code>101</code></td><td><code>MOV</code></td><td>Copy register-to-register, with optional bit-reverse and inversion.</td></tr>
+  <tr><td><code>110</code></td><td><code>IRQ</code></td><td>Set, clear, or wait on one of the 8 IRQ flags.</td></tr>
+  <tr><td><code>111</code></td><td><code>SET</code></td><td>Write a 5-bit immediate to the SET pin window or to scratch X / Y.</td></tr>
+</table>
+
+<p>That's <em>it</em>. There is no add, no compare, no multiply. Loops are implemented by decrementing a scratch register with the side effect of <code>JMP X-- target</code> (jumps if X != 0, post-decrements). Comparisons are implemented by subtracting via shift-and-XOR. Almost every PIO program is around 8–25 instructions of this very small ISA.</p>
+
+<!-- =========================================================== -->
+<h2 id="isa-jmp">JMP — the only branch</h2>
+
+<p>JMP is the only branching instruction. It takes a 5-bit target address (0–31, an absolute index into the block's instruction memory) and an optional condition:</p>
+
+<pre><code>JMP target              ; unconditional
+JMP !X target           ; if X == 0
+JMP X-- target          ; if X != 0, post-decrement X
+JMP !Y target           ; if Y == 0
+JMP Y-- target          ; if Y != 0, post-decrement Y
+JMP X != Y target       ; if X != Y
+JMP PIN target          ; if the configured JMP_PIN is high
+JMP !OSRE target        ; if OSR is not yet empty (not all bits shifted out)
+</code></pre>
+
+<p>The combination of <code>JMP X-- target</code> with no other compare instruction is what most loops use. The fastest possible PIO loop is a 1-instruction body with a 1-instruction back-jump, running at sysclk / 2. With side-set you can effectively make even that loop "free" — the back-jump itself can drive a clock pin.</p>
+
+<!-- =========================================================== -->
+<h2 id="isa-wait">WAIT — synchronisation primitive</h2>
+
+<p>WAIT stalls the SM until a condition becomes true:</p>
+
+<pre><code>WAIT 1 PIN n            ; wait for pin n to be high
+WAIT 0 PIN n            ; wait for pin n to be low
+WAIT 1 IRQ n            ; wait for IRQ flag n to be set
+WAIT 0 IRQ n            ; wait for IRQ flag n to be cleared
+</code></pre>
+
+<p>WAIT is what lets two SMs (or an SM and a CPU core) coordinate without polling. A common pattern: SM A sets IRQ 4 to signal "I'm done with this transaction"; SM B has been WAITing on IRQ 4; B starts running the moment A finishes. No CPU intervention.</p>
+
+<p>WAIT consumes 1 instruction cycle even when the condition is already true. Critical-path code uses careful WAIT placement to align edges.</p>
+
+<!-- =========================================================== -->
+<h2 id="isa-in-out">IN / OUT — moving bits to and from pins</h2>
+
+<p>The bread and butter of any data protocol. <code>IN</code> samples N pins into the ISR; <code>OUT</code> drives N bits from the OSR onto the pins.</p>
+
+<pre><code>OUT pins, 1             ; shift one bit from OSR onto OUT pin 0, advance OSR
+OUT pins, 4             ; shift four bits at a time (quad-IO!)
+OUT x, 8                ; shift 8 bits from OSR into scratch X (no pin movement)
+OUT pindirs, 1          ; shift one bit, but write it to the pin's DIRECTION (1=output)
+                        ;   — used to switch a bidirectional bus to drive
+IN pins, 1              ; sample 1 pin, MSB-or-LSB-first depending on shift dir
+IN x, 8                 ; shift 8 bits from scratch X into ISR
+</code></pre>
+
+<p>Both instructions can be configured for <strong>auto-pull</strong> (OSR refills automatically from TX FIFO when its bit count drops below threshold) and <strong>auto-push</strong> (ISR drains automatically into RX FIFO when it's full). With auto-pull and auto-push enabled, a streaming protocol never explicitly executes PULL or PUSH — the FIFOs feed and drain transparently while the program just keeps OUT-ing and IN-ing.</p>
+
+<!-- =========================================================== -->
+<h2 id="isa-pull-push">PULL / PUSH — FIFO interaction</h2>
+
+<p>Explicit FIFO ops, used when auto-pull/push isn't appropriate:</p>
+
+<pre><code>PULL block              ; pull a word from TX FIFO into OSR; stall if empty
+PULL noblock            ; pull a word into OSR; if empty, copy X into OSR (handy for "idle pattern")
+PUSH block              ; push ISR into RX FIFO; stall if full
+PUSH noblock            ; push ISR into RX FIFO; if full, drop the data (lossy — use with care)
+PULL ifempty            ; pull only if OSR is empty (safe with auto-pull)
+PUSH iffull             ; push only if ISR is full (safe with auto-push)
+</code></pre>
+
+<p>The <code>noblock</code> variants are how a sniffer handles overrun: rather than stalling the SM and missing real-time edges, it drops the overflowed word and increments a host-readable "drop counter". The <code>X copy</code> behaviour of PULL noblock is used by transmit-only state machines to send a configurable idle pattern when the host isn't supplying data.</p>
+
+<!-- =========================================================== -->
+<h2 id="isa-mov">MOV — the swiss-army instruction</h2>
+
+<p>MOV copies a value between any two of {X, Y, OSR, ISR, PINS, STATUS, NULL}, with optional inversion (<code>~</code>) or bit-reverse (<code>::</code>):</p>
+
+<pre><code>MOV x, y                ; X = Y
+MOV x, ~y               ; X = ~Y (bitwise NOT)
+MOV x, ::y              ; X = bit-reverse(Y)  — useful for endian flips
+MOV osr, x              ; OSR = X (refill the output shifter from a scratch reg)
+MOV pc, x               ; PC = X (computed branch! used for jump tables)
+MOV pins, null          ; drive 0 to all OUT pins
+MOV osr, status         ; OSR = "FIFO levels" (used to report state to host)
+</code></pre>
+
+<p>The <code>MOV pc, x</code> form is how you build a state machine with arbitrary state count: keep the next-state index in X, and at the end of each cycle MOV it into PC.</p>
+
+<!-- =========================================================== -->
+<h2 id="isa-irq">IRQ — coordination across SMs and cores</h2>
+
+<p>IRQ manages 8 (RP2040) or 16 (RP2350) per-block IRQ flags. Each flag can be:</p>
+
+<ul>
+  <li>Set or cleared by any SM via <code>IRQ set N</code> / <code>IRQ clear N</code>.</li>
+  <li>Waited on by any SM via <code>WAIT 1 IRQ N</code> / <code>WAIT 0 IRQ N</code>.</li>
+  <li>Routed to the M33 cores as a real interrupt (the IRQ gates which flags propagate up).</li>
+</ul>
+
+<pre><code>IRQ set 4               ; raise flag 4
+IRQ clear 4             ; lower flag 4
+IRQ wait 4              ; raise flag 4 and wait until it's cleared (rendezvous pattern)
+</code></pre>
+
+<p>The "raise and wait" form (<code>IRQ wait</code>) is the canonical handshake between two SMs: SM A hits "transaction done", raises flag 4, stalls. SM B sees the flag, processes the result, lowers it. SM A's IRQ wait completes; A continues. No CPU involved at all.</p>
+
+<!-- =========================================================== -->
+<h2 id="isa-set">SET — small-immediate writes</h2>
+
+<p>SET writes a 5-bit immediate to either the SET pin window (up to 5 pins) or scratch X / Y. It's the lightweight version of MOV when the value fits in 5 bits — used to load loop counters and to drive small numbers of static signals (e.g. "drive nCS low").</p>
+
+<pre><code>SET x, 7                ; X = 7 (loop counter for 8-bit shift)
+SET pins, 0b00010       ; drive SET pins to that pattern (e.g. nCS=0, IO0=1, IO1=0, ...)
+SET pindirs, 0b11111    ; drive all 5 SET pins to OUTPUT
+</code></pre>
+
+<!-- =========================================================== -->
+<h2 id="sideset-delay">Side-set and delay — the secret weapons</h2>
+
+<p>Every PIO instruction has 5 free bits in its encoding for "side-set and delay". Together they make PIO programs 2–4× shorter and let you generate clean clocks <em>for free</em>.</p>
+
+<h3 id="sideset">Side-set</h3>
+
+<p>If you declare <code>.side_set N</code> at the top of a program, every instruction can drive N pins as a side effect — without spending an instruction cycle. The side-set value is just a 5-bit field that gets latched onto pins at the start of each cycle.</p>
+
+<pre><code>.program spi_clock
+.side_set 1                    ; one side-set bit; SCK is driven by it
+
+loop:
+    out pins, 1     side 0     ; place data bit, hold SCK low
+    nop             side 1     ; rising SCK edge — slave samples
+    jmp loop        side 0     ; next bit, SCK falls back
+</code></pre>
+
+<p>Without side-set, the same program would need explicit SET pins for the SCK pin between every data bit — doubling the instruction count and making the clock period a multiple of 2× the data period rather than 1×. Almost every nontrivial PIO program uses side-set for at least the clock; many use 2 bits (clock + chip-select) or even 4 (multi-channel clocks).</p>
+
+<h3 id="delay">Delay</h3>
+
+<p>The remaining bits in the side-set/delay field encode 0–31 cycles of <strong>delay</strong> — extra instruction cycles to wait <em>after</em> the current instruction completes. This is how you stretch a 1-cycle instruction into a longer wave-form without writing a loop.</p>
+
+<pre><code>nop             side 1  [3]    ; SCK high, hold for 4 total cycles (1 + 3 delay)
+nop             side 0  [3]    ; SCK low, hold for 4 cycles
+                                ; → SCK toggles every 4 cycles → sysclk / 8 SCK rate
+</code></pre>
+
+<p>Combining side-set and delay, a 2-instruction loop body produces a square wave at exactly <code>sysclk / (2 × (1 + delay))</code>. For sysclk=150 MHz and delay=1, that's 37.5 MHz. Delay=0 → 75 MHz. Delay=2 → 25 MHz. The fractional clock divider then gives finer control between those.</p>
+
+<div class="callout good">
+  <span class="label">Why this matters</span>
+  Side-set and delay together are why a PIO program for SPI master is ~5 instructions long instead of ~30. The programs in <code>app/pio/spi.pio</code>, <code>app/pio/qspi.pio</code>, etc. are all small enough that they fit in one block's 32-instruction memory <em>alongside</em> 2–3 other programs. That's the entire reason PIO is interesting: it's not just programmable, it's <em>information-dense</em>.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="fifo">FIFOs and back-pressure</h2>
+
+<p>The TX and RX FIFOs are the only buffer between an SM (running at, say, 50 MHz instruction rate) and the M33 / DMA (running at sysclk and possibly competing with other agents on the bus). At 50 MHz with 4 words of FIFO, the SM has 80 ns of headroom before it starves; if the host can't feed it within that window, the SM stalls.</p>
+
+<p>Every protocol must answer: <strong>what does back-pressure mean?</strong> Three patterns:</p>
+
+<ol>
+  <li><strong>Stall the wire.</strong> The SM stops clocking out, holding SCK static. Fine for SPI master / I²C master / UART TX — slows the wire, doesn't lose data. <strong>Implementation:</strong> default behaviour of OUT with empty OSR and a blocking PULL.</li>
+  <li><strong>Drop the data.</strong> The SM proceeds but skips real data. Required for sniffers — a sniffer that stalls would miss real-time edges and the capture is unreliable. <strong>Implementation:</strong> <code>PUSH noblock</code>, plus a host-side overrun counter.</li>
+  <li><strong>Buffer in SRAM via DMA.</strong> A DMA channel auto-feeds the TX FIFO from a large RAM buffer (or auto-drains the RX FIFO into one). The buffer can be MB-sized; the SM never stalls until the entire buffer is drained or filled. <strong>Implementation:</strong> dreq-paced DMA with an 8-word joined FIFO and a ring buffer in SRAM.</li>
+</ol>
+
+<p>edevkit1 uses pattern (1) for masters, pattern (2) for sniffers when the user has explicitly accepted "lossy" capture, and pattern (3) (DMA + SRAM ring buffer) for everything else. The ring buffer for QSPI sniff is sized at 64 KB (one quarter of the 264 KB available SRAM), giving ~13 ms of capture at 50 MHz quad-IO before the host has to drain it.</p>
+
+<!-- =========================================================== -->
+<h2 id="dma">DMA chaining — back-to-back transactions</h2>
+
+<p>RP2350 has 16 DMA channels, each with a "chain to" register that lets one channel's completion auto-trigger another. A common PIO pattern uses two DMA channels in a ping-pong:</p>
+
+<pre><code>DMA ch 0:  src = SRAM ring buffer, dst = PIO0 SM0 TX FIFO,
+           dreq = paced by SM0's "TX not full" signal,
+           on completion, chain → ch 1
+DMA ch 1:  src = (next position in SRAM ring), dst = same TX FIFO,
+           dreq = same,
+           on completion, chain → ch 0
+</code></pre>
+
+<p>This lets the SM consume data continuously from a 2 MB ring buffer with zero CPU involvement. The CPU's only job is to top up the ring buffer ahead of where the DMA channels are reading. Effective throughput: limited by SRAM bandwidth (≈600 MB/s) and the DMA channel's peak (≈150 MB/s), not by the M33's interrupt rate.</p>
+
+<p>For receive: same shape, dst = SRAM, src = RX FIFO. CPU drains the ring buffer to USB at its own pace; the SM keeps producing.</p>
+
+<!-- =========================================================== -->
+<h2 id="irqs-cpu">IRQ to the M33 cores</h2>
+
+<p>PIO IRQ flags can be selectively forwarded to the M33 NVIC. The forwarding mask is per-block: PIO0 has its own IRQ0/IRQ1/IRQ2/IRQ3 lines into the NVIC, with a mask register selecting which of the 8 (16 on RP2350) flags propagate up.</p>
+
+<pre><code>// C-SDK style
+pio_set_irq0_source_enabled(pio0, pis_interrupt0, true);  // PIO0 IRQ flag 0 → NVIC PIO0_IRQ_0
+pio_set_irq1_source_enabled(pio0, pis_interrupt1, true);  // ...IRQ flag 1 → NVIC PIO0_IRQ_1
+</code></pre>
+
+<p>This is how a "transaction complete" event in a PIO program reaches the firmware C code: the SM raises IRQ flag N, the flag is mapped to NVIC PIO0_IRQ_n, the M33 NVIC fires the corresponding interrupt handler, the handler reads RX FIFO and signals the requesting thread.</p>
+
+<!-- =========================================================== -->
+<h2 id="pioasm">pioasm — the assembler &amp; how Zephyr builds it</h2>
+
+<p><strong>pioasm</strong> is the assembler. Source files have a <code>.pio</code> extension, the syntax is described in the <a href="https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf">RP2350 datasheet section 11.4</a>, and the assembler emits either:</p>
+
+<ul>
+  <li>A <strong>C header</strong> (<code>.h</code>) with the assembled bytecode as a constant array plus helper structs to configure the SM. This is the format Pico-SDK and Zephyr's <code>raspberrypi,pio</code> driver consume.</li>
+  <li>A <strong>raw binary</strong> (<code>.bin</code>) — useful for runtime loading.</li>
+  <li>A <strong>Python module</strong>, for use with the <code>rp2040-pio-emulator</code> simulator.</li>
+</ul>
+
+<p>The Pico-SDK has a CMake helper <code>pico_generate_pio_header()</code> that auto-runs pioasm on every <code>.pio</code> in a target. <strong>Zephyr does not</strong>. On Zephyr you have to either write your own CMake function or run pioasm manually as a build step. edevkit1 ships its own <code>tools/cmake/PIO.cmake</code> helper:</p>
+
+<pre><code># tools/cmake/PIO.cmake
+function(edevkit_pio_program target pio_file)
+  set(out_h "${CMAKE_CURRENT_BINARY_DIR}/${pio_file}.h")
+  add_custom_command(
+    OUTPUT ${out_h}
+    COMMAND ${CMAKE_SOURCE_DIR}/../tools/pioasm/pioasm
+            -o c-sdk
+            ${CMAKE_CURRENT_SOURCE_DIR}/${pio_file}
+            ${out_h}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${pio_file}
+    COMMENT "Assembling PIO program ${pio_file}"
+  )
+  target_sources(${target} PRIVATE ${out_h})
+  target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+endfunction()
+
+# usage in app/CMakeLists.txt
+edevkit_pio_program(app pio/swd.pio)
+edevkit_pio_program(app pio/qspi.pio)
+edevkit_pio_program(app pio/i2c.pio)
+edevkit_pio_program(app pio/ws2812.pio)
+</code></pre>
+
+<p class="small"><code>pioasm</code> binaries are vendored under <code>tools/pioasm/</code> for Linux x86_64, Linux arm64, macOS arm64, macOS x86_64, and Windows x86_64. The build picks the right one based on host triple. See <code>tools/pioasm/README.md</code> for details on rebuilding from upstream sources.</p>
+
+<!-- =========================================================== -->
+<h2 id="emulator">Simulating PIO programs without hardware</h2>
+
+<p>The most useful tool for PIO development is the <strong>rp2040-pio-emulator</strong> (a Python package). It's a cycle-accurate software model of one PIO block, including all 4 SMs, FIFOs, side-set, delay, and IRQ. You feed it a <code>.pio</code> file and a virtual TX FIFO sequence; it tells you what the pins look like cycle-by-cycle.</p>
+
+<pre><code>pip install rp2040-pio-emulator
+python -m rp2040_pio_emulator app/pio/swd.pio --feed 0xCAFEBABE
+</code></pre>
+
+<p>The emulator is what edevkit1's CI uses to verify that PIO programs behave correctly before they're flashed to hardware. Every <code>.pio</code> file under <code>app/pio/</code> has a sibling test script under <code>tests/pio/test_*.py</code> that runs known input vectors through the emulator and checks the output pin sequence. Catches bugs in side-set placement and delay budgets before they brick a real board.</p>
+
+<div class="callout good">
+  <span class="label">House rule</span>
+  Every PIO change goes through the emulator first. The flow: edit <code>.pio</code>, run pioasm, run pytest against the emulator, only then flash to hardware. Catches "off by one in side-set" the same hour you wrote it instead of three days into a debug session.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="budget">The v1 PIO budget — 12 SMs, 7 protocols</h2>
+
+<p>edevkit1's official PIO partition (also documented in CLAUDE.md and edevkit1.html §7):</p>
+
+<table>
+  <tr><th>Block</th><th>SM 0</th><th>SM 1</th><th>SM 2</th><th>SM 3</th></tr>
+  <tr><td><strong>PIO0</strong></td><td>SWD / JTAG (shared, mode-select)</td><td>SWO RX (UART decode)</td><td>WS2812 (status LEDs)</td><td><em>free</em></td></tr>
+  <tr><td><strong>PIO1</strong></td><td>I²C (master/slave/sniffer)</td><td>SPI / QSPI (master/slave)</td><td>QSPI partner (sample-late or slave-emul)</td><td>Sniffer (passive)</td></tr>
+  <tr><td><strong>PIO2</strong></td><td><em>reserved for v2</em></td><td><em>reserved for v2</em></td><td><em>reserved for v2</em></td><td><em>reserved for v2</em></td></tr>
+</table>
+
+<p>v1 uses 8 of the 12 state machines, with 4 reserved for v2 (logic analyser, additional UARTs, video out, etc.). PIO0 SM3 is the only intra-v1 spare; the others are committed.</p>
+
+<h3 id="why-pio0-vs-pio1">Why this partition</h3>
+
+<ul>
+  <li><strong>SWD and JTAG are mutually exclusive at any moment</strong> (the user has selected one mode), so they share PIO0 SM0. The PIO program is loaded at mode-switch time. Mode switch costs ~1 ms (re-program SM0's instruction memory and reconfigure pin window).</li>
+  <li><strong>SWO RX is independent</strong> — it can run while SWD is active. SWO arrives on its own pin, gets decoded by PIO0 SM1, lands in a SRAM ring buffer via DMA, then back-pressure-aware streams up to USB.</li>
+  <li><strong>Protocol tester (I²C / SPI / QSPI) lives on PIO1</strong>, completely separated from the debug stack. Two reasons: (a) protocol tester pins are physically separated on the connector (different voltage domain); (b) I²C and QSPI together can use up most of one block's 32-instruction memory, leaving zero room for SWD code.</li>
+  <li><strong>Sniffer on PIO1 SM3</strong> is the dedicated "passive eavesdropping" SM. Always there, can be aimed at I²C, SPI, or QSPI dynamically. Its program is small (just sample-and-PUSH); the decoding is done host-side.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="examples">Worked example — SWD on PIO0 SM0</h2>
+
+<p>SWD is a 2-wire ARM debug protocol — see <a href="debug_swd.html">debug_swd.html</a> for the protocol-level explanation. Here's the PIO program that implements it on edevkit1 (simplified):</p>
+
+<pre><code>; app/pio/swd.pio (excerpt)
+.program swd_master
+.side_set 1                            ; SWCLK is sideset
+
+; Each iteration of the inner loop is 2 PIO cycles (1 falling edge + 1 rising).
+; Sysclk = 150 MHz, so each loop step = 13.33 ns; max practical SWCLK ~ 25 MHz with delay 1.
+
+write_loop:
+    out  pindirs, 1     side 0  [1]    ; in case we're switching direction
+    out  pins, 1        side 0  [1]    ; place data bit, SWCLK low
+    nop                 side 1  [1]    ; rising edge: target samples bit
+    jmp  !osre, write_loop  side 1     ; loop while OSR has bits left
+
+read_loop:
+    in   pins, 1        side 0  [1]    ; sample SWDIO with SWCLK low?
+                                       ; (per protocol, master samples on falling edge —
+                                       ;  this depends on whether we're in master or slave)
+    nop                 side 1  [1]    ; falling-to-rising: target drives next bit
+    jmp  read_loop      side 0
+</code></pre>
+
+<p class="small">The actual program in <code>app/pio/swd.pio</code> handles the full SWD turnaround sequence (master drives → high-Z → target drives → high-Z → master), parity, ack reading, and line-recovery (50+ idle cycles). The edited version above shows only the data-shifting core; about half the actual program is the turnaround dance.</p>
+
+<h3 id="dispatch">How the C code dispatches it</h3>
+
+<pre><code>// firmware/app/src/proto/swd.c (excerpt)
+#include &lt;hardware/pio.h&gt;
+#include "swd.pio.h"   // generated by pioasm
+
+static void swd_init(uint pio, uint sm, uint pin_swclk, uint pin_swdio)
+{
+    uint offset = pio_add_program(pio, &amp;swd_master_program);
+    pio_sm_config c = swd_master_program_get_default_config(offset);
+
+    sm_config_set_sideset_pins(&amp;c, pin_swclk);
+    sm_config_set_out_pins(&amp;c, pin_swdio, 1);
+    sm_config_set_in_pins(&amp;c, pin_swdio);
+    sm_config_set_clkdiv_int_frac(&amp;c, 6, 0);   // 25 MHz at 150 MHz sysclk
+
+    pio_gpio_init(pio, pin_swclk);
+    pio_gpio_init(pio, pin_swdio);
+
+    pio_sm_init(pio, sm, offset, &amp;c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+void swd_write_word(uint pio, uint sm, uint32_t word)
+{
+    pio_sm_put_blocking(pio, sm, word);   // pushes into TX FIFO; SM auto-pulls
+}
+
+uint32_t swd_read_word(uint pio, uint sm)
+{
+    return pio_sm_get_blocking(pio, sm);  // blocks until RX FIFO non-empty
+}
+</code></pre>
+
+<p>Notice how the C side never touches a single GPIO register, never busy-waits on a clock, and never has to time anything. All the timing-critical work happens inside the PIO state machine; the C side is reduced to "push word in, pull word out".</p>
+
+<!-- =========================================================== -->
+<h2 id="pitfalls">Pitfalls and bring-up gotchas</h2>
+
+<table>
+  <tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr>
+  <tr><td>Pins don't toggle when you start the SM.</td><td>Pin is configured for SIO function, not PIO function.</td><td>Call <code>pio_gpio_init(pio, pin)</code> before enabling the SM. This points the pad mux at PIO0 / PIO1 / PIO2 instead of SIO.</td></tr>
+  <tr><td>Only the first 4 words push correctly; subsequent pushes block.</td><td>FIFO is 4 words deep by default. The SM is consuming slower than you're pushing.</td><td>Enable DMA pacing, or join the FIFOs to 8 words, or reduce the push rate, or speed up the SM.</td></tr>
+  <tr><td>Side-set pin doesn't move at all.</td><td>You forgot to <code>pio_gpio_init</code> the side-set pin, or the SM's side-set base/width is wrong.</td><td>Check <code>sm_config_set_sideset_pins</code> matches your <code>.side_set</code> directive in the .pio.</td></tr>
+  <tr><td>SM hangs after a few cycles.</td><td>Auto-pull is on but TX FIFO is empty. The SM stalled at the next OUT instruction.</td><td>Either feed the FIFO, or use a non-blocking pull pattern with a "default value" via PULL noblock + scratch X.</td></tr>
+  <tr><td>Edges are jittery / clock period varies.</td><td>System clock is being divided by an integer that doesn't match the desired rate exactly, and the SM is stretching cycles unpredictably (e.g. PULL stalling on FIFO empty).</td><td>Use the fractional clock divider with a smaller integer ÷ smaller fractional. Verify the SM never stalls in steady state.</td></tr>
+  <tr><td>Two SMs that should run synchronously drift.</td><td>They have the same clock divider but different start times; the divider is per-SM, so they're free-running.</td><td>Use <code>pio_enable_sm_mask_in_sync(pio, mask)</code> to start them on the same sysclk edge. For more precise sync, gate one with <code>WAIT IRQ</code> from the other.</td></tr>
+  <tr><td>Instruction memory full when adding a new program.</td><td>Each block has only 32 instructions, shared by all 4 SMs in that block.</td><td>Move the new program to a different block, or shrink an existing program (look for repeated patterns and convert to a loop), or use the SM's "EXEC injection" to run one-off instructions without using program memory.</td></tr>
+  <tr><td>JMP target not where you expect.</td><td>JMP target is an <em>absolute</em> address into the block's instruction memory, not a relative offset. After <code>pio_add_program()</code> the same source line lives at a different address.</td><td>Use the assembler's symbolic labels (which expand to absolute addresses post-link). Or use the <code>(your_program_offset + label)</code> idiom that the C-SDK ships.</td></tr>
+  <tr><td>RP2040 program runs on RP2350 but timing's off.</td><td>RP2040 default sysclk is 125 MHz; RP2350 default is 150 MHz. If your clock divider is hard-coded for 125, your wave is now 20% faster on RP2350.</td><td>Express clock dividers as a ratio of the actual sysclk, not as a fixed integer. Use <code>clock_get_hz(clk_sys) / desired_rate</code>.</td></tr>
+</table>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<ul>
+  <li><strong>RP2350 datasheet, chapter 11</strong> — the canonical reference. Read sections 11.1–11.5 end-to-end if you're going to write a PIO program from scratch.</li>
+  <li><strong>RP2350 hardware design guide</strong> (Raspberry Pi Foundation) — has worked PIO examples for SPI, UART, WS2812, DPI, with timing diagrams.</li>
+  <li><strong>Pico-SDK <code>pico-examples/pio/</code></strong> — 30+ reference programs covering UART, I²C, SPI, WS2812, DPI, PWM, audio, even a video output. Reading these is the fastest way to learn PIO idioms.</li>
+  <li><strong>rp2040-pio-emulator (Python)</strong> — cycle-accurate simulator, free, runs on a laptop.</li>
+  <li><strong>Hunter Adams's blog</strong> (Cornell ECE) — the most accessible third-party tutorial series on RP2040 PIO. Covers oscilloscope-friendly PIO programs and is the source of half the community's PIO knowledge.</li>
+  <li><strong>"Programmable I/O with Raspberry Pi Pico"</strong> (Sandy Maguire's textbook) — a full book on PIO, with worked exercises.</li>
+  <li><strong>edevkit1 source under <code>firmware/app/pio/</code></strong> — the production .pio programs for SWD, JTAG, SWO, I²C, SPI, QSPI, WS2812. Each is heavily commented.</li>
+  <li><strong><a href="debug_swd.html">debug_swd.html</a></strong> / <strong><a href="debug_jtag.html">debug_jtag.html</a></strong> / <strong><a href="debug_swo.html">debug_swo.html</a></strong> / <strong><a href="proto_i2c.html">proto_i2c.html</a></strong> / <strong><a href="proto_spi.html">proto_spi.html</a></strong> / <strong><a href="proto_qspi.html">proto_qspi.html</a></strong> — protocol-level docs that show how each .pio program implements its protocol.</li>
+</ul>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="proto_ws2812.html"><span class="dir">← Previous</span><span class="cat">Protocols</span><span class="title">WS2812 / NeoPixel timing protocol</span></a>
+<span></span>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit1 · platform · PIO · last updated with the v0.1 firmware tree.
+  PIO instruction encodings, side-set widths, and FIFO depths are accurate to
+  RP2350 silicon revision A2 — verify against the latest datasheet erratum sheet
+  before depending on a specific edge case.
+</footer>
+
+</div><!-- /.wrap -->
+
+<button class="scroll-top" id="scroll-top" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M18 15l-6-6-6 6"/>
+  </svg>
+</button>
+
+<script>
+  (function () {
+    var btn = document.getElementById('theme-btn');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var cur = document.documentElement.getAttribute('data-theme');
+      var next;
+      if (cur === 'dark')      next = 'light';
+      else if (cur === 'light') next = 'dark';
+      else {
+        var prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
+        next = prefersDark ? 'light' : 'dark';
+      }
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('edev_theme', next); } catch (e) {}
+    });
+  })();
+
+  (function () {
+    var btn = document.getElementById('scroll-top');
+    if (!btn) return;
+    function update() {
+      if (window.scrollY > 600) btn.classList.add('show');
+      else btn.classList.remove('show');
+    }
+    window.addEventListener('scroll', update, { passive: true });
+    btn.addEventListener('click', function () {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    update();
+  })();
+
+  (function () {
+    if (location.protocol === 'file:') {
+      var a = document.getElementById('back-to-hub');
+      if (a) a.style.display = 'none';
+    }
+  })();
+</script>
+</body>
+</html>

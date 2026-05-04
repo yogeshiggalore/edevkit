@@ -1,0 +1,1208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — SPI bus protocol</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A focused reference on the Serial Peripheral Interface (SPI) — wires, clock modes, speed, topologies, slave & sniffer modes, and how edevkit1's PIO-based SPI engine implements them.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    /* graticule background — top-faded so it doesn't overwhelm */
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar (sticky nav + theme toggle) ────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── OS cards (Linux / macOS / Windows) ────────────────────────────── */
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  /* ── numbered step ─────────────────────────────────────────────────── */
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── checklist ─────────────────────────────────────────────────────── */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  // pre-paint theme — prevents FOUC
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">SPI protocol reference</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · protocols · SPI</div>
+  <h1>SPI — Serial Peripheral Interface, end-to-end</h1>
+  <p class="small">A focused reference on the <strong>Serial Peripheral Interface</strong> (SPI) — the four-wire, full-duplex, push-pull serial bus that runs almost every flash chip, display panel, and high-throughput sensor in modern embedded systems. This document covers what the wires do, the four CPOL/CPHA clock modes (with ASCII timing diagrams), bit order and word size, speed limits, topologies, slave mode, sniffing, and how <strong>edevkit1</strong>'s PIO-based SPI engine implements <em>all three roles</em> — master, slave, and passive sniffer — on a single connector.</p>
+  <p class="small"><strong>Audience.</strong> A firmware engineer who is about to write SPI-driver code, port a flash chip to a new SoC, or use the edevkit1 protocol tester to debug a misbehaving SPI bus on someone else's board. By the end you should be able to read an SPI datasheet timing page without squinting, choose the right CPOL/CPHA from a part's spec, debug the universal "why am I reading <code>0xFF</code>?" first-time bug, and configure the edevkit1 SPI engine for whichever role your bench setup needs.</p>
+  <p class="small"><strong>Sister docs.</strong> For the dual / quad / octal extensions read <a href="proto_qspi.html">proto_qspi.html</a>; for the underlying PIO state machines that implement the bus, see <a href="platform_pio.html">platform_pio.html</a>. For the other two protocols on edevkit1's tester, see <a href="proto_uart.html">proto_uart.html</a> and <a href="proto_i2c.html">proto_i2c.html</a>. For the connector wiring, voltage-domain rules, and overall position of SPI in the v1 design, see <a href="edevkit1.html">edevkit1.html</a> §6.5.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Background</span>
+  <ol>
+    <li><a href="#what">What SPI is, and why it dominates flash and displays</a></li>
+    <li><a href="#wires">The four wires — SCK, MOSI, MISO, nCS</a></li>
+  </ol>
+  <span class="heading">The clocking model</span>
+  <ol>
+    <li><a href="#modes">CPOL &amp; CPHA — the four clock modes</a></li>
+    <li><a href="#bitorder">Bit order, word size, transaction shape</a></li>
+    <li><a href="#speed">Speed, setup/hold, the long-cable problem</a></li>
+  </ol>
+  <span class="heading">Topologies &amp; roles</span>
+  <ol>
+    <li><a href="#topologies">Topologies — star, daisy-chain, multi-IO</a></li>
+    <li><a href="#slave">Slave mode — when the MCU is the peripheral</a></li>
+    <li><a href="#sniffer">Sniffer mode — passively reading a live bus</a></li>
+  </ol>
+  <span class="heading">edevkit1 implementation</span>
+  <ol>
+    <li><a href="#edevkit">The edevkit1 SPI engine — PIO1 SM1+SM2</a></li>
+    <li><a href="#code">Code — Zephyr SPI API, master transaction</a></li>
+    <li><a href="#pitfalls">Common pitfalls &amp; first-time bugs</a></li>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="what">What SPI is, and why it dominates flash and displays</h2>
+
+<p>The <strong>Serial Peripheral Interface</strong> is a synchronous, full-duplex, four-wire serial bus that Motorola published as part of the 68HC11 microcontroller family in <strong>1979</strong>, and which has since become the lingua franca of board-level chip-to-chip communication. It is not a formal standard maintained by a standards body — there is no "SPI specification" the way there's a USB or Ethernet spec — it's a <em>de-facto</em> convention codified, slightly differently, in every datasheet that uses it. The Wikipedia page is currently the closest thing to a normative reference, and it is the one most chip vendors implicitly converge on.</p>
+
+<p>SPI's defining choices, all made in service of being the cheapest possible <em>fast</em> bus:</p>
+
+<ul>
+  <li><strong>Synchronous.</strong> A clock wire (SCK) is shared between master and slave; both shift bits on the agreed-upon clock edges. No baud-rate negotiation, no oversampling, no PLL recovery — the receiver simply latches what's on the data line at clock-edge time. This is what lets SPI scale to 50–133 MHz on a tiny board with no fancy I/O cells.</li>
+  <li><strong>Full-duplex.</strong> Two data wires, one in each direction (MOSI, MISO). Every clock edge moves a bit <em>in</em> and a bit <em>out</em> simultaneously, so a write and a read happen in the same clock cycle. Serial-flash command sets exploit this heavily — a 1-byte command shifted out is overlapped with 1 byte of don't-care shifted in, and then status bytes flow back on subsequent clocks while the master shifts dummy bytes.</li>
+  <li><strong>Push-pull (NOT open-drain).</strong> Both master and slave drive their data lines actively high or low through CMOS push-pull output stages. No pull-up resistors on data, no wired-AND, no slow rising edges. This is what gets you the speed — and it is also what fundamentally rules out multi-master SPI without external arbitration logic, because two masters trying to drive opposite levels on the same wire produce a short circuit.</li>
+  <li><strong>Master-slave, with selection by chip-select.</strong> Exactly one master drives the clock; one or more slaves listen. A per-slave <strong>chip-select</strong> (nCS, active-low) tells <em>which</em> slave should respond — every other slave keeps its MISO output tristated and ignores SCK.</li>
+  <li><strong>No addressing on the wire.</strong> Compare with I²C, where every transaction begins with a 7-bit slave address byte. SPI uses a dedicated nCS pin per slave, so the addressing happens at the GPIO layer — there are zero protocol bytes spent on it. This is one of the reasons SPI is faster in practice than I²C even at the same clock rate: you don't pay an address byte per transaction.</li>
+  <li><strong>No acknowledgment, no flow control, no error detection on the wire.</strong> Whatever bits arrive, the receiver believes. If you need integrity, you bake a CRC into the protocol layer above (every modern SPI flash command set does — see W25Q's CRC and JEDEC's SFDP).</li>
+</ul>
+
+<p>Those choices put SPI in a very specific niche. It dominates wherever you need <strong>fast, point-to-point, on-board chip-to-chip data transfer</strong> with low gate count on the slave side: boot/data flash (every modern MCU boots from SPI flash), TFT/OLED displays, SD-card-mode-1 transfers, high-rate IMUs and ADCs, Ethernet and Wi-Fi MACs as MCU peripherals (W5500, ESP-Hosted, ENC28J60), CAN controllers (MCP2518FD), pixel-driver chains (APA102, anything chained), DAC arrays. Anywhere I²C's 400 kHz / 1 MHz / 3.4 MHz feels limiting, SPI takes over.</p>
+
+<p>Conversely, SPI is a <em>terrible</em> choice for: longer-than-board distances (single-ended push-pull doesn't survive a metre of wire well), buses with many slaves (every slave wants its own nCS GPIO and its own routing channel), or anything needing ack/retry semantics (the protocol gives you nothing to build on).</p>
+
+<div class="callout info">
+  <span class="label">Mental model</span>
+  <strong>SPI is a pair of distributed shift registers clocked by a shared clock.</strong> Master and slave each have an internal 8-bit (or 16-bit, or 32-bit) shift register. SCK clocks them both in lock-step; on each edge, the master's MSB falls into the slave's LSB, and the slave's MSB falls into the master's LSB. After 8 clocks, the two registers have swapped contents. <em>That is the whole protocol.</em> Everything else — CPOL, CPHA, nCS, modes — is just convention about <em>which</em> clock edge does the latching and whether the wires idle high or low.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="wires">The four wires — SCK, MOSI, MISO, nCS</h2>
+
+<table>
+  <tr><th>Wire</th><th>Direction</th><th>Driven by</th><th>Idle state</th><th>Notes</th></tr>
+  <tr><td class="mono">SCK</td><td>master → slave</td><td>master (always)</td><td>CPOL-dependent (low if CPOL=0, high if CPOL=1)</td><td>Sometimes labeled SCLK or CLK in datasheets. Push-pull, never gated by the slave.</td></tr>
+  <tr><td class="mono">MOSI</td><td>master → slave</td><td>master</td><td>"don't care" (typically driven low when idle, but the slave ignores it while nCS is high)</td><td>Master Out, Slave In. Modern alternative naming: <strong>COPI</strong> (Controller Out, Peripheral In). Same wire, less inclusive-exclusive language.</td></tr>
+  <tr><td class="mono">MISO</td><td>slave → master</td><td>selected slave</td><td>tristated (Hi-Z) by every slave whose nCS is high</td><td>Master In, Slave Out. Modern alternative naming: <strong>CIPO</strong>. The slave <em>must</em> tristate this when not selected — otherwise two slaves on the same MISO net fight each other when both decide to drive.</td></tr>
+  <tr><td class="mono">nCS</td><td>master → slave</td><td>master, one per slave</td><td>high (deasserted)</td><td>Active-low. Often labeled SS, CS#, nSS, /CS, CSB. Falling edge typically marks "transaction start" and the rising edge marks "transaction end" — many slaves use the rising edge to commit a buffered command.</td></tr>
+</table>
+
+<h3 id="naming">A note on naming — MOSI/MISO vs COPI/CIPO</h3>
+
+<p>OSHWA, OSHPark, Adafruit, Sparkfun, and the Linux kernel have all adopted <strong>Controller / Peripheral</strong> terminology since 2020, mapping MOSI → COPI and MISO → CIPO. The wires are electrically identical; only the labels differ. Datasheets are mixed: most legacy chip datasheets still say MOSI/MISO; many newer reference designs and Linux DTS files say COPI/CIPO. <strong>edevkit1 silkscreen</strong> uses MOSI/MISO for compatibility with the larger body of existing datasheets, but firmware logs and CLI output accept and emit either spelling. When in doubt, the direction arrow on the schematic disambiguates.</p>
+
+<h3 id="why-active-low">Why nCS is active-low</h3>
+
+<p>Active-low select dates back to TTL-era logic where unconnected inputs floated high and you wanted "no slave selected" to be the default unconnected state. Modern CMOS doesn't care, but the convention is universal — every SPI slave datasheet you'll ever read assumes nCS active-low. Don't fight it; if your master GPIO peripheral only outputs active-high, invert it in software or with a discrete inverter.</p>
+
+<h3 id="hi-z-misos">Why MISO must be tristated</h3>
+
+<p>In a star topology with N slaves, all N MISO outputs are wired together to the master's MISO input. Only the selected slave is allowed to <em>drive</em> the line; the other N−1 must hold their MISO outputs in <strong>Hi-Z</strong> (high-impedance / tristated). If a slave fails to tristate (some cheap parts have a bug here, or worse, a strap-controlled "always-drive" mode), you get bus contention — two outputs fighting, wasted current, and corrupted data. <strong>This is the #2 reason a working slave seems to "stop responding" when you add a second slave to the same MISO line.</strong> (The #1 reason: forgetting to wire the new slave's nCS to a unique GPIO.)</p>
+
+<!-- =========================================================== -->
+<h2 id="modes">CPOL &amp; CPHA — the four clock modes</h2>
+
+<p>SPI has two clock-related parameters that the master and the slave <em>must</em> agree on, or nothing works:</p>
+
+<ul>
+  <li><strong>CPOL — clock polarity.</strong> What level SCK idles at. <code>CPOL=0</code> means SCK idles <em>low</em>; <code>CPOL=1</code> means SCK idles <em>high</em>.</li>
+  <li><strong>CPHA — clock phase.</strong> Which clock edge samples the data. <code>CPHA=0</code> means the receiver samples on the <em>first</em> (leading) edge of each clock cycle and the transmitter shifts on the <em>second</em> (trailing) edge. <code>CPHA=1</code> swaps that: shift on the leading edge, sample on the trailing edge.</li>
+</ul>
+
+<p>The two bits encode four "modes", numbered 0–3:</p>
+
+<table>
+  <tr><th>Mode</th><th>CPOL</th><th>CPHA</th><th>SCK idle</th><th>Sample edge</th><th>Where you'll see it</th></tr>
+  <tr><td><strong>0</strong></td><td>0</td><td>0</td><td>low</td><td>rising</td><td><strong>Default for ~80% of slaves</strong> — almost every SPI flash (W25Q, MX25), most TFT/OLED controllers, ADCs, IMUs (BMI270, LSM6DSO).</td></tr>
+  <tr><td><strong>1</strong></td><td>0</td><td>1</td><td>low</td><td>falling</td><td>Less common. Some audio codecs, occasional Microchip / TI parts.</td></tr>
+  <tr><td><strong>2</strong></td><td>1</td><td>0</td><td>high</td><td>falling</td><td>Less common. Some SD cards in SPI mode quirk into this; some legacy parts.</td></tr>
+  <tr><td><strong>3</strong></td><td>1</td><td>1</td><td>high</td><td>rising</td><td><strong>The other common one</strong> — SD cards in SPI mode after init, some SPI flash variants advertise both M0 and M3, and many power-management ICs prefer M3 because clock idles high (closer to the "bus inactive" Vdd state).</td></tr>
+</table>
+
+<div class="callout">
+  <span class="label">Practical rule</span>
+  If a datasheet just says "SPI" without specifying a mode, it almost always means <strong>Mode 0</strong>. If it shows a timing diagram with SCK idling <em>high</em>, it's probably <strong>Mode 3</strong>. The other two modes are rare enough that when you encounter one you'll know it from context. Many parts (most SPI flash) actually accept <em>both</em> Mode 0 and Mode 3 on the same pins — they observe the SCK level when nCS falls and pick accordingly.
+</div>
+
+<h3 id="mode-diagrams">Timing diagrams (one byte, MSB first)</h3>
+
+<p>The diagrams below show one full byte (8 SCK cycles) of MSB-first data. Tick marks <code>S</code> mark the <em>sample</em> edge — where the receiver latches the line. Ticks <code>X</code> mark where the transmitter <em>changes</em> the line.</p>
+
+<h4>Mode 0 — CPOL=0, CPHA=0 (idle low, sample on rising)</h4>
+<pre><code>          ┌──┐    ┌──┐    ┌──┐    ┌──┐    ┌──┐    ┌──┐    ┌──┐    ┌──┐
+SCK ──────┘  └────┘  └────┘  └────┘  └────┘  └────┘  └────┘  └────┘  └──── (idle low)
+          S↑       S↑       S↑       S↑       S↑       S↑       S↑       S↑
+
+MOSI ─X───┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────
+       b7│   b6   │   b5   │   b4   │   b3   │   b2   │   b1   │   b0   │
+         └────────┴────────┴────────┴────────┴────────┴────────┴────────┘
+       (master places first bit just before / on falling nCS, before first SCK rise)
+
+nCS  ───┐                                                              ┌─────
+        └──────────────────────────────────────────────────────────────┘
+        ↑                                                              ↑
+        falling edge: transaction start             rising edge: transaction end
+</code></pre>
+<p class="small">Mode 0 is the unambiguous default. The first MOSI bit must be valid <em>before</em> the first SCK rising edge — most controllers achieve this by setting MOSI on the <strong>falling</strong> edge of nCS itself, which gives ~½ SCK period of setup time before SCK starts toggling.</p>
+
+<h4>Mode 1 — CPOL=0, CPHA=1 (idle low, sample on falling)</h4>
+<pre><code>             ┌──┐    ┌──┐    ┌──┐    ┌──┐    ┌──┐    ┌──┐    ┌──┐    ┌──┐
+SCK ─────────┘  └────┘  └────┘  └────┘  └────┘  └────┘  └────┘  └────┘  └─── (idle low)
+                S↓       S↓       S↓       S↓       S↓       S↓       S↓       S↓
+
+MOSI ────────X───┬────────┬────────┬────────┬────────┬────────┬────────┬────────┐
+              b7│   b6   │   b5   │   b4   │   b3   │   b2   │   b1   │   b0   │
+                └────────┴────────┴────────┴────────┴────────┴────────┴────────┘
+            (master shifts on rising edge, slave samples on falling edge)
+
+nCS  ──────┐                                                                 ┌──
+           └─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p class="small">In Mode 1, MOSI changes on the <em>rising</em> edge (leading) and the slave samples on the <em>falling</em> edge (trailing). The first bit can be set up after nCS falls but before the first rising SCK edge.</p>
+
+<h4>Mode 2 — CPOL=1, CPHA=0 (idle high, sample on falling)</h4>
+<pre><code>         ─┐    ┌─┐    ┌─┐    ┌─┐    ┌─┐    ┌─┐    ┌─┐    ┌─┐    ┌─
+SCK       └────┘ └────┘ └────┘ └────┘ └────┘ └────┘ └────┘ └────┘   (idle high)
+          S↓     S↓     S↓     S↓     S↓     S↓     S↓     S↓
+
+MOSI ─X───┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────
+       b7│  b6  │  b5  │  b4  │  b3  │  b2  │  b1  │  b0  │
+         └──────┴──────┴──────┴──────┴──────┴──────┴──────┘
+
+nCS  ───┐                                                       ┌──────
+        └───────────────────────────────────────────────────────┘
+</code></pre>
+<p class="small">Mode 2 is the mirror image of Mode 0 — same "sample on the leading edge, shift on the trailing edge", but with SCK inverted. The leading edge is now <em>falling</em>.</p>
+
+<h4>Mode 3 — CPOL=1, CPHA=1 (idle high, sample on rising)</h4>
+<pre><code>         ─┐    ┌─┐    ┌─┐    ┌─┐    ┌─┐    ┌─┐    ┌─┐    ┌─┐    ┌─
+SCK       └────┘ └────┘ └────┘ └────┘ └────┘ └────┘ └────┘ └────┘   (idle high)
+                 S↑     S↑     S↑     S↑     S↑     S↑     S↑     S↑
+
+MOSI ────────X───┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐
+              b7│  b6  │  b5  │  b4  │  b3  │  b2  │  b1  │  b0  │
+                └──────┴──────┴──────┴──────┴──────┴──────┴──────┘
+
+nCS  ──────┐                                                       ┌──
+           └───────────────────────────────────────────────────────┘
+</code></pre>
+<p class="small">Mode 3 mirrors Mode 1. SCK idles high; the master shifts on the falling edge and the slave samples on the rising edge. SD cards in SPI mode are typically Mode 0 during init and may switch to Mode 3 for sustained transfers depending on the host.</p>
+
+<h3 id="mode-symptoms">What "wrong CPOL/CPHA" feels like</h3>
+
+<p>Getting CPOL/CPHA wrong is the <strong>universal first-time SPI bug</strong>. It manifests in three distinct ways depending on <em>which</em> bit you got wrong:</p>
+
+<table>
+  <tr><th>Symptom</th><th>Likely cause</th></tr>
+  <tr><td>You read all <code>0xFF</code> from MISO regardless of what you ask for.</td><td>Either MISO is floating (slave never drives because nCS is wrong), or your slave isn't even seeing the clock (CPOL inverted so the bus appears "always idle").</td></tr>
+  <tr><td>You read all <code>0x00</code>.</td><td>MISO is being held low somewhere — possibly by another slave that didn't tristate, or by a wrong-polarity nCS keeping the actual slave deselected.</td></tr>
+  <tr><td>You read data that looks <em>almost right</em> but is bit-shifted by exactly one bit. The first bit is junk; the rest is the previous byte's data offset by one position.</td><td><strong>CPHA off by one.</strong> You're sampling on the wrong edge, so each sample picks up the bit the transmitter is <em>about to</em> set, not the one it just finished setting.</td></tr>
+  <tr><td>Sometimes-right, sometimes-wrong, jittery results.</td><td>Either CPHA correct but you're at the edge of the timing budget (slow down clock and re-test), or you're hitting an SI issue on a long cable. See <a href="#speed">speed</a>.</td></tr>
+  <tr><td>First byte garbage, every subsequent byte fine.</td><td>The slave's "first bit" isn't ready before the first SCK edge — typical of slaves that need extra setup time on first transaction. Add a dummy byte at the start, or insert a brief delay between asserting nCS and starting SCK.</td></tr>
+</table>
+
+<div class="callout warn">
+  <span class="label">Debug recipe</span>
+  Hook a logic analyzer to all four wires before you write any driver code. Sigrok's <code>spi</code> decoder takes CPOL/CPHA as parameters and will <em>tell you</em> which mode the slave is operating in when you feed it a known-good capture. Spend the 10 minutes on the bench; it saves the 4 hours of guessing.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="bitorder">Bit order, word size, transaction shape</h2>
+
+<h3 id="bit-order">MSB-first vs LSB-first</h3>
+
+<p><strong>MSB-first is the default</strong> on probably 95% of all SPI slaves you'll meet — flash, displays, sensors, the lot. The master clocks out the most-significant bit first and the slave returns its data MSB-first. A few protocols (some legacy Microchip parts, a handful of TI ADCs, some MMC-mode-1 transfers) use LSB-first. Both master and slave hardware can usually be configured either way; the constraint is purely "you have to match what the slave expects".</p>
+
+<p>If you receive a byte that looks <em>bit-reversed</em> from what you expect (e.g. you write <code>0x80</code> and read back <code>0x01</code> when echoed through a loopback), that's the bit-order mismatch tell.</p>
+
+<h3 id="word-size">Word size — 8, 16, 32 bits</h3>
+
+<p>SPI hardware controllers usually let you pick a "word size" of 8, 16, or 32 bits. The word size determines:</p>
+
+<ul>
+  <li>How many SCK cycles a single FIFO push generates. A 16-bit word = 16 SCK edges.</li>
+  <li>Whether the controller toggles nCS between consecutive words (some do, some don't — controller-specific).</li>
+  <li>The width of the controller's TX/RX FIFOs in CPU words.</li>
+</ul>
+
+<p>For most flash and display work you'll use 8-bit words; the protocol byte stream is naturally byte-oriented. For high-rate ADCs or DACs that pack a 12-bit or 16-bit sample per transfer, 16-bit words let you push a full sample with one register write — half the FIFO pressure and half the interrupt rate.</p>
+
+<h3 id="transaction-shape">A multi-byte transaction</h3>
+
+<p>The standard shape of a one-master-one-slave SPI transaction:</p>
+
+<pre><code>1.  Master pulls nCS low.
+2.  Master clocks out N bytes on MOSI (and simultaneously receives N bytes on MISO).
+3.  Master releases nCS high.
+</code></pre>
+
+<p>Read-modify-write sequences typically split this into two halves: a "command + address" half where MOSI carries the data and MISO is don't-care, and a "read data" half where MOSI shifts dummy bytes (often <code>0xFF</code> or <code>0x00</code>) and MISO carries the slave's response. <strong>nCS stays low for the entire transaction.</strong> Many slaves — especially flash — interpret a <em>premature</em> nCS rise as "abort the command", and will not commit the operation. This is one of the more interesting gotchas: a buggy SPI controller that toggles nCS between every word will corrupt every multi-byte command on a flash chip.</p>
+
+<h3 id="flash-cmds">Reference — common SPI flash command codes</h3>
+
+<table>
+  <tr><th>Cmd</th><th>Mnemonic</th><th>Meaning</th><th>Bytes after cmd</th></tr>
+  <tr><td class="mono">0x9F</td><td>RDID / JEDEC ID</td><td>Read JEDEC manufacturer + device ID. Universal — always works.</td><td>3 dummy bytes (master shifts <code>0xFF</code>, reads back ID).</td></tr>
+  <tr><td class="mono">0x05</td><td>RDSR1</td><td>Read Status Register 1 (busy / WEL bits).</td><td>1 dummy byte read.</td></tr>
+  <tr><td class="mono">0x06</td><td>WREN</td><td>Set Write-Enable Latch — <em>required before every program/erase</em>.</td><td>none.</td></tr>
+  <tr><td class="mono">0x03</td><td>READ</td><td>Slow read (≤25 MHz typically). 24-bit address, then data.</td><td>3 addr + N data.</td></tr>
+  <tr><td class="mono">0x0B</td><td>FAST_READ</td><td>Fast read — same as READ but with one dummy byte for the slave to set up its output buffer.</td><td>3 addr + 1 dummy + N data.</td></tr>
+  <tr><td class="mono">0x02</td><td>PP</td><td>Page Program — write up to 256 bytes within one page boundary.</td><td>3 addr + ≤256 data.</td></tr>
+  <tr><td class="mono">0x20</td><td>SE</td><td>Sector Erase (4 KiB).</td><td>3 addr.</td></tr>
+  <tr><td class="mono">0xD8</td><td>BE</td><td>Block Erase (64 KiB).</td><td>3 addr.</td></tr>
+  <tr><td class="mono">0xC7</td><td>CE</td><td>Chip Erase — wipe the whole part. Slow; can take a minute on a 128 MB part.</td><td>none.</td></tr>
+  <tr><td class="mono">0x5A</td><td>RDSFDP</td><td>Read SFDP (Serial Flash Discoverable Parameters) — JEDEC-standard parameter table that tells the host the chip's full feature set.</td><td>3 addr + 1 dummy + N data.</td></tr>
+</table>
+
+<p class="small">These codes are common across nearly every JEDEC-compatible SPI flash (Winbond W25Q, Macronix MX25R/MX25L, Micron N25Q/MT25Q, Cypress S25FL, etc.). Higher-numbered commands are increasingly vendor-specific and you'll need the part datasheet. The <strong>RDID (0x9F)</strong> command is your "is this thing alive at all" sanity check — it's mandatory in every SPI flash and works in Mode 0 at any clock the host can drive.</p>
+
+<!-- =========================================================== -->
+<h2 id="speed">Speed, setup/hold, the long-cable problem</h2>
+
+<p>SPI's clock rate is bounded by three things, in order of which one usually bites first:</p>
+
+<ol>
+  <li><strong>Slave's max SCK frequency,</strong> per its datasheet. Most generic SPI flash is rated 50–104 MHz in single-IO mode; cheap displays cap at 20–25 MHz; high-end ADCs push 80–100 MHz. The slave's spec is the ceiling.</li>
+  <li><strong>Setup/hold time at the master's MISO input.</strong> The slave drives MISO some delay <code>t_v</code> after the previous SCK edge; the master needs MISO stable for <code>t_su</code> before the sampling edge. The relation is roughly <code>T_SCK ≥ 2 · (t_v + t_su + t_pcb)</code> where <code>t_pcb</code> is the round-trip flight time on the PCB or cable.</li>
+  <li><strong>Signal integrity</strong> — overshoot, ringing, reflections. Push-pull edges with no termination resistor produce ringing on anything more than a couple of inches; faster edges, longer wires, more ringing.</li>
+</ol>
+
+<h3 id="long-cables">The "long flex cable" problem</h3>
+
+<p>A 6-inch flex cable adds roughly 1 ns of one-way flight time. At 50 MHz, the SCK period is 20 ns; at 100 MHz, 10 ns. Once the round-trip time approaches the SCK half-period, the master is sampling MISO before the slave's response from the <em>previous</em> edge has even arrived. You'll see clean SCK and MOSI on a logic analyzer, but MISO will look right at low speeds and turn into garbage past some threshold — typically the same threshold across all transactions, suspiciously close to "round-trip-time = T_SCK/2".</p>
+
+<p><strong>Mitigation, in order of preference:</strong></p>
+
+<ul>
+  <li>Slow down. SPI is a synchronous bus — half the clock, half the throughput, but it almost always works. <code>10 MHz</code> on a sloppy cable beats <code>50 MHz</code> guess-and-pray.</li>
+  <li>Shorten the cable. Below ~3 inches you can run 50 MHz reliably with hand-soldered jumpers.</li>
+  <li>Use the controller's "sample-late" / "RX delay" feature if it exists. Many SoCs let you sample MISO N clock cycles after the nominal sample edge — this directly compensates for round-trip latency. RP2350's PIO programs can be written with the same technique.</li>
+  <li>Use shielded twisted-pair or differential signaling. Overkill for in-box, mandatory if you're crossing a chassis boundary.</li>
+</ul>
+
+<div class="callout warn">
+  <span class="label">edevkit1 cable rule</span>
+  The edevkit1 protocol header is rated for <strong>50 MHz QSPI / 100 MHz single-SPI on cables ≤4 inches.</strong> Above 4 inches, the firmware automatically reduces the maximum offered clock to 25 MHz unless overridden by <code>--no-cable-derate</code> in the CLI. You will see this reflected in <code>edevkit spi info</code>.
+</div>
+
+<h3 id="speed-table">Typical speed bands</h3>
+
+<table>
+  <tr><th>Speed</th><th>What works there</th></tr>
+  <tr><td><strong>≤1 MHz</strong></td><td>Anything, including slowest displays and hand-cabled breadboard rigs.</td></tr>
+  <tr><td><strong>1–10 MHz</strong></td><td>Most TFT displays at refresh-rate-safe speeds. SD cards in SPI mode bring-up.</td></tr>
+  <tr><td><strong>10–25 MHz</strong></td><td>Comfortable territory for SPI flash on hand-soldered protoboards. Fast TFT updates.</td></tr>
+  <tr><td><strong>25–50 MHz</strong></td><td>Production SPI flash speeds in single-IO mode. Requires good PCB layout — short traces, ground reference, no breadboards.</td></tr>
+  <tr><td><strong>50–104 MHz</strong></td><td>SPI flash datasheet-max in single-IO. Almost always run via DSPI or QSPI in production to halve / quarter the SCK rate (see <a href="proto_qspi.html">proto_qspi.html</a>).</td></tr>
+  <tr><td><strong>104–133 MHz</strong></td><td>Octal flash in DDR mode (data on both clock edges, effective 266 MT/s). Sample-and-delay tuning becomes mandatory.</td></tr>
+</table>
+
+<!-- =========================================================== -->
+<h2 id="topologies">Topologies — star, daisy-chain, multi-IO</h2>
+
+<h3 id="star">Star topology — one nCS per slave</h3>
+
+<pre><code>                    ┌─── nCS_A ───→  Slave A
+                    │
+   Master ──────────┼─── nCS_B ───→  Slave B
+                    │
+                    └─── nCS_C ───→  Slave C
+
+   SCK   ───────────────────────────→  (shared, all slaves)
+   MOSI  ───────────────────────────→  (shared, all slaves)
+   MISO  ←───────────────────────────  (shared; only selected slave drives)
+</code></pre>
+
+<p>The default and most common SPI topology. SCK, MOSI, MISO are bussed to every slave; each slave gets its own nCS GPIO from the master. Trade-off: the nCS pin count grows linearly with the number of slaves. With more than 4 slaves, this is when you start reaching for a 74HC138-style 3-to-8 decoder driven by 3 GPIOs.</p>
+
+<h3 id="daisy">Daisy-chain topology — slaves in series</h3>
+
+<pre><code>    Master ─── MOSI ───→ Slave_A.MOSI
+                          Slave_A.MISO ───→ Slave_B.MOSI
+                                              Slave_B.MISO ───→ Slave_C.MOSI
+                                                                  Slave_C.MISO ───→ Master.MISO
+
+    SCK    ──────────────→ shared by all slaves
+    nCS    ──────────────→ shared by all slaves (single chip-select for the chain)
+</code></pre>
+
+<p>The master clocks out N bytes (where N = number of slaves), and the bytes propagate through the chain. After N transactions, every slave has the byte the master originally intended for it. <strong>Only specific chips support this</strong> — TI's TLC5940 LED drivers, several DAC families, the WS2812-protocol shift-style chains, Maxim's MAX7219 display drivers. Most flash and sensor chips don't, because their MISO is computed from the command, not just shifted from the previous slave.</p>
+
+<p>Daisy-chain saves nCS GPIOs but increases latency proportional to chain length, and a single faulty slave breaks the whole chain. It's a niche topology that you should recognise but won't usually design from scratch.</p>
+
+<h3 id="multi-io">Multi-IO — DSPI, QSPI, OSPI</h3>
+
+<p>Modern SPI flash also defines <strong>multi-IO</strong> modes that use 2, 4, or 8 data pins simultaneously, all bidirectional, all driven by either the master or the slave depending on the transaction phase. These modes — Dual SPI, Quad SPI, Octal SPI — are out of scope for this document; they get their own treatment in <a href="proto_qspi.html">proto_qspi.html</a>. The basic clocking model (CPOL/CPHA, push-pull, nCS-bracketed) is identical; only the data lane width changes.</p>
+
+<!-- =========================================================== -->
+<h2 id="slave">Slave mode — when the MCU is the peripheral</h2>
+
+<p>Most of this doc assumes your MCU is the master. The reverse case — your MCU is the <em>slave</em> on someone else's bus — has its own rules and is the harder direction to get right.</p>
+
+<h3 id="slave-constraints">Constraints</h3>
+
+<ul>
+  <li><strong>You don't drive the clock.</strong> SCK arrives at whatever rate the master wants, including bursts faster than your CPU can handle byte-by-byte. You <em>must</em> use the SPI controller's hardware FIFO, DMA, or PIO buffer — interrupt-per-byte will not keep up at 10 MHz, let alone 50 MHz.</li>
+  <li><strong>Response time budget is tiny.</strong> When the master clocks out a request byte (e.g. "what's your status?"), the slave has typically <strong>≤2 SCK cycles</strong> to load the response into its TX FIFO. At 10 MHz that's 200 ns. Most slave-mode designs pre-load the next response based on the previous command.</li>
+  <li><strong>nCS edge marks transaction boundaries.</strong> The falling edge says "new transaction starts now"; the rising edge says "abort or commit". Slave firmware almost always wires nCS to a GPIO interrupt or PIO trigger so it can reset its byte-counter and command-decoder state machine on every transaction boundary.</li>
+  <li><strong>FIFO underflow → 0xFF / 0x00.</strong> If the slave can't produce the next response byte fast enough, the bus sends whatever the controller defaults to — usually <code>0xFF</code> on idle MISO. Masters interpret that as "slave returned 0xFF", which can be a valid value, so the failure is silent. Defensive masters CRC every response.</li>
+  <li><strong>Mode is set by the master.</strong> The slave has no say in CPOL/CPHA or clock rate; whatever the master is doing, the slave must match. Slave firmware that's auto-detecting CPOL is rare and brittle.</li>
+</ul>
+
+<h3 id="slave-uses">Where slave mode shows up</h3>
+
+<ul>
+  <li>An MCU acting as a co-processor (e.g. a sensor-fusion chip exposing data via SPI to a host SoC).</li>
+  <li>An MCU emulating an SPI flash chip — <strong>this is one of edevkit1's headline use-cases</strong>: emulate a W25Q128 to a target board for boot-time testing without burning a real chip.</li>
+  <li>An MCU acting as a CAN/BLE/WiFi bridge driven via SPI by a low-end host MCU.</li>
+  <li>Test fixtures that pretend to be a peripheral so the firmware-under-test can run on a bench rig.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="sniffer">Sniffer mode — passively reading a live bus</h2>
+
+<p>A sniffer is a third party on the bus that listens to all four wires (SCK, MOSI, MISO, nCS) without driving anything. It's invaluable for debugging two-party SPI failures where the only thing you can change is the observer.</p>
+
+<h3 id="sniffer-challenge">The sampling challenge</h3>
+
+<p>To capture every edge of an SPI transaction without missing or doubling bits, the sniffer must sample at <strong>at least 2× the SCK frequency</strong>, and ideally 4× to pick up SCK edges with margin against jitter. The Nyquist-style minimum is 2×; in practice 3–4× gives you a robust capture.</p>
+
+<p>That bound translates directly into "what clock the sniffer can possibly handle". A sniffer running on a 150 MHz processor or PIO state machine, sampling at 4× SCK, tops out around <strong>~37 MHz SPI</strong>. With 2× sampling and aggressive PIO programming you can stretch to <strong>~75 MHz SPI</strong> — but you lose timing margin and any clock asymmetry on SCK starts to break the capture.</p>
+
+<h3 id="sniffer-buffer">Where the data goes</h3>
+
+<p>Sniffed bytes get buffered into a large RAM ring (edevkit1 reserves up to 256 KiB of SRAM for protocol-tester capture buffers; see <a href="edevkit1.html">edevkit1.html</a> §4.2) and then DMA'd to the host over USB CDC. The producer (PIO) is faster than the consumer (USB FS at ~10 Mbps usable) on any sustained burst, so the buffer doubles as a back-pressure absorber. When it fills, edevkit firmware refuses to silently drop bytes — it raises a <code>BufferFull</code> condition, halts capture, and lets the user choose to slow the master, switch to USB HS (when added), or reduce the SCK rate.</p>
+
+<!-- =========================================================== -->
+<h2 id="edevkit">The edevkit1 SPI engine — PIO1 SM1 + SM2</h2>
+
+<p>edevkit1's SPI tester is one of the protocol engines defined in §6.5 of the v1 design spec. It's implemented entirely on the RP2350B's <strong>PIO1, state machines 1 and 2</strong> — see <a href="platform_pio.html">platform_pio.html</a> for the PIO programming model and instruction-set walkthrough. Using two state machines lets the engine run two roles concurrently: e.g. a master on SM1 plus a sniffer on SM2, or a slave-emulator on SM1 plus a sniffer on SM2.</p>
+
+<h3 id="edevkit-pins">Pin assignment</h3>
+
+<p>The protocol-test connector multiplexes 6 GPIOs (GPIO 6–11 on the RP2350B) as <em>SPI / DSPI / QSPI</em> in a single header. The pin meaning depends on which mode you've selected at config time:</p>
+
+<table>
+  <tr><th>GPIO</th><th>SPI (1-bit)</th><th>DSPI (2-bit)</th><th>QSPI (4-bit)</th></tr>
+  <tr><td class="mono">6</td><td>SCK</td><td>SCK</td><td>SCK</td></tr>
+  <tr><td class="mono">7</td><td>nCS</td><td>nCS</td><td>nCS</td></tr>
+  <tr><td class="mono">8</td><td>MOSI (IO0)</td><td>IO0</td><td>IO0</td></tr>
+  <tr><td class="mono">9</td><td>MISO (IO1)</td><td>IO1</td><td>IO1</td></tr>
+  <tr><td class="mono">10</td><td>—</td><td>—</td><td>IO2 (= nWP)</td></tr>
+  <tr><td class="mono">11</td><td>—</td><td>—</td><td>IO3 (= nHOLD)</td></tr>
+</table>
+
+<p>You will <strong>not</strong> find three separate connectors for SPI, DSPI, and QSPI on the edevkit1 PCB — that was a deliberate decision (see <a href="edevkit1.html">edevkit1.html</a> §15 decision log) to save board area, simplify cabling, and keep the firmware uniform. The downside is that the user has to tell the firmware which mode they want; the upside is one ribbon cable handles all three.</p>
+
+<h3 id="edevkit-modes">Three roles, configurable per-session</h3>
+
+<table>
+  <tr><th>Role</th><th>Behaviour</th><th>Top speed</th></tr>
+  <tr><td><strong>Master</strong></td><td>Drives SCK, MOSI, nCS; reads MISO. Clocks user-supplied byte streams or firmware-built command sequences (e.g. "read JEDEC ID then dump 4 KiB at offset 0").</td><td>100 MHz single-IO on ≤4" cables; 50 MHz QSPI; 25 MHz on longer cables (auto-derated, see callout above).</td></tr>
+  <tr><td><strong>Slave</strong></td><td>Listens for nCS-falling-edge, decodes incoming MOSI bytes against a YAML-defined profile (flash, sensor, modem), produces the matching MISO response in real time. Profiles live under <code>firmware/app/profiles/</code> — see <a href="edevkit1.html">edevkit1.html</a> §6.5 for the schema.</td><td>~25 MHz comfortably; up to ~50 MHz with profile-specific tuning (must pre-compute most responses).</td></tr>
+  <tr><td><strong>Sniffer</strong></td><td>All output drivers tristated; the PIO program just samples SCK, MOSI, MISO, nCS at the full PIO clock and reports edges over USB. Useful for capturing two-party transactions you don't control.</td><td>~37 MHz SCK with 4× oversampling; ~75 MHz SCK with 2× oversampling and aggressive PIO timing.</td></tr>
+</table>
+
+<h3 id="edevkit-cli">CLI examples</h3>
+
+<pre><code># bring the engine up as an SPI master in mode 0, 8-bit MSB-first, 25 MHz
+edevkit spi master --mode 0 --bits 8 --msb --hz 25000000
+
+# probe the slave's JEDEC ID (0x9F + 3 dummy reads)
+edevkit spi xfer 0x9F 0xff 0xff 0xff
+# → reads back: 0x9F 0xEF 0x40 0x18  (manufacturer + device id)
+
+# emulate a W25Q128 from the bundled profile
+edevkit spi slave --profile flash/w25q128
+
+# sniff someone else's bus passively
+edevkit spi sniff --hz-hint 10000000 --decode
+
+# concurrent: master on connector A + sniffer on connector B
+edevkit spi master --conn A --hz 10000000 &amp;
+edevkit spi sniff  --conn B
+</code></pre>
+
+<!-- =========================================================== -->
+<h2 id="code">Code — Zephyr SPI API, master transaction</h2>
+
+<p>The Zephyr SPI API is documented at the official site under <a href="https://docs.zephyrproject.org/latest/hardware/peripherals/spi.html">hardware/peripherals/spi</a>. The modern (post-3.0) idiomatic style uses devicetree-resolved specs (<code>struct spi_dt_spec</code>); the older direct-config style is still supported for cases where the slave isn't in the devicetree.</p>
+
+<h3 id="zephyr-dt">Devicetree binding for an SPI slave</h3>
+
+<pre><code>/* boards/rpi_pico2.overlay — declare a generic spi-device child of spi1 */
+
+&amp;spi1 {
+    status = "okay";
+    clock-frequency = &lt;25000000&gt;;
+    cs-gpios = &lt;&amp;gpio0 7 GPIO_ACTIVE_LOW&gt;;
+
+    flash0: w25q128@0 {
+        compatible = "jedec,spi-nor";
+        reg = &lt;0&gt;;
+        spi-max-frequency = &lt;50000000&gt;;
+        size = &lt;0x8000000&gt;;        /* 128 Mbit = 16 MiB */
+        jedec-id = [ ef 40 18 ];
+    };
+};
+</code></pre>
+
+<h3 id="zephyr-master">Master-side transaction in C</h3>
+
+<pre><code>/**
+ * @brief Read JEDEC ID from an SPI flash chip.
+ *
+ * Performs a single SPI transaction:
+ *   nCS↓  → 0x9F (cmd) → dummy 0xFF × 3 → nCS↑
+ * The slave responds on MISO with the 3-byte JEDEC ID after the
+ * command byte has been clocked in.
+ */
+#include &lt;zephyr/device.h&gt;
+#include &lt;zephyr/drivers/spi.h&gt;
+#include &lt;zephyr/logging/log.h&gt;
+
+LOG_MODULE_REGISTER(spi_demo, LOG_LEVEL_INF);
+
+/* Resolve the spi-device declared in the devicetree overlay above. */
+static const struct spi_dt_spec flash =
+    SPI_DT_SPEC_GET(DT_NODELABEL(flash0),
+                    SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB |
+                    SPI_WORD_SET(8) /* 8-bit words */,
+                    0 /* delay before/after, ns */);
+
+int spi_read_jedec_id(uint8_t out_id[3])
+{
+    uint8_t tx_buf[4] = { 0x9F, 0xFF, 0xFF, 0xFF };
+    uint8_t rx_buf[4] = { 0 };
+
+    const struct spi_buf tx = { .buf = tx_buf, .len = sizeof(tx_buf) };
+    const struct spi_buf rx = { .buf = rx_buf, .len = sizeof(rx_buf) };
+    const struct spi_buf_set tx_set = { .buffers = &amp;tx, .count = 1 };
+    const struct spi_buf_set rx_set = { .buffers = &amp;rx, .count = 1 };
+
+    if (!spi_is_ready_dt(&amp;flash)) {
+        LOG_ERR("SPI bus not ready");
+        return -ENODEV;
+    }
+
+    int rc = spi_transceive_dt(&amp;flash, &amp;tx_set, &amp;rx_set);
+    if (rc) {
+        LOG_ERR("spi_transceive failed: %d", rc);
+        return rc;
+    }
+
+    /* rx_buf[0] is don't-care (clocked while master sent 0x9F);
+     * rx_buf[1..3] hold the JEDEC ID. */
+    out_id[0] = rx_buf[1];   /* manufacturer */
+    out_id[1] = rx_buf[2];   /* device id high */
+    out_id[2] = rx_buf[3];   /* device id low / capacity */
+
+    LOG_INF("JEDEC ID = %02x %02x %02x",
+            out_id[0], out_id[1], out_id[2]);
+    return 0;
+}
+</code></pre>
+
+<p class="small">A few details worth noting in the snippet above. The <code>SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB | SPI_WORD_SET(8)</code> bitfield is how Zephyr encodes mode/order/word-size into a single <code>uint16_t</code>. <code>SPI_DT_SPEC_GET</code> resolves the cs-gpios + max-frequency from the devicetree node, so the C code never has to hard-code GPIO numbers. <code>spi_transceive_dt</code> drives MOSI from <code>tx_set</code> and captures MISO into <code>rx_set</code> in lock-step; passing <code>NULL</code> for either side is allowed if you don't need it.</p>
+
+<h3 id="raw-config">Direct (non-devicetree) configuration</h3>
+
+<p>If your slave isn't in the devicetree (e.g. a bench instrument hooked up at runtime), you can populate <code>struct spi_config</code> directly:</p>
+
+<pre><code>const struct device *spi_dev = DEVICE_DT_GET(DT_NODELABEL(spi1));
+struct spi_cs_control cs_ctrl = {
+    .gpio = GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(spi1), cs_gpios, 0),
+    .delay = 0,
+};
+struct spi_config cfg = {
+    .frequency = 1000000U,
+    .operation = SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB
+               | SPI_WORD_SET(8) | SPI_MODE_CPOL /* set for mode 2/3 */,
+    .cs        = cs_ctrl,
+};
+
+spi_transceive(spi_dev, &amp;cfg, &amp;tx_set, &amp;rx_set);
+</code></pre>
+
+<p>Setting <code>SPI_MODE_CPOL</code> alone gives you Mode 2; combined with <code>SPI_MODE_CPHA</code> you get Mode 3; neither flag → Mode 0; CPHA only → Mode 1. The full encoding is in <a href="https://docs.zephyrproject.org/apidoc/latest/group__spi__interface.html">Zephyr's SPI API documentation</a>.</p>
+
+<h3 id="cli-via-edevkit">Verifying with edevkit1 in the loop</h3>
+
+<p>If the target is misbehaving, the natural workflow is to put edevkit1 on the bus as a sniffer and capture exactly what the master and slave are doing wire-for-wire:</p>
+
+<pre><code># on the host, with edevkit1 wired to the target board's SPI bus
+edevkit spi sniff --hz-hint 25000000 --decode --output capture.csv
+
+# trigger the transaction on the target
+# (e.g. reset-and-boot, or a CLI command on your DUT)
+
+# stop the sniff with Ctrl-C and inspect
+column -s, -t capture.csv | head -50
+# → sees CMD=0x9F, then ID=ef 40 18 — confirms slave is alive
+</code></pre>
+
+<!-- =========================================================== -->
+<h2 id="pitfalls">Common pitfalls &amp; first-time bugs</h2>
+
+<table>
+  <tr><th>#</th><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+  <tr><td>1</td><td>Reads all <code>0xFF</code></td><td>nCS not asserted, slave never sees a transaction. Or MISO is floating because no slave is driving.</td><td>Logic-analyze nCS. Confirm GPIO polarity (active-low!). Confirm pin connection.</td></tr>
+  <tr><td>2</td><td>Reads all <code>0x00</code></td><td>MISO held low — possibly a second slave on the bus failing to tristate, or wrong-polarity nCS keeping the real slave deselected.</td><td>Disconnect every other slave. If the issue persists, your nCS is inverted.</td></tr>
+  <tr><td>3</td><td>Data shifted by one bit</td><td>CPHA wrong — sampling on the shift edge instead of the latch edge.</td><td>Toggle CPHA. Re-test. Half the time the datasheet timing diagram ends up actually being Mode 1, not Mode 0.</td></tr>
+  <tr><td>4</td><td>Data bit-reversed</td><td>Bit order mismatch (MSB vs LSB first).</td><td>Set the controller's transfer order to match the slave's datasheet, or bit-reverse in software at the protocol layer.</td></tr>
+  <tr><td>5</td><td>First byte garbage, rest fine</td><td>Slave hasn't loaded its first byte before the first SCK edge. Sometimes a "wakeup" issue.</td><td>Insert one dummy byte at the start of the transaction, or add a few microseconds of delay between nCS↓ and SCK starting.</td></tr>
+  <tr><td>6</td><td>Multi-byte command corrupts the slave</td><td>Master toggles nCS between bytes (controller bug or a misconfigured "auto-CS-per-word" mode).</td><td>Force the controller to hold nCS low for the entire transaction — usually a flag like <code>SPI_HOLD_ON_CS</code> or equivalent.</td></tr>
+  <tr><td>7</td><td>Works at 1 MHz, fails above 10 MHz</td><td>Cable length is killing your timing budget. Round-trip propagation now exceeds T_SCK/2.</td><td>Either shorten the cable, slow down, or enable controller-side RX-delay compensation.</td></tr>
+  <tr><td>8</td><td>Slave-mode underflow — master sees random <code>0xFF</code> in the stream</td><td>Your slave-mode firmware can't keep the TX FIFO fed. Common at &gt;5 MHz SCK with interrupt-per-byte.</td><td>Switch to DMA, hardware FIFO, or PIO. Pre-compute responses on the previous transaction's command-decode.</td></tr>
+  <tr><td>9</td><td>Adding a second slave breaks the first one</td><td>Second slave doesn't tristate MISO when deselected — bus contention.</td><td>Verify with a logic analyzer that MISO is Hi-Z when neither nCS is asserted. If not, return the second part to the vendor or add an external tristate buffer.</td></tr>
+  <tr><td>10</td><td>Random failures only when the radio / motor is on</td><td>SI / EMI. Push-pull edges plus an unshielded radio nearby.</td><td>Add ground reference between data lines, route SCK between two ground traces, slow down, or shield the cable.</td></tr>
+</table>
+
+<div class="callout good">
+  <span class="label">Triage order</span>
+  When SPI fails for the first time on new hardware, before you read any code: <strong>(a)</strong> verify with a multimeter that VCC is at the slave's pins; <strong>(b)</strong> verify with a logic analyzer that nCS goes low and SCK toggles; <strong>(c)</strong> with the analyzer's SPI decoder, set CPOL/CPHA to all four combinations until one decodes the JEDEC ID / device ID correctly. Then go fix the firmware to match what the analyzer told you. This sequence catches ~80% of "why doesn't my SPI work" before any debugger session.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<p>Once you've internalised the basics above, the resources below cover deeper or more practical territory.</p>
+
+<ol>
+  <li><strong><a href="https://learn.sparkfun.com/tutorials/serial-peripheral-interface-spi">Sparkfun — Serial Peripheral Interface (SPI) tutorial</a>.</strong> The classic introduction. Diagrams of all four modes, simple slave-vs-master sketches, the COPI/CIPO terminology rationale. Good 30-minute read for a beginner; good 5-minute refresher for an experienced engineer.</li>
+  <li><strong><a href="https://en.wikipedia.org/wiki/Serial_Peripheral_Interface">Wikipedia — Serial Peripheral Interface</a>.</strong> The closest thing to a normative reference for SPI. Covers all four modes, daisy-chain, multi-IO, history. Notably better-cited than most tutorials.</li>
+  <li><strong><a href="https://www.corelis.com/education/tutorials/spi-tutorial/">Corelis — SPI tutorial</a>.</strong> Short and timing-diagram-heavy; good if you want a second source for the CPOL/CPHA edge alignments.</li>
+  <li><strong><a href="https://www.totalphase.com/blog/2024/07/understanding-spi-clock-signals-polarity-phase-clock-edges-spi-modes/">Total Phase — Understanding SPI clock signals (2024)</a>.</strong> Modern, careful walk-through of the four modes with worked examples. Aligns with this doc's mode-numbering convention.</li>
+  <li><strong><a href="https://www.analog.com/en/resources/analog-dialogue/articles/introduction-to-spi-interface.html">Analog Devices — Introduction to SPI Interface</a>.</strong> ADI's house tutorial, with focus on ADC/DAC integration. Useful if you're hooking SPI to a high-rate analog part — ADI parts dominate that niche.</li>
+  <li><strong><a href="https://datasheets.raspberrypi.com/pico/raspberry-pi-pico-c-sdk.pdf">Raspberry Pi Pico C/C++ SDK — SPI chapter</a>.</strong> The canonical reference for the SPI hardware on the RP2040 and RP2350, including the controller register interface. Reading this together with <a href="platform_pio.html">platform_pio.html</a> covers both edevkit1's "real SPI controller" path and its PIO-implemented path.</li>
+  <li><strong><a href="https://docs.zephyrproject.org/latest/hardware/peripherals/spi.html">Zephyr — SPI bus documentation</a>.</strong> The Zephyr API used in the code snippets above, including <code>spi_transceive</code>, <code>spi_dt_spec</code>, devicetree bindings, and the operation-flag encoding.</li>
+  <li><strong>Winbond W25Q128JV datasheet</strong> and <strong>Macronix MX25R datasheet</strong>. The two most-shipped SPI flash families, both excellent reference command sets. If you only ever read one SPI flash datasheet, make it W25Q128JV — JEDEC IDs are <code>EF 40 18</code> for W25Q128 and <code>C2 28 18</code> for MX25R128, useful for sniffer-decode validation.</li>
+  <li><strong>JEDEC JESD216 — Serial Flash Discoverable Parameters (SFDP).</strong> The standard for "ask the chip what it can do" via the <code>0x5A</code> command. Mandatory reading before writing a generic SPI flash driver that has to support unknown parts.</li>
+  <li><strong><a href="edevkit1.html">edevkit1.html</a> §6.5 (protocol engines)</strong> and <strong>§4.2 (capture buffers).</strong> The v1 design spec sections that locate SPI in the broader edevkit1 architecture. Always re-read these before changing the SPI engine — they encode constraints the code is expected to respect.</li>
+  <li><strong>Sister docs in this hub:</strong> <a href="proto_uart.html">proto_uart.html</a>, <a href="proto_i2c.html">proto_i2c.html</a>, <a href="proto_qspi.html">proto_qspi.html</a>, <a href="platform_pio.html">platform_pio.html</a>.</li>
+</ol>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="proto_qspi.html"><span class="dir">← Previous</span><span class="cat">Protocols</span><span class="title">QSPI / Dual / Quad / Octal SPI</span></a>
+<a class="next" href="proto_uart.html"><span class="dir">Next →</span><span class="cat">Protocols</span><span class="title">UART asynchronous serial</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit · tools/web/pages/proto_spi.html · cross-references the <a href="edevkit1.html">edevkit1 design spec</a> §6.5 and the <a href="platform_pio.html">PIO platform doc</a>. Update this file when the SPI engine's role-set, pin map, or speed envelope changes — it's the user-facing reference for the protocol tester's SPI mode.
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script>
+(function () {
+  // theme toggle (light → dark → system → light)
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  function eff() {
+    var t = localStorage.getItem(key);
+    if (t === 'dark' || t === 'light') return t;
+    return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  // scroll-to-top
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  // hide back-to-hub when opened directly via file:// (no hub running)
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  // T toggles theme outside form fields
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body>
+</html>

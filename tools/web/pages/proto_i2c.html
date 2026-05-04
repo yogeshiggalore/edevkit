@@ -1,0 +1,1303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — I²C bus protocol</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A focused reference on the I²C bus: electrical model, frame structure, addressing, repeated-START, clock stretching, multi-master arbitration, SMBus/PMBus, sniffer mode, and how edevkit1 implements I²C master/slave/sniffer in PIO on the RP2350B (PIO1 SM0, GPIO4/5).">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    /* graticule background — top-faded so it doesn't overwhelm */
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar (sticky nav + theme toggle) ────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── OS cards (Linux / macOS / Windows) ────────────────────────────── */
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  /* ── numbered step ─────────────────────────────────────────────────── */
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── checklist ─────────────────────────────────────────────────────── */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  // pre-paint theme — prevents FOUC
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">I²C protocol</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · protocols · I²C</div>
+  <h1>I²C — the two-wire bus, end to end</h1>
+  <p class="small">A focused reference on <strong>I²C</strong> (Inter-Integrated Circuit), the open-drain two-wire bus invented at Philips in 1982 and still the dominant on-board chip-to-chip interconnect on modern PCBs. This document covers what every embedded engineer needs to know to read the bus on a logic analyser, drive it from firmware, write a soft-slave, sniff someone else's traffic, and avoid the half-dozen footguns that bite everyone exactly once. It also documents how <strong>edevkit1</strong> implements its I²C engine — master, slave, and sniffer — on a single PIO state machine of the RP2350B.</p>
+  <p class="small"><strong>How this fits into the docs hub.</strong> Sister protocol docs: <a href="proto_uart.html">proto_uart.html</a> (asynchronous serial — UART) and <a href="proto_spi.html">proto_spi.html</a> (synchronous serial — SPI/QSPI). The PIO programs that implement all three on edevkit1 are described in <a href="platform_pio.html">platform_pio.html</a>. The board-level pin-out, voltage domains, and protocol-tester connector live in <a href="edevkit1.html">edevkit1.html</a> §6 (I/O subsystem) and §11 (protocol tester).</p>
+  <p class="small"><strong>Audience.</strong> A firmware engineer who has bit-banged or dealt with I²C before, but wants the full picture: why the bus is open-drain, why pull-ups matter, what clock stretching actually does to your driver, what arbitration looks like on the wire, and what edevkit1's PIO engine lets you do that a stock hardware controller cannot. Read top-to-bottom on first pass; jump to <a href="#engine">edevkit1's I²C engine</a> if you already know the protocol cold.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Foundations</span>
+  <ol>
+    <li><a href="#about">What I²C is</a></li>
+    <li><a href="#electrical">Electrical model — open-drain, pull-ups, capacitance</a></li>
+    <li><a href="#speeds">Speed grades — Standard, Fast, Fast+, HS, Ultra-Fast</a></li>
+  </ol>
+  <span class="heading">Protocol</span>
+  <ol>
+    <li><a href="#frame">Frame structure — START, address, data, ACK, STOP</a></li>
+    <li><a href="#addressing">7-bit vs 10-bit addressing &amp; reserved addresses</a></li>
+    <li><a href="#repeated-start">Repeated START</a></li>
+    <li><a href="#stretching">Clock stretching</a></li>
+    <li><a href="#arbitration">Multi-master arbitration</a></li>
+    <li><a href="#smbus">SMBus and PMBus — I²C with extra rules</a></li>
+  </ol>
+  <span class="heading">Tooling &amp; edevkit</span>
+  <ol>
+    <li><a href="#sniffer">Sniffer mode — passive bus capture</a></li>
+    <li><a href="#engine">edevkit1's I²C engine (PIO1 SM0)</a></li>
+    <li><a href="#zephyr">Driving I²C from Zephyr — worked example</a></li>
+  </ol>
+  <span class="heading">Pitfalls &amp; references</span>
+  <ol>
+    <li><a href="#pitfalls">Common pitfalls</a></li>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="about">What I²C is</h2>
+
+<p><strong>I²C</strong> — pronounced "eye-squared-see" or "eye-two-see", written either <em>I²C</em>, <em>I2C</em>, or (in newer NXP docs) <em>I3C</em>'s ancestor — is a synchronous half-duplex multi-drop bus invented at <strong>Philips Semiconductors</strong> (now NXP) in <strong>1982</strong>. It was designed to let a TV's microcontroller talk to a handful of audio/video chips on the same PCB without burning a parallel-bus pin-count budget. Forty-plus years later it is still the bus you reach for whenever you need to wire a sensor, EEPROM, RTC, port expander, fuel gauge, OLED, or system controller to an MCU on a circuit board, and the bus you'll encounter on absolutely every embedded platform you ever touch.</p>
+
+<p>The wire-level idea is small enough to fit on a postcard:</p>
+
+<ul>
+  <li><strong>Two wires.</strong> <code>SDA</code> (serial data) and <code>SCL</code> (serial clock). Plus a shared ground. That is the entire bus.</li>
+  <li><strong>Open-drain.</strong> Every device on the bus pulls lines <em>low</em>; nobody ever drives them <em>high</em>. The lines float to logic-high through external pull-up resistors (one on SDA, one on SCL) tied to the bus reference voltage.</li>
+  <li><strong>Multi-drop.</strong> Many slaves and (optionally) many masters share the same two wires. Each slave has a 7-bit (or 10-bit) address; the master selects which slave to talk to by emitting that address.</li>
+  <li><strong>Master-driven clock.</strong> The master generates SCL. Slaves are synchronous to it — though slaves can <em>stretch</em> the clock by holding SCL low, which we'll cover below.</li>
+  <li><strong>Byte-oriented with mandatory ACK.</strong> Data flows in 8-bit bytes, MSB first, and each byte is followed by a single ACK or NAK bit driven by the receiver of that byte.</li>
+</ul>
+
+<div class="callout info">
+  <span class="label">key idea</span>
+  <strong>Open-drain is the secret to everything I²C does.</strong> Multi-master arbitration, clock stretching, and the ability to hot-add or reset a single device on the bus all fall out of the wired-AND topology that open-drain gives you. There is no scenario in I²C where <em>"both sides drove the wire and one of them won"</em> — instead, the wire goes low if <em>any</em> device pulls it down, and high only if <em>everyone</em> agrees to release it. That single property is the load-bearing assumption behind the rest of the spec.
+</div>
+
+<p>The protocol is canonically defined in <a href="https://www.nxp.com/docs/en/user-guide/UM10204.pdf">NXP UM10204</a> (the <em>I²C-bus specification and user manual</em>, currently <strong>Rev 7.0, October 2021</strong>). That PDF is 64 pages and is the source of truth for everything you'll read here; if you're going to do I²C work seriously, downloading it once and grepping it occasionally pays off forever.</p>
+
+<h3 id="why-open-drain">Why open-drain (and why pull-ups are mandatory)</h3>
+
+<p>If both lines were push-pull, two devices driving simultaneously — even by accident — would short Vcc to GND through their output stages and one of them would smoke. With open-drain, the worst case is "both pull low at the same time"; the line just stays low and nobody is harmed. From there:</p>
+
+<ul>
+  <li><strong>Wired-AND.</strong> The bus voltage on either line is logically <code>AND</code> of every device's output. If <em>any</em> device drives low, the line is low. The line goes high only when every device has released it. This is what enables arbitration (§7) and clock stretching (§6).</li>
+  <li><strong>Hot-plug-tolerant.</strong> Adding or removing a device while the bus is idle does not damage anything — the new device's input transistor is in cutoff until the master asserts SCL/SDA. No bus-contention failure mode exists.</li>
+  <li><strong>Mixed-voltage tolerant (with a translator).</strong> A 5 V master and a 3.3 V slave can share the bus through a level translator (PCA9306, PCA9517, NTS0102, etc.), because the lines are never <em>pushed</em> high by anyone — they're <em>let</em> high by the rail's pull-up. That makes voltage translation a passive switch, not an active driver.</li>
+</ul>
+
+<p>The <strong>pull-up resistor is not optional.</strong> Without it the line never reaches logic-high; data is undefined and the bus appears stuck low. Every I²C bus needs exactly one pair of pull-ups <em>somewhere</em> on the bus — usually next to the master, sometimes built into a sensor breakout (in which case removing the on-board jumper is your responsibility on populated boards).</p>
+
+<h4>Pull-up sizing — the rise-time rule</h4>
+
+<p>The pull-up value is set by a tug-of-war between two opposing constraints, and there is exactly one variable that controls both: <strong>bus capacitance</strong> <code>C<sub>b</sub></code>, which is the sum of all devices' input capacitance plus the trace capacitance, typically 50–400 pF on a real board.</p>
+
+<table>
+  <thead>
+    <tr><th>Constraint</th><th>Direction</th><th>Why</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Rise time <code>t<sub>r</sub></code> ≈ 0.85 × R × C<sub>b</sub></td><td>Wants R <em>small</em></td><td>Spec caps t<sub>r</sub> at 1000 ns @ 100 kHz, 300 ns @ 400 kHz, 120 ns @ 1 MHz, 80 ns @ 3.4 MHz</td></tr>
+    <tr><td>Sink current ≤ 3 mA per device (per UM10204 §7.1)</td><td>Wants R <em>large</em></td><td>R<sub>min</sub> = (V<sub>DD</sub> − V<sub>OL,max</sub>) / 3 mA. At 3.3 V that's ~1.1 kΩ; at 5 V, ~1.6 kΩ.</td></tr>
+  </tbody>
+</table>
+
+<p>Practical rule-of-thumb values that work on most boards:</p>
+
+<table>
+  <thead>
+    <tr><th>Speed</th><th>Typical R<sub>pull-up</sub> at 3.3 V</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>100 kHz (Standard)</td><td>4.7 kΩ</td><td>Forgiving; fine even with 200 pF of bus capacitance</td></tr>
+    <tr><td>400 kHz (Fast)</td><td>2.2 kΩ</td><td>Drop further if bus is heavily loaded</td></tr>
+    <tr><td>1 MHz (Fast+)</td><td>1.0–1.5 kΩ</td><td>Approaching the 3 mA sink limit; verify with scope</td></tr>
+    <tr><td>3.4 MHz (HS)</td><td>Active current source recommended</td><td>Pure-resistive pull-ups can't meet t<sub>r</sub>; need an HS-mode bridge chip or current-source bias</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <span class="label">scope this</span>
+  If the SCL or SDA waveform looks <em>rounded on the way up</em> (RC-charging shape) and <em>sharp on the way down</em>, your pull-up is too weak (resistor too large) or your bus capacitance is too high. The fix is either a smaller pull-up (down to the sink-current limit) or fewer devices/shorter traces. A device that "works at 100 kHz but glitches at 400 kHz" is almost always this exact problem — same hardware, same firmware, different ramp time.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="electrical">Electrical model — open-drain, pull-ups, capacitance</h2>
+
+<p>The full electrical picture of a single I²C line looks like this:</p>
+
+<pre><code>            VDD (3.3 V or 5 V or 1.8 V — the bus reference)
+             │
+            ┌┴┐
+            │ │  R_pullup   (one of these on SDA, one on SCL)
+            │ │
+            └┬┘
+             │
+             ●──────────●──────────●──────────●──────────●  ← bus line (SDA or SCL)
+             │          │          │          │          │
+           ┌─┴─┐      ┌─┴─┐      ┌─┴─┐      ┌─┴─┐      ┌─┴─┐
+           │OD │      │OD │      │OD │      │OD │      │OD │  open-drain output
+           │ M │      │S1 │      │S2 │      │S3 │      │S4 │  per device
+           └─┬─┘      └─┬─┘      └─┬─┘      └─┬─┘      └─┬─┘
+             │ GND      │ GND      │ GND      │ GND      │ GND
+            ───        ───        ───        ───        ───
+
+  Each device's input is a high-Z buffer (also tapped off the line).
+  The line voltage = VDD if every OD is OFF.
+  The line voltage ≈ V_OL (typically &lt;0.4 V) if any OD is ON.
+</code></pre>
+
+<p>The behaviour you actually care about, in firmware:</p>
+
+<ul>
+  <li>To drive a "0", configure the GPIO as <strong>open-drain output, value=0</strong>. To drive a "1", switch back to <strong>input (high-Z)</strong> and let the pull-up bring the line up.</li>
+  <li>The line's "real" value is whatever you read back on the input. You wrote a 1, but the line is still 0? Either the pull-up failed (broken hardware) or someone else is asserting the line (clock-stretching, arbitration, or another master).</li>
+  <li>If you write a 0 and read back a 0, that's expected. If you write a 1 and read back a 1, that's expected. The interesting case — and the one that distinguishes I²C from any push-pull bus — is <strong>write 1, read 0</strong>. That single condition signals stretching, arbitration loss, or hardware fault, and almost every "smart" I²C feature is built on detecting it.</li>
+</ul>
+
+<h3 id="bit-on-wire">Bit transmission — what one bit looks like</h3>
+
+<p>One bit on the wire takes one full SCL cycle. The transmitter (master or slave, depending on which way the byte is going) sets SDA <em>while SCL is low</em>; the receiver samples SDA <em>on SCL's rising edge</em>; SDA must remain stable until SCL falls again.</p>
+
+<pre><code>      ___           ___           ___
+SCL _/   \_________/   \_________/   \___
+                ↑              ↑
+        sample bit N    sample bit N+1
+        (rising edge)   (rising edge)
+
+       _________________________
+SDA __/   bit N    \    bit N+1     \____
+       (set while SCL low)
+       (must be stable while SCL high)
+</code></pre>
+
+<p>Said in spec language: <em>SDA must not change while SCL is high</em>. That single rule has a consequence — any SDA transition <em>while</em> SCL is high is special, and the protocol uses exactly two such transitions as framing markers: <strong>START</strong> (SDA falls while SCL is high) and <strong>STOP</strong> (SDA rises while SCL is high). Everything else is data.</p>
+
+<!-- =========================================================== -->
+<h2 id="speeds">Speed grades — Standard, Fast, Fast+, HS, Ultra-Fast</h2>
+
+<p>The I²C spec defines five speed modes. In practice you'll only ever encounter the first three on a real board; the latter two require special master IP and are rare outside power-management ICs and laptop battery sub-buses.</p>
+
+<table>
+  <thead>
+    <tr><th>Mode</th><th>Max f<sub>SCL</sub></th><th>Year added</th><th>Direction</th><th>Output stage</th><th>Clock stretching?</th><th>Where you see it</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Standard-mode (Sm)</td><td class="mono">100 kHz</td><td>1982</td><td>Bidirectional</td><td>Open-drain</td><td class="center"><span class="badge ok">yes</span></td><td>Most general-purpose sensors, EEPROMs, RTCs</td></tr>
+    <tr><td>Fast-mode (Fm)</td><td class="mono">400 kHz</td><td>1992</td><td>Bidirectional</td><td>Open-drain</td><td class="center"><span class="badge ok">yes</span></td><td>The default for almost everything modern</td></tr>
+    <tr><td>Fast-mode Plus (Fm+)</td><td class="mono">1 MHz</td><td>2007</td><td>Bidirectional</td><td>Open-drain (stronger)</td><td class="center"><span class="badge ok">yes</span></td><td>Fast EEPROMs, high-rate IMUs, OLED controllers</td></tr>
+    <tr><td>High-speed mode (Hs)</td><td class="mono">3.4 MHz</td><td>1998</td><td>Bidirectional</td><td>Open-drain w/ current source</td><td class="center"><span class="badge part">limited</span></td><td>High-end sensor hubs, some camera control buses</td></tr>
+    <tr><td>Ultra Fast-mode (UFm)</td><td class="mono">5 MHz</td><td>2012</td><td><strong>Unidirectional</strong> (write only)</td><td><strong>Push-pull</strong></td><td class="center"><span class="badge no">no</span></td><td>RGB LED drivers, simple display panels — write-only</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <span class="label">note</span>
+  <strong>Ultra Fast-mode is barely I²C.</strong> It's push-pull, write-only, no ACKs in the conventional sense, and no clock stretching. NXP added it to support display/LED controller use cases that wanted I²C-like framing without I²C's electrical overhead. If you see "UFm I²C" in a datasheet, treat it as a separate bus discipline that happens to share start/stop framing with classical I²C. Don't try to put it on the same wire as a Standard-mode device.
+</div>
+
+<h3 id="speed-arbitration-window">The arbitration window</h3>
+
+<p>The bus's <em>actual</em> running speed is set by the slowest participant. If you configure your master for 1 MHz but a slave can only handle 400 kHz, one of three things happens:</p>
+
+<ol>
+  <li>If the slave supports clock stretching, it'll hold SCL low until it can keep up — the bus throttles to whatever rate the slave's worst-case stretch allows. (Often this means the slave de-facto sets the clock for that transaction.)</li>
+  <li>If the slave doesn't support stretching, it will simply fail to set up SDA in time — you'll get bit errors, NAKs, or garbage data. The transaction "works" electrically but the slave isn't actually decoding the transfer.</li>
+  <li>If the master is hardware-rigid and ignores stretching (some early STM32 controllers were like this), the slave gets no protection. Reads return stale data; writes get accepted partially. This is the most insidious failure mode and the reason "this sensor doesn't work on this MCU" bug reports exist.</li>
+</ol>
+
+<p>Practical guidance: <strong>most real-world I²C is run at 100 kHz or 400 kHz.</strong> Going to Fast+ requires checking every device datasheet on the bus; going to Hs requires hardware that explicitly supports it (you'll know — there will be a separate set of pads and a master code byte). Don't push a generic sensor bus past 400 kHz without scoping the lines first.</p>
+
+<!-- =========================================================== -->
+<h2 id="frame">Frame structure — START, address, data, ACK, STOP</h2>
+
+<p>An I²C transaction is a sequence of well-defined moves on the bus:</p>
+
+<ol>
+  <li><strong>START condition.</strong> Master pulls SDA low while SCL is still high. This is the only legal SDA-falling-while-SCL-high transition; it tells everyone "a transaction is starting".</li>
+  <li><strong>Address byte.</strong> 7 address bits (MSB first) followed by 1 R/W bit (0 = master writes, 1 = master reads). Sent on SDA, clocked by SCL.</li>
+  <li><strong>Address ACK.</strong> Master releases SDA on the 9th SCL pulse; the addressed slave pulls SDA low to acknowledge. If no slave at that address, SDA stays high (NAK).</li>
+  <li><strong>Data bytes.</strong> Repeated 8 bits + 1 ACK bit, indefinitely until master decides the transaction is over. Direction is fixed by the R/W bit in the address: in a write, master drives data and slave ACKs; in a read, slave drives data and master ACKs (or NAKs the final byte to signal "I'm done").</li>
+  <li><strong>STOP condition.</strong> Master releases SDA <em>after</em> releasing SCL, so SDA rises while SCL is high. Bus is now free; another master could grab it.</li>
+</ol>
+
+<h3 id="frame-diagram">Full frame, on the wire</h3>
+
+<p>Concrete example: master writes <code>0x42 0x55</code> to slave at 7-bit address <code>0x50</code>. The on-the-wire bit pattern is:</p>
+
+<pre><code>             address byte                 data byte 0           data byte 1
+        ┌─────────────────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+        │ A6 A5 A4 A3 A2 A1 A0 R/W  A │  │ D7..D0         A │  │ D7..D0         A │
+        │  1  0  1  0  0  0  0   0  K │  │ 0100 0010      K │  │ 0101 0101      K │
+        └─────────────────────────────┘  └──────────────────┘  └──────────────────┘
+START                                                                              STOP
+  S    1  0  1  0  0  0  0   0   A    0  1  0  0  0  0  1  0   A   0  1  0  1  0  1  0  1   A    P
+
+SDA ‾\__‾‾‾_______________________   _____‾‾___________________   _____‾___‾___‾___‾___‾___    __/‾‾‾
+                 (8 address bits) (slv (8 data bits)         (slv (8 data bits)         (slv
+                                  ACK)                       ACK)                       ACK)
+
+SCL ‾‾‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾_‾‾‾
+       1  2  3  4  5  6  7  8  9      1  2  3  4  5  6  7  8  9      1  2  3  4  5  6  7  8  9
+       │            address           │       data byte 0             │       data byte 1     │
+       │       (R/W=0 means write)    │                               │                       │
+       └────── 9 SCL pulses ──────────┴─── 9 SCL pulses ──────────────┴── 9 SCL pulses ───────┘
+</code></pre>
+
+<p>A few subtleties this diagram makes plain:</p>
+
+<ul>
+  <li><strong>Each byte is 9 SCL pulses, not 8.</strong> The 9th pulse is for the ACK. New developers staring at a logic-analyser capture sometimes miscount and "lose" bits; if you count 9-clock groups instead of 8-clock groups you'll never go wrong.</li>
+  <li><strong>The address byte and the data byte are structurally identical on the wire.</strong> They're both 8 bits + 1 ACK. The only way to know which is which is to count from the most recent START. A sniffer that joins mid-transaction can't distinguish address-vs-data without resync — see <a href="#sniffer">§ Sniffer mode</a>.</li>
+  <li><strong>The R/W bit is part of the address byte.</strong> When you read a datasheet and see "I²C address 0xA0/0xA1", that's the 8-bit version: 0xA0 = (0x50 &lt;&lt; 1) | 0 (write), 0xA1 = (0x50 &lt;&lt; 1) | 1 (read). The 7-bit address is <code>0x50</code>. Vendor datasheets are inconsistent about which form they print; this is the single most common source of "my driver returns NAK" bugs in junior code. See <a href="#pitfalls">§ Pitfalls</a>.</li>
+</ul>
+
+<h3 id="start-stop">START and STOP — the only special transitions</h3>
+
+<p>Zoomed in:</p>
+
+<pre><code>      START condition                       STOP condition
+          ___                                   _________
+SCL ____/   \___________               __/   \________________
+                                                  ____________
+SDA ‾‾‾\______________________         _________/
+        ↑                                       ↑
+   SDA falls WHILE                          SDA rises WHILE
+   SCL is HIGH                              SCL is HIGH
+</code></pre>
+
+<p>Both are <em>illegal</em> transitions during a normal data byte (recall: SDA must not change while SCL is high). The protocol "steals" the two SDA-changing-while-SCL-high transitions to use as framing markers, and that's why the rule exists in the first place.</p>
+
+<!-- =========================================================== -->
+<h2 id="addressing">7-bit vs 10-bit addressing &amp; reserved addresses</h2>
+
+<h3 id="addr-7bit">7-bit addressing</h3>
+
+<p>The dominant convention. The first byte after START is <code>AAAAAAA · R/W</code>: 7 address bits MSB-first, then the read/write bit. Total address space is 128 (2^7), but with reserved ranges only about <strong>112 addresses</strong> are usable for real slaves (range <code>0x08..0x77</code> inclusive).</p>
+
+<h3 id="addr-10bit">10-bit addressing</h3>
+
+<p>Added later for cases where 112 slaves on one bus isn't enough (rare, but happens in laptops and some industrial controllers). 10-bit addressing escapes through a reserved 7-bit prefix:</p>
+
+<pre><code>         first byte                second byte         optional data
+       ┌──────────────────────┐  ┌──────────────────┐  ┌──────────────┐
+START  │ 1 1 1 1 0 A9 A8 R/W │A │ A7 A6..A0          │A │ data         │A│  ...  STOP
+       └──────────────────────┘  └──────────────────┘  └──────────────┘
+       ↑       ↑       ↑
+       fixed   high 2  R/W of
+       prefix  bits of the eventual
+       11110xx addr    transaction
+</code></pre>
+
+<p>10-bit slaves listen on the <code>0x78..0x7B</code> reserved 7-bit-equivalent range. A 10-bit-address-aware master sends two address bytes; a 7-bit-only master never emits the <code>11110xx</code> prefix and so can't accidentally collide. 10-bit and 7-bit slaves can therefore co-exist on the same bus, and most real-world buses simply never use 10-bit addressing at all.</p>
+
+<h3 id="addr-reserved">Reserved addresses</h3>
+
+<p>Per UM10204 §3.1.12, the I²C spec carves out two blocks of reserved 7-bit addresses at either end of the range. Real slaves must avoid these.</p>
+
+<table>
+  <thead>
+    <tr><th>7-bit address</th><th>R/W</th><th>Reserved for</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="mono">0x00</td><td class="mono">0</td><td>General call</td><td>Broadcast write — all slaves listen, optionally respond. Used for "reset everyone" or programming a soft-address.</td></tr>
+    <tr><td class="mono">0x00</td><td class="mono">1</td><td>START byte</td><td>An address with R/W=1 is illegal here; the byte 0x01 (after START) is "START byte" — a power-saving polling helper.</td></tr>
+    <tr><td class="mono">0x01</td><td class="mono">x</td><td>CBUS-compatible</td><td>For CBUS legacy compatibility; nobody uses CBUS in 2026.</td></tr>
+    <tr><td class="mono">0x02</td><td class="mono">x</td><td>Reserved (other bus formats)</td><td>Avoid.</td></tr>
+    <tr><td class="mono">0x03</td><td class="mono">x</td><td>Reserved</td><td>Avoid.</td></tr>
+    <tr><td class="mono">0x04..0x07</td><td class="mono">x</td><td>Hs-mode master code</td><td>The "0000 1xxx" prefix is the master code that switches the bus to High-speed mode.</td></tr>
+    <tr><td class="mono">0x08..0x77</td><td class="mono">—</td><td>Available for slaves</td><td>112 usable addresses; this is what real chips occupy.</td></tr>
+    <tr><td class="mono">0x78..0x7B</td><td class="mono">x</td><td>10-bit address prefix</td><td>The "11110xx" prefix; 10-bit slaves listen here.</td></tr>
+    <tr><td class="mono">0x7C..0x7F</td><td class="mono">x</td><td>Reserved</td><td>Reserved for future use; some legacy assignments.</td></tr>
+  </tbody>
+</table>
+
+<h3 id="addr-shifted">"Shifted" vs "unshifted" — the bug every developer hits exactly once</h3>
+
+<p>Vendor datasheets are wildly inconsistent about how they print I²C addresses. The same physical chip might be documented as:</p>
+
+<ul>
+  <li>"7-bit address 0x50" → just the 7 bits. Use this with most modern firmware APIs (Linux <code>i2c-dev</code>, Zephyr <code>i2c</code> driver, Arduino <code>Wire</code>).</li>
+  <li>"8-bit write address 0xA0, 8-bit read address 0xA1" → already shifted left by 1, with the R/W bit baked in. Some legacy datasheets and most NXP/Renesas documentation use this style.</li>
+  <li>"I²C address 0xA0" with no further qualification → ambiguous; usually means the 8-bit form. Verify with a NAK/scan.</li>
+</ul>
+
+<p>Conversion:</p>
+
+<pre><code>7-bit addr  =  (8-bit write addr) &gt;&gt; 1
+            =  (8-bit read addr - 1) &gt;&gt; 1     ; (the read addr has bit 0 set)
+
+8-bit write addr  =  (7-bit addr) &lt;&lt; 1
+8-bit read addr   =  ((7-bit addr) &lt;&lt; 1) | 1
+</code></pre>
+
+<div class="callout warn">
+  <span class="label">classic bug</span>
+  Datasheet says "address 0xA0", you write <code>i2c_write(0xA0, …)</code>, you get NAK. The driver shifted your address again, sending out 0x140 — which got truncated to 0x40 — which doesn't match the chip. The fix is <code>i2c_write(0x50, …)</code>: pass the 7-bit address, the driver does the shift. <strong>If you're using a Zephyr/Linux/Arduino-style API, always pass the 7-bit address.</strong> If you're driving a low-level peripheral register directly, you write the 8-bit form and the hardware blasts it onto the wire as-is.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="repeated-start">Repeated START</h2>
+
+<p>A <strong>repeated START</strong> (sometimes "Sr") is a START condition issued <em>without</em> a preceding STOP — i.e., the master starts a new transaction without releasing the bus. It looks identical to a regular START on the wire (SDA falls while SCL is high); the difference is purely in <em>where</em> it appears in the transaction sequence.</p>
+
+<p>The canonical use case is the <strong>register-read pattern</strong>, which most I²C peripherals (sensors, EEPROMs, port expanders) implement:</p>
+
+<pre><code>  S  | addr · W | A | reg_idx | A | Sr | addr · R | A | data byte 0 | A | data byte 1 | N |  P
+  ↑                                  ↑                                                       ↑
+  START                              repeated START                                          STOP
+  (master writes the                 (master reads back from
+  register address it                the same chip, no STOP
+  wants to read)                     in between)
+</code></pre>
+
+<p>"Why not just STOP and START again?" — because between the STOP and the new START, <em>any other master on the bus could grab it</em>. If your slave's "current register pointer" is shared mutable state, a competing master could clobber it between your write and your read, and you'd read the wrong register. A repeated-START tells the bus arbitration logic "this is one atomic transaction; nobody else gets to interleave."</p>
+
+<p>On a single-master bus, a STOP-then-START is functionally identical (because there's nobody to race). On a multi-master bus, repeated-START is mandatory for any read-modify-write or read-from-pointer pattern. Most hardware controllers expose this as a flag on the next transfer call (<code>I2C_MSG_RESTART</code> in Zephyr; <code>I2C_M_NOSTART</code> negation in Linux's <code>i2c-dev</code>; the implicit semantics of <code>Wire.endTransmission(false)</code> followed by <code>Wire.requestFrom</code> in Arduino).</p>
+
+<!-- =========================================================== -->
+<h2 id="stretching">Clock stretching</h2>
+
+<p>A slave can hold SCL low to ask the master to wait. The master <em>must</em> respect this: after releasing SCL on each clock cycle, it reads back the line; if the line is still low, the slave is stretching, and the master loops, waiting, until the line goes high.</p>
+
+<pre><code>master releases SCL ──┐
+                      ↓
+                     ___      ___      ___      _________________      ___
+SCL  master drives  /   \    /   \    /   \    /   slave HOLDS    \   /   \
+     master reads   │   │    │   │    │   │    │   SCL low here   │   │   │
+                      ↑                       ↑                      ↑
+              normal pulse                  master expected SCL    slave finally
+                                            to rise here, but it   releases SCL,
+                                            stayed low for ~50 µs  master continues
+</code></pre>
+
+<p>Common reasons a slave stretches:</p>
+
+<ul>
+  <li><strong>EEPROM page write.</strong> Most I²C EEPROMs (24LCxx, AT24Cxx) take ~5 ms to program a page; they hold SCL low while burning. The master sees a 5 ms stretch on the byte that follows the data; this is the EEPROM saying "wait for me to commit, then we can continue or you can poll."</li>
+  <li><strong>Slow ADC conversion.</strong> A high-resolution ADC reading "convert and read result" stretches the clock during the conversion. Convenient for the master — instead of polling for "conversion done", you just issue the read and the slave will release SCL when ready.</li>
+  <li><strong>Soft-I²C-slave implementations.</strong> An MCU acting as an I²C slave usually stretches SCL on every byte boundary while it figures out what to do next. This is normal and is the only reasonable way to implement a slave in software without dropping bytes.</li>
+  <li><strong>Sensor data preparation.</strong> Some IMUs and pressure sensors stretch briefly while latching a new sample.</li>
+</ul>
+
+<div class="callout warn">
+  <span class="label">historic gotcha</span>
+  <strong>Some hardware I²C controllers don't respect clock stretching.</strong> The notorious example is the original STM32F1 series I²C peripheral, which had a documented erratum where stretching at certain bit positions could lock the controller. The Raspberry Pi (BCM2835) Broadcom I²C also has a long-standing stretch bug. The symptom is always the same: "this sensor works fine on chip A but fails intermittently on chip B." If you suspect stretch handling, scope SCL during a transaction and look for any cycle where SCL stays low longer than nominal — if the master keeps clocking through it, you've found your bug.
+</div>
+
+<h3 id="stretching-mitigations">Mitigations</h3>
+
+<ul>
+  <li><strong>Drop bus speed.</strong> Lower-speed buses give slaves more wall-clock time per cycle and reduce the practical need for stretching.</li>
+  <li><strong>Use a master with proper hardware support.</strong> All modern controllers (RP2350, nRF52, ESP32-S3, STM32F4 and later, etc.) handle stretching correctly. Check the errata sheet before you commit to a master.</li>
+  <li><strong>Use PIO/bit-bang.</strong> A software-defined master <em>is</em> the master — it inherently waits on SCL because it's polling the line directly. edevkit1's PIO I²C engine handles stretching naturally; see <a href="#engine">§ edevkit1's I²C engine</a>.</li>
+  <li><strong>Add a bus timeout.</strong> SMBus mandates this — if SCL is held low for more than 25–35 ms, the bus is considered hung and the master should issue a STOP and reset. Don't wait forever.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="arbitration">Multi-master arbitration</h2>
+
+<p>I²C supports multiple masters on the same bus — they share SCL/SDA and arbitrate for the bus when more than one wants to transmit. The arbitration mechanism is, again, a direct consequence of open-drain wired-AND.</p>
+
+<p>The rule is simple: <strong>every master, on every bit it transmits, reads back the SDA line. If it expected to drive a 1 (i.e., released SDA) but reads a 0, somebody else is driving low. That master has lost arbitration and must immediately stop driving and let the other master continue.</strong></p>
+
+<p>Walked through:</p>
+
+<pre><code>  bit:        7   6   5   4   3   2   1   0
+  master A:   1   0   1   0   1   1   0   0    ← wanting to address slave 0xAC
+  master B:   1   0   1   0   1   0   1   1    ← wanting to address slave 0xAB
+  bus (AND):  1   0   1   0   1   0   ?   ?
+
+                                       ↑
+                              At bit 2, master A drives 1 (releases SDA)
+                              but master B drives 0 (asserts).
+                              The bus reads 0.
+                              Master A reads back 0 ≠ 1 it intended →
+                              master A LOST arbitration.
+                              Master A immediately becomes a high-Z observer
+                              for the rest of the transaction.
+
+  Master B continues, completes its transfer to 0xAB, normally.
+  Master A waits for STOP, then can retry its 0xAC transaction on the next bus-free.
+</code></pre>
+
+<p>Notes:</p>
+
+<ul>
+  <li>The "loser" doesn't generate any bus error — it just goes quiet. The "winner" doesn't even notice anything happened. From the wire's POV, exactly one valid transaction occurs.</li>
+  <li>Arbitration can happen during the address byte <em>or</em> during data bytes. The spec is explicit: a master that loses arbitration during a data byte must stop driving SDA <em>and</em> stop driving SCL — it must not interfere with the surviving master's clock.</li>
+  <li>Most application code doesn't see arbitration loss as an error. The driver retries the transaction transparently. Higher layers see only "this took longer than usual."</li>
+  <li>For arbitration to work correctly, masters must be using <em>compatible</em> bus speeds. Mixed-speed multi-master is allowed but rare and finicky.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="smbus">SMBus and PMBus — I²C with extra rules</h2>
+
+<p>The <strong>System Management Bus (SMBus)</strong>, defined by the SBS Implementer's Forum (originally Intel + Duracell, now SBS-IF), is an Intel-led tightening of I²C designed for laptop battery, fan controller, and embedded-controller communication. SMBus 1.0 was published in 1995; SMBus 3.0 in 2014. Electrically and protocol-level it's a strict subset of I²C, with extra rules layered on top:</p>
+
+<table>
+  <thead>
+    <tr><th>SMBus rule</th><th>Vs plain I²C</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Bus speed: 10–100 kHz</td><td>I²C is 0–5 MHz; SMBus locks down to a narrow range</td></tr>
+    <tr><td>SCL low-timeout: 25–35 ms</td><td>I²C has no timeout; SMBus says "bus is hung if SCL stays low this long"</td></tr>
+    <tr><td>Mandatory NAK on last read byte from master</td><td>I²C strongly recommends; SMBus mandates</td></tr>
+    <tr><td>Optional Packet Error Code (PEC) — a CRC-8 byte appended</td><td>I²C has no integrity check; SMBus PEC catches single-bit errors</td></tr>
+    <tr><td>SMBus Alert# — a third wire (open-drain interrupt) for slave-to-master notification</td><td>I²C has no out-of-band signal</td></tr>
+    <tr><td>Defined transaction types: Quick, Send Byte, Receive Byte, Write Byte, Block Write, Block Read, Process Call</td><td>I²C is "any number of bytes"; SMBus formalises</td></tr>
+    <tr><td>Address resolution protocol (ARP) for dynamic address assignment</td><td>I²C addresses are fixed in the slave</td></tr>
+  </tbody>
+</table>
+
+<p><strong>PMBus</strong> (Power Management Bus, version 1.4 as of 2020) is SMBus + a power-supply command set. It defines about 250 standardised commands (VOUT_COMMAND, READ_VIN, FAN_CONFIG_1_2, etc.) used by digital point-of-load regulators, FPGAs' on-die power management, and modern server PSUs. Wire-level it's SMBus; protocol-level it's a fixed register map.</p>
+
+<p>From edevkit1's POV: an SMBus or PMBus device is just an I²C device, and you can drive it with the regular I²C engine. If you need PEC, the firmware computes the CRC-8 and appends it as a normal data byte; the slave verifies. If you need Alert#, run an extra GPIO line and treat it as an interrupt source. Most edevkit emulation profiles for power-management ICs treat the chip as I²C-with-fixed-register-map plus optional CRC; the SMBus/PMBus flavor is a thin layer in the YAML profile, not a separate engine. See <a href="edevkit1.html">edevkit1.html §11 — emulation profiles</a> for the schema.</p>
+
+<!-- =========================================================== -->
+<h2 id="sniffer">Sniffer mode — passive bus capture</h2>
+
+<p>A <strong>sniffer</strong> is a third device on the bus that doesn't drive anything and just listens. Its job is to record SDA and SCL transitions and decode the resulting byte stream — useful for reverse-engineering an unknown peripheral, debugging a flaky multi-master interaction, or capturing the traffic between an MCU and a sensor on someone else's product. Logic analysers (Saleae, sigrok, DSLogic, PulseView) all have I²C decoders that work in software on captured digital traces; edevkit1 implements a real-time sniffer in PIO.</p>
+
+<h3 id="sniffer-decode">What the sniffer has to do</h3>
+
+<ol>
+  <li><strong>Detect START.</strong> Look for SDA falling while SCL is high. This is the only resync point — if the sniffer joined mid-transaction, every subsequent bit is unaligned until the next START.</li>
+  <li><strong>Sample SDA on every SCL rising edge.</strong> 8 samples = 1 byte. Then the 9th rising edge gives you the ACK bit.</li>
+  <li><strong>Track byte position.</strong> First byte after START is the address (7 address bits + R/W). Subsequent bytes are data. Direction (master-to-slave vs slave-to-master) is determined by the R/W bit in the address byte.</li>
+  <li><strong>Detect repeated START vs STOP.</strong> A START during an ongoing transaction is a repeated-START, not a new transaction. STOP (SDA rising while SCL high) ends the transaction; the next START begins a new one.</li>
+  <li><strong>Buffer for the host.</strong> Push decoded bytes (with timestamps and direction tags) into a ring buffer; let the host drain over USB.</li>
+</ol>
+
+<div class="callout">
+  <span class="label">subtle</span>
+  <strong>A sniffer that joined the bus mid-transaction has no way to know whether the next byte is an address or data.</strong> It must wait for the next START to resync. This is why a sniffer that powers up while the bus is already active will appear to "miss" the first transaction — by design. After the first START it sees, the decode is reliable.
+</div>
+
+<h3 id="sniffer-rw">Why a sniffer can't validate R/W mismatches without seeing the address byte</h3>
+
+<p>Once mid-transaction, the sniffer sees a byte going by. The data direction is fixed by the address byte's R/W bit, but the sniffer doesn't have that — it only has the ACK bit visible on the 9th SCL pulse, and the ACK is driven by <em>the receiver of the byte</em>, which depends on direction. If you don't know direction, you don't know who drove the ACK. So mid-transaction joins can decode the bytes but not their direction, and that means a "mismatch detection" feature (e.g., "the master tried to write but the slave thought it was a read") is only meaningful when the sniffer caught the address byte.</p>
+
+<p>Practical consequence: edevkit1's sniffer always reports its first bytes-after-power-up as <em>"data, direction unknown"</em> until it sees the first START. After that, every transaction is fully tagged with master/slave direction, ACK/NAK status, and inter-byte / inter-transaction timestamps.</p>
+
+<!-- =========================================================== -->
+<h2 id="engine">edevkit1's I²C engine (PIO1 SM0)</h2>
+
+<p>edevkit1 implements its I²C engine entirely in <strong>RP2350B PIO</strong> — there is no use of the chip's hardware I²C controllers. Why PIO? Because we need three modes — master, slave, sniffer — that each have different bus-driving semantics, and we need the slave to respond at <em>any</em> address (or any subset of addresses) with arbitrary timing for emulation purposes. Hardware controllers have one personality each; PIO state machines can swap personalities by reloading a different program.</p>
+
+<table>
+  <thead>
+    <tr><th>Resource</th><th>Assignment</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>PIO instance</td><td class="mono">PIO1</td><td>PIO0 is reserved for SWD/JTAG/SWO + WS2812; PIO2 for v2 expansion</td></tr>
+    <tr><td>State machine</td><td class="mono">SM0</td><td>Single SM handles all three I²C modes (program swap on mode change)</td></tr>
+    <tr><td>SDA</td><td class="mono">GPIO4</td><td>Open-drain via PIO output-enable pin override; pull-up on protocol header</td></tr>
+    <tr><td>SCL</td><td class="mono">GPIO5</td><td>Same; PIO drives output-enable to pull low, releases to high-Z to let the line rise</td></tr>
+    <tr><td>Speed range</td><td class="mono">100 kHz – 3.4 MHz</td><td>Set via SM clock divider; firmware auto-selects pull-up bias network on the protocol header</td></tr>
+    <tr><td>Voltage domain</td><td class="mono">Vio</td><td>1.8 V / 3.3 V switchable, isolated from Vtgt; see <a href="edevkit1.html">edevkit1.html §6</a></td></tr>
+  </tbody>
+</table>
+
+<h3 id="engine-modes">The three modes</h3>
+
+<div class="os-card linux">
+  <span class="os-tag">Master</span>
+  Drives transactions onto the protocol-tester header to a target peripheral. This is what you use when you have a real sensor / EEPROM / display on the protocol header and you want edevkit1 to talk to it. Supports 7-bit and 10-bit addressing, repeated-START, full clock-stretching tolerance, NAK detection, arbitration loss detection (relevant if the user puts another master on the bus).
+</div>
+
+<div class="os-card mac">
+  <span class="os-tag">Slave</span>
+  Responds to any 7- or 10-bit address (configurable per profile). The slave program decodes the address byte, looks up the matching emulation profile in flash, and either ACKs (and emits canned data on read, or stashes data on write) or NAKs (if no matching profile). This is the foundation of edevkit1's emulation feature: you load a YAML profile for, e.g., a BME280 environmental sensor, and edevkit1 pretends to be that exact chip — answering at the correct 7-bit address with the correct register-map responses.
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Sniffer</span>
+  Both SDA and SCL are tristated; the PIO program watches transitions, decodes the bit stream, and pushes timestamped events (START, address, data byte + ACK, repeated-START, STOP) into a SRAM ring buffer. The host pulls the buffer over the CMSIS-DAP v2 vendor endpoint and visualises it in the GUI. No data is dropped silently — if the host is slow, the producer back-pressures and surfaces overflow as a discrete error event so the user knows the capture is incomplete.
+</div>
+
+<p>The PIO programs themselves live in <code>firmware/app/pio/i2c_master.pio</code>, <code>i2c_slave.pio</code>, and <code>i2c_sniffer.pio</code>; assembled headers are at the same paths with <code>.h</code>. Run <code>tools/pioasm/pioasm</code> to regenerate after edits — Zephyr doesn't auto-build PIO sources. See <a href="platform_pio.html">platform_pio.html</a> for the full PIO walkthrough including the master program annotated instruction-by-instruction.</p>
+
+<h3 id="engine-headers">Connector and pin-out</h3>
+
+<p>The protocol-tester connector exposes the following I²C-relevant signals:</p>
+
+<table>
+  <thead>
+    <tr><th>Pin</th><th>Signal</th><th>Direction</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="mono">1</td><td>Vio</td><td>edevkit1 → DUT</td><td>1.8 V or 3.3 V, software-selectable, current-limited</td></tr>
+    <tr><td class="mono">2</td><td>GND</td><td>—</td><td>Common reference</td></tr>
+    <tr><td class="mono">3</td><td>SDA</td><td>Bidirectional</td><td>GPIO4 via level shifter; ESD protected</td></tr>
+    <tr><td class="mono">4</td><td>SCL</td><td>Bidirectional</td><td>GPIO5 via level shifter; ESD protected</td></tr>
+    <tr><td class="mono">5</td><td>INT/Alert</td><td>Bidirectional</td><td>Optional SMBus-Alert#; software-defined</td></tr>
+    <tr><td class="mono">6</td><td>nRESET</td><td>edevkit1 → DUT</td><td>Open-drain, pulled high on DUT-side</td></tr>
+  </tbody>
+</table>
+
+<p>Pull-ups for SDA and SCL live on edevkit1, switchable between three banks (10 kΩ, 4.7 kΩ, 2.2 kΩ) via solid-state switches under firmware control. The user picks the bank that matches the speed/length of their bus. For HS-mode work (rare) the firmware can additionally enable an active current-source pull (a simple PFET-based source), giving the line the fast rise time HS requires.</p>
+
+<!-- =========================================================== -->
+<h2 id="zephyr">Driving I²C from Zephyr — worked example</h2>
+
+<p>For application code on edevkit1, the easiest way to drive the I²C engine is through Zephyr's <code>i2c.h</code> API — the firmware exposes the PIO-master engine as a regular Zephyr I²C device named <code>i2c_proto</code>. The same API would work on any Zephyr board; the only edevkit1-specific detail is the device-tree node.</p>
+
+<h3 id="zephyr-overlay">Devicetree overlay (already in repo)</h3>
+
+<pre><code>// firmware/app/boards/rpi_pico2.overlay
+/ {
+    aliases {
+        i2c-proto = &amp;i2c_proto;
+    };
+};
+
+&amp;pio1 {
+    status = "okay";
+    i2c_proto: i2c_proto {
+        compatible = "edevkit,pio-i2c";
+        sda-gpios   = &lt;&amp;gpio0 4 GPIO_ACTIVE_HIGH&gt;;
+        scl-gpios   = &lt;&amp;gpio0 5 GPIO_ACTIVE_HIGH&gt;;
+        clock-frequency = &lt;I2C_BITRATE_FAST&gt;;   /* 400 kHz default */
+        #address-cells  = &lt;1&gt;;
+        #size-cells     = &lt;0&gt;;
+    };
+};</code></pre>
+
+<h3 id="zephyr-driver">Reading a register from a slave</h3>
+
+<pre><code>/* firmware/app/src/proto/i2c_demo.c
+ *
+ * Read 6 bytes from register 0xF7 of a BME280 (7-bit addr 0x76).
+ * Pattern: write reg-addr, repeated-START, read bytes.
+ */
+#include &lt;zephyr/device.h&gt;
+#include &lt;zephyr/drivers/i2c.h&gt;
+#include &lt;zephyr/logging/log.h&gt;
+
+LOG_MODULE_REGISTER(i2c_demo, LOG_LEVEL_INF);
+
+#define BME280_ADDR     0x76        /* 7-bit address; never the 0xEC/0xED form */
+#define BME280_REG_DATA 0xF7
+
+int bme280_read_data(uint8_t out[6])
+{
+    const struct device *dev = DEVICE_DT_GET(DT_ALIAS(i2c_proto));
+    if (!device_is_ready(dev)) {
+        LOG_ERR("i2c_proto device not ready");
+        return -ENODEV;
+    }
+
+    uint8_t reg = BME280_REG_DATA;
+    struct i2c_msg msgs[2] = {
+        {
+            .buf   = &amp;reg,
+            .len   = 1,
+            .flags = I2C_MSG_WRITE,
+        },
+        {
+            .buf   = out,
+            .len   = 6,
+            .flags = I2C_MSG_READ | I2C_MSG_RESTART | I2C_MSG_STOP,
+        },
+    };
+
+    int rc = i2c_transfer(dev, msgs, ARRAY_SIZE(msgs), BME280_ADDR);
+    if (rc) {
+        LOG_ERR("i2c_transfer failed: %d", rc);
+        return rc;
+    }
+    return 0;
+}</code></pre>
+
+<p>Things worth pointing out in this snippet:</p>
+
+<ul>
+  <li><strong><code>I2C_MSG_RESTART</code></strong> on the second message tells the driver to emit a repeated-START between the write and the read — not a STOP-then-START. This is the canonical register-read pattern. Forget it and you'll either lose the register pointer (single-master, mostly works) or race another master (multi-master, fails intermittently).</li>
+  <li><strong><code>I2C_MSG_STOP</code></strong> on the final message ensures the bus is released; without it the driver could hold the bus, blocking other transactions or other masters.</li>
+  <li><strong>Address is the 7-bit form (<code>0x76</code>)</strong>, not <code>0xEC</code>/<code>0xED</code>. Zephyr's API always wants the 7-bit address.</li>
+  <li>Zephyr's <code>i2c_transfer</code> handles arbitration loss, NAK, clock stretching, and bus reset internally; the application sees only success or a clean error code.</li>
+</ul>
+
+<h3 id="zephyr-shell">Quick poking from the Zephyr shell</h3>
+
+<p>For interactive bring-up, edevkit1's shell extension exposes <code>i2c</code> commands you can drive over USB CDC:</p>
+
+<pre><code>uart:~$ i2c scan i2c_proto
+0    1   2   3   4   5   6   7   8   9   a   b   c   d   e   f
+00:                          -- -- -- -- -- -- -- -- -- -- --
+10: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+20: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+30: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+40: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+50: 50 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+60: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+70: -- -- -- -- -- -- 76 -- -- -- -- -- -- -- -- --
+8 devices found on i2c_proto
+
+uart:~$ i2c write_byte i2c_proto 0x76 0xF4 0x27
+uart:~$ i2c read_byte  i2c_proto 0x76 0xD0
+0x60                                              # BME280 chip-id
+</code></pre>
+
+<p>The same commands run from the host CLI via <code>edevkit i2c scan</code>, <code>edevkit i2c write</code>, <code>edevkit i2c read</code>; under the hood they shell out to the firmware over USB.</p>
+
+<!-- =========================================================== -->
+<h2 id="pitfalls">Common pitfalls</h2>
+
+<p>Every list below is something at least one edevkit contributor has hit on a real board. Read them now, save yourself a debug session later.</p>
+
+<ol>
+  <li><strong>Wrong pull-up value — rise-time too slow at high speed.</strong> 10 kΩ pull-ups work great at 100 kHz and fail mysteriously at 400 kHz with a moderately-loaded bus. Symptom: occasional bit errors on long messages, fewer errors when you remove devices from the bus, no errors at all if you scope the line and the probe's input capacitance somehow "fixes" it (the probe wasn't fixing anything; you slowed the clock by mistake when you switched the analyser config). Fix: drop pull-ups to 4.7 kΩ for 100 kHz, 2.2 kΩ for 400 kHz, 1 kΩ for 1 MHz, then verify rise time on a scope.</li>
+
+  <li><strong>5 V vs 3.3 V mixed-rail without translation.</strong> A 5 V slave driving SDA low pulls the line to 0.4 V — fine for a 3.3 V master, which sees that as a logic 0. But the bus's pull-up on the 3.3 V side only goes to 3.3 V, which a 5 V slave reads as somewhere between "1" and "indeterminate" depending on its V<sub>IH,min</sub>. Fix: use a level translator (PCA9306 for low-speed, PCA9517 for higher speed, NTS0102 for tiny boards) — these are passive bidirectional FET-based switches that do exactly the right thing on an open-drain bus.</li>
+
+  <li><strong>Address written in 8-bit form.</strong> "Datasheet says 0xA0, I wrote 0xA0, getting NAK." That's because the driver shifted-and-OR'd, sending 0x140 → truncated to 0x40 → no slave at 0x40 → NAK. Fix: convert to 7-bit (0xA0 &gt;&gt; 1 = 0x50), pass that. (See the <a href="#addr-shifted">"Shifted vs unshifted"</a> warning above. This is the single most common I²C bug in the wild.)</li>
+
+  <li><strong>Missing STOP after a NAK leaves the bus stuck.</strong> Some drivers, when they get a NAK, return an error to the application and forget to emit STOP. The bus stays in an indeterminate state — slaves think a transaction is still in progress, future transactions misbehave, and a power-cycle is the only recovery. Zephyr's I²C drivers handle this correctly; if you write your own bit-bang master, make sure NAK paths always emit STOP before unwinding.</li>
+
+  <li><strong>Sensor needs ≥1 µs between power-on and first I²C access.</strong> Many sensors have a "power-on reset to ready" specification of 0.5–10 ms. Issuing your first I²C command immediately after powering the slave can return NAK or garbage data. Fix: <code>k_sleep(K_MSEC(10))</code> after enabling Vio, before the first transaction. Read the slave's datasheet — there's always a t<sub>boot</sub> or t<sub>POR</sub> spec.</li>
+
+  <li><strong>Stuck SCL or SDA — a slave is hung.</strong> If a slave was halfway through a byte when the master crashed/reset, it may still be trying to drive SDA. Recovery is the <strong>I²C bus-clear procedure</strong>: master toggles SCL up to 9 times until SDA goes high, then issues STOP. Zephyr's <code>i2c_recover_bus()</code> implements this; call it after init and after any unexplained NAK to make the bus deterministic.</li>
+
+  <li><strong>Mixing pull-up rails.</strong> If your pull-ups are tied to 3.3 V but the slave's input only tolerates 2.5 V, you'll exceed V<sub>IH,abs</sub> and stress the slave's clamps. Match the pull-up rail to the lowest-voltage device on the bus.</li>
+
+  <li><strong>Forgetting the ACK on the last byte of a master read.</strong> The protocol requires the master to NAK the final byte of a multi-byte read — that's how it tells the slave "I have what I need, release SDA". If the master ACKs every byte forever, well-behaved slaves will keep clocking out data and eventually wrap or send garbage. Most APIs handle this for you (last <code>i2c_msg.len</code> automatically NAKs the last byte) but if you're rolling your own, get the NAK in.</li>
+
+  <li><strong>Speed mismatch in multi-device buses.</strong> One sensor is 100 kHz max, another is 1 MHz capable, you set the bus to 1 MHz to be fast. The 100 kHz sensor either fails outright or produces corrupted data, and the symptom is "everything works individually, breaks when both are on the bus." Fix: bus speed = min(all devices' max).</li>
+
+  <li><strong>Sensor reports "I'm at 0xC0/0xC1", not "0x60".</strong> Same as #3, just stated differently. Always interpret datasheet addresses as <em>read</em> = 8-bit-form-with-LSB-set, <em>write</em> = 8-bit-form-with-LSB-clear, and 7-bit-API-form = (write_addr &gt;&gt; 1).</li>
+
+  <li><strong>Forgetting that the slave can stretch even on the address byte.</strong> A soft-I²C-slave might stretch SCL on the very first ACK pulse while it's looking up whether to ACK at all. Some master drivers assume stretching only happens during data — they bail out with a "no ACK received" error before the slave has even decided. If a slave that "definitely should ACK" is NAK'ing intermittently, scope SCL during the 9th pulse of the address byte and look for an extended low.</li>
+</ol>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<ol>
+  <li><strong><a href="https://www.nxp.com/docs/en/user-guide/UM10204.pdf">NXP UM10204 — I²C-bus specification and user manual, Rev 7.0 (October 2021)</a></strong> — the canonical spec. 64 pages, very readable. Read sections 3 (the bus), 5 (definitions), and Appendix B (electrical characteristics) once and you'll have the full picture.</li>
+  <li><strong><a href="https://www.ti.com/lit/an/slva704/slva704.pdf">TI SLVA704 — Understanding the I²C Bus</a></strong> — short (8-page) practical primer; the rise-time / pull-up sizing math is presented compactly here.</li>
+  <li><strong><a href="https://www.ti.com/lit/an/slva689/slva689.pdf">TI SLVA689 — A Basic Guide to I²C</a></strong> — TI's "I²C Made Simple" set of application notes; covers timing margin and bus extender ICs.</li>
+  <li><strong><a href="http://smbus.org/specs/SMBus_3_1_20180319.pdf">SMBus 3.1 specification (SBS Implementer's Forum, 2018)</a></strong> — the full SMBus spec, including PEC, timeouts, ARP, and the standard transaction types.</li>
+  <li><strong><a href="https://www.pmbus.org/">PMBus 1.4 specification</a></strong> — the power-management command set. Useful if you need to drive or emulate digital regulators.</li>
+  <li><strong><a href="https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf">RP2350 datasheet</a></strong>, §11 (PIO) — the PIO architecture reference. Read this before editing edevkit1's PIO I²C source.</li>
+  <li><strong><a href="https://docs.zephyrproject.org/latest/hardware/peripherals/i2c.html">Zephyr I²C subsystem docs</a></strong> — the Zephyr <code>i2c</code> driver API reference. Authoritative for <code>i2c_msg</code> flags, transaction semantics, bus-recover mechanism.</li>
+  <li><strong>Sister docs in this hub</strong> — <a href="proto_uart.html">proto_uart.html</a> (UART), <a href="proto_spi.html">proto_spi.html</a> (SPI/QSPI), <a href="platform_pio.html">platform_pio.html</a> (PIO programming model and edevkit1's specific PIO programs), <a href="edevkit1.html">edevkit1.html</a> (the v1 design spec — see §6 for the I/O subsystem and §11 for the protocol tester).</li>
+</ol>
+
+<p class="small">If you found a corner case this doc doesn't cover, please update it — the docs hub at <a href="/">edevkit</a> is where the institutional knowledge lives. New gotchas should land here within a day of being discovered.</p>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="debug_swo.html"><span class="dir">← Previous</span><span class="cat">Debug</span><span class="title">SWO/ITM trace</span></a>
+<a class="next" href="proto_qspi.html"><span class="dir">Next →</span><span class="cat">Protocols</span><span class="title">QSPI / Dual / Quad / Octal SPI</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit · proto_i2c.html · maintained alongside the v1 design spec — keep in sync with edevkit1.html and platform_pio.html · last updated on changes to firmware/app/pio/i2c_*.pio
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body>
+</html>
