@@ -3,28 +3,41 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="description" content="{% block description %}edevkit — open-source embedded developer kits.{% endblock %}">
   <title>{% block title %}edevkit{% endblock %}</title>
 
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/style.css">
 
-  {# pre-paint theme application — prevents flash of light theme on dark-preferring users #}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="/static/tailwind.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-title" content="edevkit">
+
+  {# pre-paint theme — prevents flash of light theme on dark-preferring users #}
   <script>
     (function () {
       try {
         var t = localStorage.getItem('edev_theme');
-        if (t === 'dark' || t === 'light')
-          document.documentElement.setAttribute('data-theme', t);
+        var dark = t === 'dark' ||
+          (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
       } catch (e) { /* private mode etc. */ }
     })();
   </script>
 
   {% block head_extra %}{% endblock %}
 </head>
-<body>
+<body class="bg-white dark:bg-ink-950 text-ink-900 dark:text-ink-100 font-sans antialiased min-h-screen transition-colors duration-200 motion-reduce:transition-none">
+  <a href="#main-content"
+     class="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[60] focus:px-4 focus:py-2 focus:rounded-lg focus:bg-brand-600 focus:text-white focus:shadow-2xl focus:ring-2 focus:ring-white">
+    Skip to main content
+  </a>
   {% block body %}{% endblock %}
   <script type="module" src="/static/script.js"></script>
 </body>
