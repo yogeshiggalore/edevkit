@@ -1,0 +1,2296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — ARM Architecture &amp; Cortex-M Family</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Tutorial-quality reference covering ARM history, the Cortex-M family, ISA evolution, the programmer's model, exception model, memory model, MPU, debug architecture, software stack, toolchains, and a hello-ARM walkthrough — written for both newcomers and experienced firmware engineers.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    /* graticule background — top-faded so it doesn't overwhelm */
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar (sticky nav + theme toggle) ────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── OS cards (Linux / macOS / Windows) ────────────────────────────── */
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  /* ── numbered step ─────────────────────────────────────────────────── */
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── checklist ─────────────────────────────────────────────────────── */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  // pre-paint theme — prevents FOUC
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">ARM &amp; Cortex-M reference</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · architecture · ARM &amp; Cortex-M</div>
+  <h1>ARM architecture &amp; the Cortex-M family</h1>
+  <p class="small">A first-principles reference for everyone touching the <strong>edevkit</strong> codebase. The product family is built on Arm Cortex-M cores (edevkit1 uses the <strong>Cortex-M33</strong> in the RP2350B); this document is the shared grounding for that work. It explains where ARM came from, what "ARM" actually <em>is</em> as opposed to a chip, how the Cortex-M cores differ, and the architectural pieces — registers, exceptions, memory model, MPU, debug — that every line of firmware ultimately rests on.</p>
+  <p class="small"><strong>Audience:</strong> two kinds of reader. (a) Someone who has never written ARM firmware and needs a path from zero. (b) Someone fluent in another architecture (8051, AVR, RISC-V, x86) who needs a comprehensive Cortex-M reference. Every section explains the <em>why</em> alongside the <em>what</em>.</p>
+  <p class="small"><strong>Companion docs:</strong> <a href="arm_cortex_m33.html">arm_cortex_m33.html</a> for the M33-specific deep-dive (TrustZone-M, M33 pipeline, RP2350-particulars). <a href="installation.html">installation.html</a> for getting the toolchain on your machine. <a href="edevkit1.html">edevkit1.html</a> for the v1 product spec.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Origins &amp; landscape</span>
+  <ol>
+    <li><a href="#history">A short history of ARM</a></li>
+    <li><a href="#arch-vs-impl">Architecture vs. implementation: the three profiles</a></li>
+    <li><a href="#isa-evolution">ISA evolution — ARMv1 through ARMv9-M</a></li>
+    <li><a href="#cortex-m-family">The Cortex-M family at a glance</a></li>
+  </ol>
+  <span class="heading">The programmer's view</span>
+  <ol>
+    <li><a href="#prog-model">Programmer's model — registers, modes, privilege</a></li>
+    <li><a href="#exception-model">The exception model — NVIC, vector table, stacking</a></li>
+    <li><a href="#memory-model">Memory model — map, types, barriers, bit-banding</a></li>
+    <li><a href="#mpu">Memory Protection Unit (MPU)</a></li>
+    <li><a href="#systick">SysTick — the architectural heartbeat</a></li>
+  </ol>
+  <span class="heading">Debug &amp; power</span>
+  <ol>
+    <li><a href="#debug">Debug architecture — CoreSight, DAP, ITM, DWT, FPB, ETM, SWO</a></li>
+    <li><a href="#power">Power management — sleep modes, WFI, WFE</a></li>
+  </ol>
+  <span class="heading">Software, tools &amp; getting started</span>
+  <ol>
+    <li><a href="#software-stack">The software stack — CMSIS, HALs, RTOSes, startup</a></li>
+    <li><a href="#toolchains">Toolchains — gcc-arm-none-eabi, LLVM, IAR, Arm Compiler</a></li>
+    <li><a href="#flash-tools">Debug &amp; flash tools — probe-rs, OpenOCD, J-Link, the 10-pin header</a></li>
+    <li><a href="#hello-arm">Hello, ARM — a complete walkthrough</a></li>
+    <li><a href="#further">Where to go next</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="history">A short history of ARM</h2>
+
+<p>The ARM architecture is the most-shipped instruction set in human history. Roughly a quarter of a trillion ARM-based chips have been built, and almost every microcontroller in a modern product — wearable, car, sensor, dishwasher, toy, satellite — is some flavour of ARM. None of that was inevitable. The story starts with a small British education-computer company that needed a CPU nobody would sell them.</p>
+
+<h3 id="history-acorn">Acorn and the BBC Micro (1978–1983)</h3>
+
+<p><strong>Acorn Computers</strong>, based in Cambridge, England, built the <strong>BBC Micro</strong> in 1981 — a 6502-based home/education machine commissioned by the BBC for its <em>Computer Literacy Project</em>. The BBC Micro shipped roughly 1.5 million units and dominated UK schools through the 1980s. Acorn's engineers liked the 6502: simple, predictable, fast for its clock. But by 1983 the 6502 was running out of headroom, and the obvious successors — Motorola 68000, Intel 80286, National Semiconductor 32016 — were either too slow under the kinds of memory Acorn could afford, or too expensive, or both.</p>
+
+<p>Two things happened around that time that pushed Acorn into building its own CPU. First, Steve Furber and Sophie Wilson had visited the Western Design Center in Phoenix, Arizona — where the 6502 was made — and had been struck by how small the 6502 design team was. Two engineers and a handful of test chairs were producing the chip Acorn was buying. Second, papers out of Berkeley (Patterson) and Stanford (Hennessy) were articulating the <em>RISC</em> philosophy: small, fixed-width, load/store instruction sets could outperform big CISC machines on real workloads. Wilson and Furber concluded that if two people could build the 6502, two people could build a RISC follow-up.</p>
+
+<h3 id="history-arm1">ARM1 (1985)</h3>
+
+<p>The <strong>Acorn RISC Machine</strong> project formally started in October 1983. Wilson designed the instruction set; Furber led the implementation. Critically the team had almost no money for simulation, so the architecture was kept ruthlessly simple — 26-bit addressing, fixed 32-bit instructions, three-stage pipeline (fetch / decode / execute), every instruction conditional. The first silicon, <strong>ARM1</strong>, came back from VLSI Technology and worked correctly the first time it was tested — on <strong>26 April 1985</strong>, a date now famous in chip-design folklore. ARM1 ran at 6 MHz and was used internally as a coprocessor card for the BBC Micro.</p>
+
+<h3 id="history-archimedes">ARM2, ARM3, and the Archimedes (1986–1989)</h3>
+
+<p><strong>ARM2</strong> (late 1986, 8 MHz; early 1987, 10–12 MHz) was the first commercial ARM. It powered the <strong>Acorn Archimedes</strong>, launched on 6 June 1987 — the first home computer with a RISC CPU. The Archimedes was technically remarkable (its <code>Dhrystone</code> numbers crushed the 386) and commercially marginal: it sold well into UK schools but never broke into the wider PC market that IBM-compatibles already owned.</p>
+
+<p>What mattered long-term was that ARM's architecture had been designed under a constraint Wilson and Furber didn't fully realise at the time: <em>extreme power efficiency</em>. The original chip didn't even have a <code>VDD</code> ball wired correctly on one early prototype, yet still booted — it was running off the bus's leakage current. RISC simplicity, low transistor count, and a focus on real-world workloads gave ARM a profile (mips-per-milliwatt) that nobody else had.</p>
+
+<h3 id="history-arm-ltd">Advanced RISC Machines Ltd (1990)</h3>
+
+<p>By 1990 Apple was looking for a CPU for its <strong>Newton</strong> handheld project. Apple's specifications — battery-powered, fits in a pocket, runs handwriting recognition — were exactly the workload ARM was best at, and exactly the kind no other 1990 CPU could touch. Apple, Acorn, and chip-fab partner <strong>VLSI Technology</strong> spun the ARM design team out as a joint venture: <strong>Advanced RISC Machines Ltd</strong>, formally registered <strong>12 November 1990</strong> (initially "Widelogic Limited", renamed 3 December 1990). Acorn contributed 12 employees, VLSI contributed tools, Apple contributed roughly US$3 million in cash. The new company had a single business model that nobody had really tried before: <em>license the design, don't build the chip</em>. ARM Ltd would design CPUs and license the IP to anyone willing to pay; partners would build their own SoCs.</p>
+
+<p>The first product of the new company was <strong>ARM6</strong> (1992), shipped as the <strong>ARM610</strong> in the Apple Newton MessagePad in 1993. The Newton failed commercially, but ARM6 was solid silicon and the licensing model started attracting customers — DEC licensed ARMv4 to build StrongARM (1995), then later Intel acquired StrongARM and turned it into XScale.</p>
+
+<h3 id="history-tdmi">ARM7TDMI — the chip that conquered the 1990s (1994)</h3>
+
+<p>The <strong>ARM7TDMI</strong> (1994) is arguably the most important embedded CPU ever built. The "TDMI" letters stand for <em>T</em>humb (16-bit compressed instructions), <em>D</em>ebug (JTAG), <em>M</em>ultiplier (32×32→64), <em>I</em>CE (in-circuit emulation). Three-stage pipeline, ARMv4T architecture, vanishingly small die area, and — crucially — the new <strong>Thumb</strong> instruction set, a 16-bit re-encoding of a subset of ARM that halved code size for memory-constrained systems. ARM7TDMI ended up inside:</p>
+
+<ul>
+  <li>The <strong>Game Boy Advance</strong> (2001) — Nintendo's best-selling handheld until the DS.</li>
+  <li>Early <strong>iPod</strong> models — Apple's reentry into consumer electronics.</li>
+  <li>Most <strong>Nokia</strong> feature phones of the 2000s, and many Ericsson and Motorola models.</li>
+  <li>Countless industrial controllers, modems, printers, and white goods.</li>
+</ul>
+
+<p>By the late 1990s "ARM" had stopped being an Acorn-specific brand and become the default CPU for any battery-powered device.</p>
+
+<h3 id="history-ipo">IPO and the licensing flywheel (1998)</h3>
+
+<p>ARM Ltd <strong>floated on the London Stock Exchange and Nasdaq in 1998</strong>, simultaneously becoming "ARM Holdings plc". Revenue model: a one-time licence fee per design (millions of dollars) plus a per-chip royalty (cents). Because designs are reused for years and royalties compound across billions of chips, the model became a flywheel — every new licensee was nearly pure margin once the IP was finished. Through the 2000s ARM acquired competitors (the 8051 alternative <em>Keil Software</em>, debug-tools firm <em>Lauterbach's</em> rival lines, etc.) and consolidated the embedded software stack around its cores.</p>
+
+<h3 id="history-cortex">The Cortex split (2004)</h3>
+
+<p>By 2004 ARM had three distinct customer profiles trying to use one architecture: Linux-class application processors (mobile phones), real-time-control systems (automotive, industrial), and microcontrollers (low-power, deterministic). One ISA couldn't serve all three well — application processors wanted MMUs and Linux; MCUs wanted tiny cores with deterministic interrupt latency; real-time wanted both at once. ARM announced the <strong>Cortex</strong> family with three profiles:</p>
+
+<ul>
+  <li><strong>Cortex-A</strong> — Application processors with MMUs, caches, multi-issue, big-OS support.</li>
+  <li><strong>Cortex-R</strong> — Real-time controllers with MPU, low-jitter interrupts, but enough ALU power for storage controllers and modems.</li>
+  <li><strong>Cortex-M</strong> — Microcontrollers: deterministic, low-power, NVIC-driven, no MMU, often no FPU. Bare-metal or RTOS only.</li>
+</ul>
+
+<p>Cortex-M3 was the first M-profile core, announced in 2004 and shipping in silicon by 2006 (in NXP's LPC1768 and ST's STM32F1, among others). It introduced the <strong>ARMv7-M</strong> architecture, the <strong>Thumb-2</strong> mixed-width instruction set, the <strong>NVIC</strong>, and the basic exception model that every later Cortex-M still uses. From here on, the rest of this document is mostly Cortex-M.</p>
+
+<h3 id="history-thumb2">Thumb-2 — the unification (2003–2006)</h3>
+
+<p>Original Thumb (1994) was a 16-bit-only re-encoding of a subset of ARM. Code was smaller, but you couldn't write a whole program in Thumb — anything sufficiently complex had to drop back to 32-bit ARM, with mode-switch instructions and constant overhead. <strong>Thumb-2</strong> (introduced in <em>ARMv6T2</em>, fully exploited in ARMv7-M and ARMv7-A) added 32-bit Thumb instructions that mix freely with 16-bit ones, so a program can be encoded entirely in Thumb-2 with the size advantage of 16-bit-where-possible and the power of 32-bit-where-needed. Cortex-M cores went one step further: they execute <em>only</em> Thumb-2 — there is no 32-bit-ARM mode at all. The <code>T</code> bit in the EPSR is hardwired to 1, and writing 0 to it triggers a fault.</p>
+
+<h3 id="history-softbank">SoftBank acquisition (2016)</h3>
+
+<p>On <strong>5 September 2016</strong>, SoftBank Group announced it would acquire ARM Holdings for approximately <strong>£24.3 billion</strong> (about US$32 billion at the time) — the largest-ever acquisition of a European tech company. ARM was delisted and became a SoftBank subsidiary. Strategically, SoftBank framed the buy as a bet on the "Internet of Things": every device would have a CPU, every CPU would be ARM. Operationally, the licensing flywheel continued unchanged.</p>
+
+<h3 id="history-nvidia">The Nvidia attempt (2020–2022)</h3>
+
+<p>In September 2020, Nvidia announced it would acquire ARM from SoftBank for <strong>~US$40 billion</strong>. The deal collapsed in February 2022 under regulatory pressure: ARM's neutrality (it licenses to <em>everyone</em>, including Nvidia's competitors) was seen as critical to the entire semiconductor industry, and selling it to one of those competitors raised antitrust alarms across multiple jurisdictions.</p>
+
+<h3 id="history-ipo2">Second IPO and "Arm" rebrand (2017, 2023)</h3>
+
+<p>ARM rebranded internally to lowercase <strong>"Arm"</strong> on 1 August 2017 — a small but signalled shift toward consumer-facing branding. On <strong>14 September 2023</strong>, Arm Holdings IPO'd again, this time on Nasdaq, raising <strong>US$4.87 billion</strong> at a $54.5 billion valuation. SoftBank retains roughly 90% of shares.</p>
+
+<h3 id="history-timeline">Timeline at a glance</h3>
+
+<table>
+  <tr><th>Year</th><th>Event</th></tr>
+  <tr><td>1978</td><td>Acorn Computers founded in Cambridge.</td></tr>
+  <tr><td>1981</td><td>BBC Micro launches; ~1.5M units shipped over its lifetime.</td></tr>
+  <tr><td>Oct 1983</td><td>Acorn RISC Machine project formally begins.</td></tr>
+  <tr><td>26 Apr 1985</td><td>ARM1 silicon returns and works the first day.</td></tr>
+  <tr><td>1986–87</td><td>ARM2 ships; Acorn Archimedes launches (6 June 1987).</td></tr>
+  <tr><td>12 Nov 1990</td><td>Advanced RISC Machines Ltd founded as an Acorn / Apple / VLSI joint venture.</td></tr>
+  <tr><td>1992</td><td>ARM6 (ARM610) ships in the Apple Newton.</td></tr>
+  <tr><td>1994</td><td>ARM7TDMI launches with the original Thumb instruction set.</td></tr>
+  <tr><td>1995</td><td>DEC's StrongARM (ARMv4) ships; later acquired by Intel and rebranded XScale.</td></tr>
+  <tr><td>1998</td><td>ARM Holdings plc IPOs on LSE and Nasdaq.</td></tr>
+  <tr><td>2001</td><td>Game Boy Advance ships with ARM7TDMI; iPod begins shipping with ARM7TDMI.</td></tr>
+  <tr><td>2003</td><td>ARMv6 architecture introduced; Thumb-2 first appears in ARMv6T2.</td></tr>
+  <tr><td>2004</td><td>Cortex-A / R / M split announced. Cortex-M3 is the first M-profile.</td></tr>
+  <tr><td>2007</td><td>Cortex-M1 (FPGA-targeted), Cortex-A8 (iPhone 1).</td></tr>
+  <tr><td>2009</td><td>Cortex-M0 launches — the small, ultra-cheap MCU core.</td></tr>
+  <tr><td>2010</td><td>Cortex-M4 adds DSP and optional FPU.</td></tr>
+  <tr><td>2014</td><td>Cortex-M7 — high-performance MCU, 6-stage superscalar, optional caches.</td></tr>
+  <tr><td>2016</td><td>SoftBank acquires ARM Holdings for ~£24.3 billion. Cortex-M23 / M33 (ARMv8-M, TrustZone-M) launch.</td></tr>
+  <tr><td>1 Aug 2017</td><td>Brand becomes lowercase "Arm".</td></tr>
+  <tr><td>2020</td><td>Cortex-M55 launches with Helium (M-Profile Vector Extension), the first ARMv8.1-M core.</td></tr>
+  <tr><td>Feb 2022</td><td>Nvidia's proposed US$40B acquisition of Arm collapses under regulatory pressure.</td></tr>
+  <tr><td>14 Sep 2023</td><td>Arm Holdings second IPO on Nasdaq, US$4.87B raised at US$54.5B valuation.</td></tr>
+</table>
+
+<p class="small">Sources: <a href="https://en.wikipedia.org/wiki/ARM_architecture_family">Wikipedia — ARM architecture family</a>, <a href="https://en.wikipedia.org/wiki/Arm_Holdings">Wikipedia — Arm Holdings</a>, Furber's <em>ARM System-on-Chip Architecture</em> (2nd ed., 2000) for the early-Acorn material.</p>
+
+<!-- =========================================================== -->
+<h2 id="arch-vs-impl">Architecture vs. implementation: the three profiles</h2>
+
+<p>One of the easiest ways to confuse yourself when first encountering ARM is conflating <em>"the ARM architecture"</em> with <em>"an ARM chip"</em>. They're very different things, and almost every Cortex-M document you'll read assumes you understand the distinction. So:</p>
+
+<div class="callout info">
+  <span class="label">key idea</span>
+  <strong>"ARM" is an architecture — an instruction set + memory model + exception model — that is licensed to chip vendors. A "Cortex-M3" is an <em>implementation</em> of that architecture: a specific RTL design that vendors integrate into their SoCs.</strong> An "STM32F103" is a <em>vendor SoC</em>: it contains a Cortex-M3 plus ST's peripherals, clocks, flash, and pinout. Three layers, three different kinds of document.
+</div>
+
+<p>This separation is why a piece of code that compiles for an STM32F103 (Cortex-M3) will mostly run on an LPC1768 (also Cortex-M3) or an SAM3X8E (also Cortex-M3) without source changes — the <em>ARM core</em> is identical, only the peripherals around it differ. The skill of an embedded engineer is partly knowing which bits of your firmware are "talking to the ARM core" (portable across vendors) and which are "talking to the SoC peripherals" (vendor-specific).</p>
+
+<h3 id="profiles">The three Cortex profiles</h3>
+
+<p>Since 2004, ARM has organised its 32-bit (and now 64-bit) cores into three profiles. They share a common heritage, but they are emphatically <em>different ISAs</em>: a Cortex-A program will not run on a Cortex-M and vice versa.</p>
+
+<table>
+  <tr>
+    <th>Profile</th>
+    <th>Suffix</th>
+    <th>Use case</th>
+    <th>OS</th>
+    <th>MMU</th>
+    <th>Cache</th>
+    <th>Modes</th>
+    <th>Example cores</th>
+  </tr>
+  <tr>
+    <td><strong>Application</strong></td>
+    <td>-A</td>
+    <td>Smartphones, tablets, single-board computers, server CPUs</td>
+    <td>Linux, Android, iOS, Windows-on-ARM</td>
+    <td>Yes (full virtual memory)</td>
+    <td>L1 + L2 + sometimes L3</td>
+    <td>User / Supervisor / Hypervisor / Secure</td>
+    <td>Cortex-A53, A72, A78, X4, Apple's M-series (custom), Nvidia Grace</td>
+  </tr>
+  <tr>
+    <td><strong>Real-time</strong></td>
+    <td>-R</td>
+    <td>Storage controllers, automotive ECUs, modems, hard-drive servos</td>
+    <td>RTOS or bare-metal; some run a small Linux variant</td>
+    <td>MPU only (deterministic)</td>
+    <td>Optional small caches with lockable lines</td>
+    <td>Privileged / Unprivileged</td>
+    <td>Cortex-R5, R8, R52, R82</td>
+  </tr>
+  <tr>
+    <td><strong>Microcontroller</strong></td>
+    <td>-M</td>
+    <td>MCUs — IoT, motor control, sensors, edevkit1</td>
+    <td>Bare-metal, Zephyr, FreeRTOS, ThreadX, RT-Thread</td>
+    <td>None (MPU only, optional)</td>
+    <td>Usually none; M7/M55 have small caches</td>
+    <td>Thread / Handler &times; Privileged / Unprivileged</td>
+    <td>Cortex-M0, M0+, M3, M4, M7, M23, M33, M55, M85</td>
+  </tr>
+</table>
+
+<h3 id="profile-deeper">Why three profiles?</h3>
+
+<p>The choices that make a good application processor make a bad microcontroller, and vice versa. An MMU adds dozens of cycles to every memory access (TLB walks, page-table reads); that's fine when you have an L1 cache hiding the latency, but it kills determinism in an interrupt handler. Caches improve average-case latency but destroy worst-case latency — the very thing a motor controller cares about. Big OS support requires user/kernel separation and trapping system calls; in an MCU you'd prefer the system call to be a function call.</p>
+
+<p>The three profiles are essentially three points on a curve from "best at running Linux" to "best at responding to a hardware interrupt in 12 cycles". For edevkit, you only need to think about Cortex-M from here on.</p>
+
+<h3 id="m-profile-properties">Cortex-M defining properties</h3>
+
+<ul>
+  <li><strong>Thumb-2 only.</strong> No 32-bit ARM mode. Every instruction is encoded in Thumb-2 (16 or 32 bits).</li>
+  <li><strong>NVIC, not GIC.</strong> The Nested Vectored Interrupt Controller is part of the core, tightly integrated, and gives you 12-cycle interrupt entry. Cortex-A uses the much larger Generic Interrupt Controller (GIC).</li>
+  <li><strong>Hardware exception stacking.</strong> On exception entry the core auto-pushes 8 registers (R0–R3, R12, LR, PC, xPSR). This means the very first instruction of an ISR can be C — no assembly prologue required.</li>
+  <li><strong>Vector table is a list of addresses, not jumps.</strong> Each entry is a 32-bit pointer to a handler. Cortex-A's vector table is a list of <em>instructions</em> (usually a branch); Cortex-M is a list of <em>function pointers</em>. This matters when you're writing one in C.</li>
+  <li><strong>No MMU.</strong> Physical addresses everywhere. The MPU (when present) is access-control only; it does not translate.</li>
+  <li><strong>Single address space, 4 GB flat.</strong> Code, data, peripherals, and debug all in the same 32-bit address space, with a fixed default partitioning (see <a href="#memory-model">§Memory model</a>).</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="isa-evolution">ISA evolution — ARMv1 through ARMv9-M</h2>
+
+<p>The ARM ISA has gone through nine major revisions since 1985. Most of them aren't relevant to embedded firmware engineers any more — anything before ARMv6 is historical. But the lineage is worth knowing because the names are still printed on documentation, in compiler flags (<code>-march=armv7-m</code>), and on data sheets.</p>
+
+<h3 id="isa-32bit">32-bit lineage (ARMv1 → ARMv7)</h3>
+
+<table>
+  <tr><th>ISA</th><th>Year</th><th>Notable additions</th><th>Implementations</th></tr>
+  <tr><td>ARMv1</td><td>1985</td><td>26-bit addressing, base ARM instruction set, conditional execution.</td><td>ARM1 (Acorn coprocessor card).</td></tr>
+  <tr><td>ARMv2</td><td>1986</td><td>Multiply / multiply-accumulate; coprocessor support.</td><td>ARM2 (Acorn Archimedes).</td></tr>
+  <tr><td>ARMv2a</td><td>1987</td><td>Atomic load-and-store (SWP).</td><td>ARM3.</td></tr>
+  <tr><td>ARMv3</td><td>1991</td><td>Full 32-bit addressing, separate CPSR.</td><td>ARM6, ARM610 (Apple Newton).</td></tr>
+  <tr><td>ARMv3M</td><td>1993</td><td>Long &amp; signed multiplies (SMULL, UMULL).</td><td>ARM7M.</td></tr>
+  <tr><td>ARMv4</td><td>1994</td><td>Halfword load/store, sign-extending operations.</td><td>StrongARM.</td></tr>
+  <tr><td><strong>ARMv4T</strong></td><td>1994</td><td><strong>Thumb v1 — 16-bit compressed encoding.</strong></td><td><strong>ARM7TDMI</strong> (Game Boy Advance, iPod, Nokia).</td></tr>
+  <tr><td>ARMv5T</td><td>1998</td><td>Thumb v2 (still 16-bit only); CLZ (count leading zeros).</td><td>ARM9TDMI.</td></tr>
+  <tr><td>ARMv5TE</td><td>1999</td><td>Enhanced DSP instructions (saturating arithmetic, packed multiplies).</td><td>ARM946E-S, Intel XScale.</td></tr>
+  <tr><td>ARMv5TEJ</td><td>2000</td><td>Jazelle — direct execution of (some) Java bytecodes.</td><td>ARM926EJ-S (BlackBerry, early Nokia smartphones).</td></tr>
+  <tr><td>ARMv6</td><td>2002</td><td>SIMD media instructions, unaligned access support, refined memory model.</td><td>ARM11 (iPhone 1 used ARM1176).</td></tr>
+  <tr><td><strong>ARMv6T2</strong></td><td>2003</td><td><strong>Thumb-2 — mixed 16/32-bit Thumb encoding.</strong> Code can be entirely Thumb.</td><td>ARM1156T2-S.</td></tr>
+  <tr><td><strong>ARMv6-M</strong></td><td>2009</td><td>M-profile subset for ultra-low-cost MCUs. Thumb-2 subset only (no IT, no CBZ in the original).</td><td><strong>Cortex-M0, M0+, M1.</strong></td></tr>
+  <tr><td><strong>ARMv7-A</strong></td><td>2005</td><td>NEON SIMD (optional), TrustZone, hardware divide.</td><td>Cortex-A8, A9, A15.</td></tr>
+  <tr><td><strong>ARMv7-R</strong></td><td>2007</td><td>MPU-only, fast interrupts, deterministic timing.</td><td>Cortex-R4, R5.</td></tr>
+  <tr><td><strong>ARMv7-M</strong></td><td>2004</td><td><strong>Full Thumb-2, NVIC, hardware divide, saturation arithmetic.</strong></td><td><strong>Cortex-M3.</strong></td></tr>
+  <tr><td><strong>ARMv7E-M</strong></td><td>2010</td><td>ARMv7-M plus DSP instructions (SIMD on 32-bit registers), optional single-precision FPU.</td><td><strong>Cortex-M4, M7.</strong></td></tr>
+</table>
+
+<h3 id="isa-64bit">64-bit lineage (ARMv8 onward)</h3>
+
+<table>
+  <tr><th>ISA</th><th>Year</th><th>Notable additions</th><th>Implementations</th></tr>
+  <tr><td>ARMv8-A</td><td>2011</td><td>AArch64 (64-bit), 32 GP registers, new exception model, optional crypto.</td><td>Cortex-A53, A57, Apple A7+.</td></tr>
+  <tr><td>ARMv8-R</td><td>2014</td><td>Real-time variant of ARMv8.</td><td>Cortex-R52, R82.</td></tr>
+  <tr><td><strong>ARMv8-M Baseline</strong></td><td>2016</td><td>v6-M plus TrustZone-M, divide, compare-branch, exclusive load/store.</td><td><strong>Cortex-M23.</strong></td></tr>
+  <tr><td><strong>ARMv8-M Mainline</strong></td><td>2016</td><td>v7-M plus TrustZone-M; co-processor instructions reserved.</td><td><strong>Cortex-M33, M35P.</strong></td></tr>
+  <tr><td><strong>ARMv8.1-M</strong></td><td>2019</td><td>Helium / MVE (M-Profile Vector Extension), low-overhead branching, FP enhancements, PAC, BTI.</td><td><strong>Cortex-M52, M55, M85.</strong></td></tr>
+  <tr><td>ARMv9-A</td><td>2021</td><td>SVE2, confidential compute, RME (Realm Management Extension).</td><td>Cortex-X2, A715.</td></tr>
+  <tr><td>ARMv9.x-A</td><td>2022+</td><td>SME (Scalable Matrix Extension), more security extensions.</td><td>Cortex-X4 and successors.</td></tr>
+</table>
+
+<h3 id="isa-thumb">A note on Thumb-2 — why it changed everything for MCUs</h3>
+
+<p>Thumb-2 is the single instruction-set development that defines modern Cortex-M. To understand <em>why</em>, consider a typical microcontroller program: lots of bit-twiddling, lots of pointer arithmetic, lots of conditional branches, occasional 32-bit math. A pure 32-bit ARM encoding wastes flash on the easy cases (loading a small constant, branching to a nearby label, masking a single bit). A pure 16-bit Thumb-1 encoding can't express the hard cases (32-bit immediates, full-range branches, IT-block conditionals).</p>
+
+<p>Thumb-2 mixes them: a compiler emits 16-bit forms for the common case and 32-bit forms for the harder cases. Net result is roughly <strong>30% smaller code than ARM</strong> with <strong>no measurable performance loss</strong>. Cortex-M cores execute <em>only</em> Thumb-2 — the hardware is simpler because it doesn't have the ARM-mode pipeline; the EPSR's <code>T</code> bit is hardwired to 1; trying to clear it (e.g. by branching to an even address) generates a UsageFault.</p>
+
+<h3 id="isa-helium">Helium / MVE (ARMv8.1-M)</h3>
+
+<p>Helium, formally the <em>M-Profile Vector Extension</em> (MVE), is a SIMD/vector instruction set added in ARMv8.1-M (2019). It's roughly analogous to NEON on Cortex-A but designed under MCU constraints — the vector registers <em>share storage with the FPU register file</em> rather than adding a third register file, which keeps die area small. Cortex-M55 was the first core to ship it; M52 and M85 followed. Helium accelerates audio, image, and ML inference on MCUs and is the reason "TinyML on a Cortex-M" became a category in the early 2020s. The Cortex-M33 in edevkit1's RP2350B does <em>not</em> have Helium — it predates the extension.</p>
+
+<h3 id="isa-trustzone">TrustZone-M (ARMv8-M)</h3>
+
+<p>TrustZone-M (introduced in ARMv8-M, 2016) splits the address space into <em>Secure</em> and <em>Non-secure</em> regions, with hardware-enforced transitions. This is different from TrustZone-A (which splits into Secure and Non-secure <em>worlds</em> using a separate MMU); TrustZone-M is much lighter — it adds a Security Attribution Unit (SAU), reserves part of the NVIC priorities for Secure interrupts, and provides Secure Gateway (<code>SG</code>) instructions for controlled cross-world calls. Common use cases: keep cryptographic keys out of application code, isolate a measured-boot stage from the rest of the app, run a TF-M (Trusted Firmware-M) reference stack alongside an RTOS. TrustZone-M is optional on every M-profile core; it's <em>present</em> on RP2350B's M33 but edevkit1 currently builds with TrustZone disabled (single-world boot).</p>
+
+<p class="small">Sources: <a href="https://en.wikipedia.org/wiki/ARM_architecture_family">Wikipedia — ARM architecture family</a>, <a href="https://developer.arm.com/Architectures/M-Profile%20Architecture">Arm M-Profile Architecture overview</a>, Joseph Yiu, <em>The Definitive Guide to Arm Cortex-M23 and Cortex-M33 Processors</em> (2021) — chapter 1 covers the ARMv8-M positioning.</p>
+
+<!-- =========================================================== -->
+<h2 id="cortex-m-family">The Cortex-M family at a glance</h2>
+
+<p>Twelve M-profile cores have shipped to date. The table below is the canonical comparison; the per-core paragraphs that follow explain what each one is actually <em>for</em>.</p>
+
+<table>
+  <tr>
+    <th>Core</th>
+    <th>ISA</th>
+    <th>Year</th>
+    <th>Pipeline</th>
+    <th>FPU</th>
+    <th>DSP</th>
+    <th>MPU</th>
+    <th>TrustZone</th>
+    <th>Helium</th>
+    <th>Cache</th>
+    <th>Typical fmax</th>
+  </tr>
+  <tr>
+    <td><strong>M0</strong></td><td>ARMv6-M</td><td>2009</td><td>3-stage</td>
+    <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>~50 MHz</td>
+  </tr>
+  <tr>
+    <td><strong>M0+</strong></td><td>ARMv6-M</td><td>2012</td><td>2-stage</td>
+    <td>—</td><td>—</td><td>opt</td><td>—</td><td>—</td><td>—</td><td>~50 MHz</td>
+  </tr>
+  <tr>
+    <td><strong>M1</strong></td><td>ARMv6-M</td><td>2007</td><td>3-stage</td>
+    <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>FPGA-soft (~150 MHz)</td>
+  </tr>
+  <tr>
+    <td><strong>M3</strong></td><td>ARMv7-M</td><td>2004</td><td>3-stage</td>
+    <td>—</td><td>—</td><td>opt</td><td>—</td><td>—</td><td>—</td><td>~100–180 MHz</td>
+  </tr>
+  <tr>
+    <td><strong>M4</strong></td><td>ARMv7E-M</td><td>2010</td><td>3-stage</td>
+    <td>opt SP</td><td>yes</td><td>opt</td><td>—</td><td>—</td><td>—</td><td>~120–240 MHz</td>
+  </tr>
+  <tr>
+    <td><strong>M7</strong></td><td>ARMv7E-M</td><td>2014</td><td>6-stage, dual-issue</td>
+    <td>opt SP/DP</td><td>yes</td><td>opt</td><td>—</td><td>—</td><td>up to 64 KB I+D</td><td>~400–600 MHz</td>
+  </tr>
+  <tr>
+    <td><strong>M23</strong></td><td>ARMv8-M Baseline</td><td>2016</td><td>2-stage</td>
+    <td>—</td><td>—</td><td>opt</td><td>opt</td><td>—</td><td>—</td><td>~50–80 MHz</td>
+  </tr>
+  <tr>
+    <td><strong>M33</strong></td><td>ARMv8-M Mainline</td><td>2016</td><td>3-stage</td>
+    <td>opt SP</td><td>opt</td><td>opt</td><td>opt</td><td>—</td><td>—</td><td>~150–300 MHz</td>
+  </tr>
+  <tr>
+    <td><strong>M35P</strong></td><td>ARMv8-M Mainline</td><td>2018</td><td>3-stage</td>
+    <td>opt SP</td><td>opt</td><td>opt</td><td>opt</td><td>—</td><td>up to 16 KB</td><td>~200 MHz</td>
+  </tr>
+  <tr>
+    <td><strong>M52</strong></td><td>ARMv8.1-M</td><td>2023</td><td>4-stage</td>
+    <td>opt SP/DP</td><td>yes</td><td>opt</td><td>opt</td><td>opt</td><td>up to 64 KB</td><td>~400 MHz</td>
+  </tr>
+  <tr>
+    <td><strong>M55</strong></td><td>ARMv8.1-M</td><td>2020</td><td>4–5-stage</td>
+    <td>opt SP/DP</td><td>yes</td><td>opt</td><td>opt</td><td>opt</td><td>up to 64 KB</td><td>~400–500 MHz</td>
+  </tr>
+  <tr>
+    <td><strong>M85</strong></td><td>ARMv8.1-M</td><td>2022</td><td>7-stage, dual-issue</td>
+    <td>opt SP/DP</td><td>yes</td><td>opt</td><td>opt</td><td>opt</td><td>up to 64 KB</td><td>~500–700 MHz</td>
+  </tr>
+</table>
+
+<p class="small">"opt" = optional in the silicon licensee's configuration; whether a specific SoC includes a feature depends on the chip vendor, not on the core name.</p>
+
+<h3 id="core-m0">Cortex-M0 (2009)</h3>
+<p>The smallest mainstream ARM core ever shipped — about 12,000 gates in its smallest configuration. Designed to displace 8-bit MCUs (8051, AVR, PIC) in cost-sensitive applications. ARMv6-M, 3-stage pipeline, 56 base instructions, Thumb-1 plus a small Thumb-2 subset (BL, DMB, DSB, ISB, MRS, MSR). No DSP, no FPU, no divide, no IT block. NVIC supports up to 32 external interrupts. Used in Nordic nRF51, NXP LPC11xx, ST STM32F0.</p>
+
+<h3 id="core-m0plus">Cortex-M0+ (2012)</h3>
+<p>An optimised re-implementation of M0: shorter pipeline (2 stages), single-cycle GPIO option, optional MPU. Lower power than M0, same ISA. The most commonly seen "tiny" Cortex-M today: NXP Kinetis KL series, Microchip SAM L21, RP2040 (the first Pi Pico chip). Note: <strong>edevkit1's predecessor target had RP2040 (M0+); edevkit1 itself moved to RP2350B (dual M33).</strong></p>
+
+<h3 id="core-m1">Cortex-M1 (2007)</h3>
+<p>An FPGA-soft core, sold to FPGA vendors (originally Actel/Microsemi, later Altera, Xilinx). Same ARMv6-M ISA as M0/M0+ but optimised for FPGA fabric rather than ASIC. Niche today; you'll meet it only if you're working with older FPGA SoC platforms.</p>
+
+<h3 id="core-m3">Cortex-M3 (2004)</h3>
+<p>The first M-profile core, and the workhorse of the 2010s. ARMv7-M, full Thumb-2, hardware divide, saturated arithmetic, optional MPU, NVIC up to 240 interrupts. Three-stage pipeline. The ST STM32F1, NXP LPC1768, TI Stellaris LM3S, and Atmel SAM3 ranges all built their early lineups on M3. Most introductory-Cortex-M textbooks (Yiu's <em>Cortex-M3 Definitive Guide</em>) target this core.</p>
+
+<h3 id="core-m4">Cortex-M4 (2010)</h3>
+<p>M3 plus the DSP extensions of ARMv7E-M (single-cycle MAC, packed SIMD on 32-bit registers, saturating add/sub) and an optional single-precision FPU. Aimed at signal processing — audio codecs, motor-control loops, sensor fusion. STM32F4, NXP K64, Nordic nRF52840 (M4F = M4 with FPU). For most "I want decent compute on a battery" products through the late 2010s, M4F was the default answer.</p>
+
+<h3 id="core-m7">Cortex-M7 (2014)</h3>
+<p>The first high-performance Cortex-M. 6-stage in-order superscalar (dual-issue under restricted conditions), branch prediction, optional caches (up to 64 KB I and 64 KB D), TCM (Tightly Coupled Memory) interfaces, optional double-precision FPU. STM32H7 family hits 480 MHz. Targeted at applications previously served by Cortex-A or DSP — high-end motor control, audio mixing, machine vision. Caveat: M7 introduces cache coherency complications that lower-end M cores don't have, and you'll want to read the cache-management chapter of the TRM before doing DMA.</p>
+
+<h3 id="core-m23">Cortex-M23 (2016)</h3>
+<p>The ARMv8-M Baseline core. Roughly "M0+ with TrustZone-M added". 2-stage pipeline, very small die area, hardware divide, compare-and-branch (CBZ/CBNZ). Targeted at IoT endpoints where the security uplift from TrustZone-M is needed but the budget for full M33 isn't. Microchip SAM L11, Nuvoton M2351.</p>
+
+<h3 id="core-m33">Cortex-M33 (2016)</h3>
+<p>The ARMv8-M Mainline core. Roughly "M4 with TrustZone-M". 3-stage pipeline, optional FPU, optional DSP, optional MPU, optional TrustZone, optional co-processor interface. ST STM32L5 / U5 / H5, Nordic nRF53/nRF54, NXP LPC55xx, Renesas RA, Raspberry Pi RP2350. <strong>This is the core in edevkit1's RP2350B</strong> — see <a href="arm_cortex_m33.html">arm_cortex_m33.html</a> for the deep dive.</p>
+
+<h3 id="core-m35p">Cortex-M35P (2018)</h3>
+<p>M33 plus optional anti-tamper / side-channel protections (the "P" stands for "physical security"). Adds a parity/error-correcting cache and design-time mitigations against power-analysis attacks. Used in secure-element-class chips and smart-card SoCs.</p>
+
+<h3 id="core-m52">Cortex-M52 (2023)</h3>
+<p>The most recent M-profile addition (announced April 2024 for ARMv8.1-M). Targets cost-sensitive ML / DSP — Helium with MVE-int but optional MVE-fp; lower area and power than M55. Renesas RA8T1 was an early licensee.</p>
+
+<h3 id="core-m55">Cortex-M55 (2020)</h3>
+<p>First Cortex-M with Helium / MVE. ARMv8.1-M Mainline, 4–5-stage pipeline, optional FPU, optional caches. Designed for "ML on the edge" — keyword-spotting, sensor fusion, vision pipelines. Helium gives ~5–15× speedup over M4 on typical DSP/ML kernels.</p>
+
+<h3 id="core-m85">Cortex-M85 (2022)</h3>
+<p>The current Cortex-M performance flagship. 7-stage dual-issue pipeline, Helium, optional FPU/caches, PAC (Pointer Authentication) and BTI (Branch Target Identification) for control-flow integrity. Renesas RA8M1 was an early lead chip. Aimed squarely at workloads previously needing a Cortex-A — small-screen UIs, edge-AI inference, software-defined radio.</p>
+
+<p class="small">Sources: <a href="https://en.wikipedia.org/wiki/ARM_Cortex-M">Wikipedia — Cortex-M family</a>, <a href="https://developer.arm.com/Processors">Arm Processors overview</a> for per-core landing pages.</p>
+
+<!-- =========================================================== -->
+<h2 id="prog-model">Programmer's model — registers, modes, privilege</h2>
+
+<p>Every Cortex-M core (M0 through M85) shares the same programmer-visible model: 16 32-bit "main" registers, a small set of special-purpose registers, two operating modes, two privilege levels, and (since ARMv8-M) optional Secure / Non-secure banking on top. Most of what you'll do in firmware ultimately reads and writes these registers, even when you're really writing C — the compiler is just a translator.</p>
+
+<h3 id="prog-main-regs">The main register file (R0–R15)</h3>
+
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│  Cortex-M main registers (all 32-bit)                        │
+├──────────────────────────────────────────────────────────────┤
+│  R0   ┐                                                      │
+│  R1   │  General-purpose, low registers                      │
+│  R2   │  (16-bit Thumb instructions can address R0–R7)       │
+│  R3   │                                                      │
+│  R4   │                                                      │
+│  R5   │                                                      │
+│  R6   │                                                      │
+│  R7   ┘                                                      │
+│  R8   ┐                                                      │
+│  R9   │  General-purpose, high registers                     │
+│  R10  │  (only 32-bit Thumb-2 instructions reach these)      │
+│  R11  │                                                      │
+│  R12  ┘   (a.k.a. IP — intra-procedure scratch in AAPCS)     │
+│  R13     SP — Stack Pointer (banked: MSP / PSP)              │
+│  R14     LR — Link Register (return address / EXC_RETURN)    │
+│  R15     PC — Program Counter (always +4 ahead in Thumb)     │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+
+<p>R0–R12 are general-purpose 32-bit registers. <strong>R13 is the stack pointer</strong>, but it is <em>banked</em> — there are physically two stack pointers, MSP and PSP, and which one the name "R13" refers to depends on the current execution context (more on this below). R14 is the link register: when you execute a <code>BL</code> (branch-and-link) instruction, the return address is stored in LR. R15 is the program counter; in Thumb-2, reading PC always returns the address of the current instruction + 4 (a quirk inherited from the original three-stage pipeline).</p>
+
+<div class="callout">
+  <span class="label">AAPCS calling convention</span>
+  C compilers for ARM follow the <strong>AAPCS</strong> (Procedure Call Standard for the Arm Architecture). R0–R3 hold function arguments (and R0 the return value); R4–R11 are callee-saved; R12 is scratch (a.k.a. IP, the "intra-procedure-call scratch register"); LR holds the return address; SP is 8-byte aligned at function-call boundaries. When you read disassembly and wonder "why is the compiler clobbering R0–R3 so freely?" — that's why.
+</div>
+
+<h3 id="prog-banked-sp">Banked stack pointers (MSP and PSP)</h3>
+
+<p>The "two SPs" thing is one of Cortex-M's defining features. The hardware has two physical 32-bit stack-pointer registers:</p>
+
+<ul>
+  <li><strong>MSP — Main Stack Pointer.</strong> Used at reset, in all exception handlers, and in privileged Thread mode by default. This is the SP your bare-metal main() runs against.</li>
+  <li><strong>PSP — Process Stack Pointer.</strong> Used by Thread mode <em>only</em> when an RTOS or scheduler explicitly switches to it (by setting <code>CONTROL.SPSEL = 1</code>). RTOS task stacks live in PSP-space; the kernel and ISRs run on MSP.</li>
+</ul>
+
+<p>The instruction set sees R13 / SP. Which physical register R13 maps to depends on (mode, CONTROL.SPSEL):</p>
+
+<table>
+  <tr><th>Mode</th><th>CONTROL.SPSEL</th><th>SP refers to</th><th>Typical use</th></tr>
+  <tr><td>Handler</td><td>(forced 0)</td><td>MSP</td><td>All ISRs always run on MSP.</td></tr>
+  <tr><td>Thread</td><td>0</td><td>MSP</td><td>Bare-metal main() before RTOS takes over; or single-stack RTOS configs.</td></tr>
+  <tr><td>Thread</td><td>1</td><td>PSP</td><td>RTOS task code runs here.</td></tr>
+</table>
+
+<p>Why bother? Two reasons. (1) <strong>Stack overflow isolation:</strong> if a task overflows its own stack (PSP), it doesn't corrupt the kernel's stack (MSP). (2) <strong>Cleaner context switching:</strong> the kernel can save/restore PSP without touching MSP, so an ISR can preempt a task and the task's stack frame stays untouched. If you've used RTOSes on AVR or PIC, this is a feature you've been working without; it's a real quality-of-life upgrade.</p>
+
+<h3 id="prog-xpsr">The xPSR register</h3>
+
+<p>The "Program Status Register" is conceptually one 32-bit register that holds three logical sub-registers — <strong>APSR</strong> (Application), <strong>IPSR</strong> (Interrupt), <strong>EPSR</strong> (Execution). They share the same physical bits and you can read them all at once via the <code>MRS</code> instruction with mnemonic <code>xPSR</code>:</p>
+
+<pre><code>xPSR (32 bits) — combined view
+ 31 30 29 28 27   26              25 24    23 ────── 16   15 ─────── 10   9 ─────── 0
+┌──┬──┬──┬──┬──┬───────────────┬───┬──┬──────────────┬─────────────┬─────────────┐
+│ N│ Z│ C│ V│ Q│  GE[3:0] (M4+ │ICI│T │  reserved    │  ICI/IT     │ Exc number  │
+│  │  │  │  │  │  DSP only)   │/IT│  │              │  cont.      │ (IPSR)      │
+└──┴──┴──┴──┴──┴───────────────┴───┴──┴──────────────┴─────────────┴─────────────┘
+ └──── APSR ──────┘                  └──── EPSR ──────────────────┘└── IPSR ─────┘
+</code></pre>
+
+<table>
+  <tr><th>Field</th><th>Bits</th><th>Meaning</th></tr>
+  <tr><td>N</td><td>31</td><td>Negative — sign bit of the last result.</td></tr>
+  <tr><td>Z</td><td>30</td><td>Zero — last result was zero.</td></tr>
+  <tr><td>C</td><td>29</td><td>Carry — unsigned overflow / shift carry-out.</td></tr>
+  <tr><td>V</td><td>28</td><td>oVerflow — signed overflow.</td></tr>
+  <tr><td>Q</td><td>27</td><td>Saturation flag (sticky; set by saturating DSP instructions).</td></tr>
+  <tr><td>GE[3:0]</td><td>19–16</td><td>Greater-or-Equal flags from SIMD parallel adds (M4+/M7/M33-with-DSP).</td></tr>
+  <tr><td>ICI/IT</td><td>15–10, 26–25</td><td>Interruptible-Continuable / If-Then state. Holds in-flight conditional execution state.</td></tr>
+  <tr><td>T</td><td>24</td><td>Thumb state — <strong>always 1 on Cortex-M</strong>. Clearing it raises a UsageFault.</td></tr>
+  <tr><td>Exception number</td><td>8–0</td><td>0 = Thread mode; otherwise the IRQ number being handled. Read via IPSR.</td></tr>
+</table>
+
+<p>You usually don't write xPSR directly from C — the compiler emits the right flag-setting instructions and you check them with <code>if</code>/<code>while</code>. But there are three places it matters:</p>
+
+<ol>
+  <li><strong>Reading IPSR</strong> from a function called by both an ISR and a thread, to figure out which one you're in.</li>
+  <li><strong>Restoring xPSR during context switch</strong> — the RTOS reload xPSR from a saved task frame.</li>
+  <li><strong>Stack-frame inspection in fault handlers</strong> — the auto-pushed xPSR is the program state at the moment the fault occurred.</li>
+</ol>
+
+<pre><code>// Reading the IPSR from C using a CMSIS intrinsic
+#include &lt;cmsis_compiler.h&gt;
+
+bool in_isr_context(void) {
+    return __get_IPSR() != 0;   // 0 = Thread mode; nonzero = handler
+}
+
+// Equivalent inline asm:
+uint32_t ipsr;
+__asm volatile ("MRS %0, IPSR" : "=r"(ipsr));
+</code></pre>
+
+<h3 id="prog-special-regs">Special-purpose registers</h3>
+
+<p>Four small special registers control privilege, exception masking, and stack selection. They are accessed via the <code>MRS</code> (read) and <code>MSR</code> (write) instructions, or the equivalent CMSIS intrinsics.</p>
+
+<table>
+  <tr><th>Register</th><th>Width</th><th>Purpose</th></tr>
+  <tr><td><code>PRIMASK</code></td><td>1 bit</td><td>When set to 1, masks <em>all</em> exceptions except NMI and HardFault. The simplest "disable interrupts" knob — equivalent to the <code>cpsid i</code> instruction.</td></tr>
+  <tr><td><code>FAULTMASK</code></td><td>1 bit</td><td>Like PRIMASK but also masks HardFault (NMI still gets through). Cleared automatically on exception return. Mainline-only.</td></tr>
+  <tr><td><code>BASEPRI</code></td><td>8 bits</td><td>Mask only exceptions whose priority value is &gt;= BASEPRI. Lets you raise the priority floor without disabling everything. Mainline-only (not on M0/M0+/M23).</td></tr>
+  <tr><td><code>CONTROL</code></td><td>3 bits</td><td>Bit 0: <em>nPRIV</em> in Thread mode (0 = priv, 1 = unpriv). Bit 1: <em>SPSEL</em> (0 = MSP, 1 = PSP). Bit 2: <em>FPCA</em> (FP context active; set automatically when FP regs are dirty).</td></tr>
+</table>
+
+<pre><code>// Disable all maskable interrupts (PRIMASK = 1)
+__disable_irq();           // CMSIS intrinsic, expands to "cpsid i"
+
+// Raise priority floor: only allow IRQs at priority &lt; 2 to fire
+__set_BASEPRI(2 &lt;&lt; (8 - __NVIC_PRIO_BITS));
+
+// Switch Thread mode to use PSP (an RTOS does this once at startup)
+uint32_t ctrl = __get_CONTROL();
+ctrl |= 0x2;                // SPSEL = 1
+__set_CONTROL(ctrl);
+__ISB();                    // instruction-sync barrier — required after CONTROL writes
+</code></pre>
+
+<h3 id="prog-modes">Operating modes and privilege</h3>
+
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│                        Cortex-M execution context                │
+├──────────────────────┬──────────────────────────────────────────┤
+│      Mode            │   Privilege  │   SP    │  Examples       │
+├──────────────────────┼──────────────┼─────────┼─────────────────┤
+│ Handler              │  Privileged  │  MSP    │  Inside an ISR  │
+│ Thread               │  Privileged  │  MSP    │  Bare-metal main│
+│ Thread               │  Privileged  │  PSP    │  RTOS kernel    │
+│ Thread               │  Unprivileged│  PSP    │  RTOS user task │
+└──────────────────────┴──────────────┴─────────┴─────────────────┘
+</code></pre>
+
+<ul>
+  <li><strong>Handler mode</strong> is entered automatically when an exception fires; it is always privileged and always uses MSP.</li>
+  <li><strong>Thread mode</strong> is the normal "running code" mode. Privilege is controlled by <code>CONTROL.nPRIV</code>; SP selection by <code>CONTROL.SPSEL</code>.</li>
+  <li>An unprivileged thread <em>cannot</em> access most special registers, cannot reach the System Control Block (SCB), cannot execute <code>cpsid i</code>, and is restricted by the MPU if configured. To get back to privileged mode it must trap via <code>SVC</code> into a handler.</li>
+</ul>
+
+<p>A typical RTOS uses all four boxes: kernel runs in privileged Thread/PSP, user tasks run in unprivileged Thread/PSP (with MPU regions), all ISRs run in Handler/MSP. Bare-metal firmware lives entirely in privileged Thread/MSP.</p>
+
+<p class="small">Sources: <a href="https://developer.arm.com/documentation/dui0552/a/the-cortex-m3-processor/programmers-model/core-registers">Arm DUI 0552 — Cortex-M3 core registers</a>, <a href="https://arm-software.github.io/CMSIS_6/main/Core/group__Core__Register__gr.html">CMSIS-Core register-access intrinsics</a>.</p>
+
+<!-- =========================================================== -->
+<h2 id="exception-model">The exception model — NVIC, vector table, stacking</h2>
+
+<p>An "exception" on Cortex-M means anything that interrupts the linear flow of instructions: hardware interrupts (UART RX, timer overflow, GPIO edge), supervisor calls (<code>SVC</code>), faults (bus error, unaligned access), the periodic SysTick, and so on. Cortex-M handles all of them through one mechanism: the <strong>NVIC</strong> (Nested Vectored Interrupt Controller). Understanding NVIC is non-negotiable for embedded ARM work.</p>
+
+<h3 id="vector-table">The vector table</h3>
+
+<p>The vector table is a flat array of 32-bit pointers placed at the base of code memory (by default <code>0x00000000</code>; relocatable via <code>VTOR</code>). Slot 0 is special: it holds the <em>initial value loaded into MSP at reset</em> — not a function pointer. From slot 1 onward each entry is the address of a handler function.</p>
+
+<pre><code>Offset  Slot  Vector              Description
+─────── ────  ──────────────────  ──────────────────────────────────────────
+0x000   0     Initial MSP value   Loaded into SP[main] on reset
+0x004   1     Reset_Handler       First instruction executed after reset
+0x008   2     NMI_Handler         Non-maskable interrupt (vendor-asserted)
+0x00C   3     HardFault_Handler   Catch-all fault (always priority -1)
+0x010   4     MemManage_Handler   MPU access violation (Mainline only)
+0x014   5     BusFault_Handler    Bus errors (Mainline only)
+0x018   6     UsageFault_Handler  Undefined instr, divide-by-zero, etc.
+0x01C   7     SecureFault_Handler Secure-mode violation (ARMv8-M only)
+0x020   8─10  reserved
+0x02C   11    SVC_Handler         Supervisor call (used by RTOSes)
+0x030   12    DebugMon_Handler    Debug monitor (used in non-halt debug)
+0x034   13    reserved
+0x038   14    PendSV_Handler      Pendable supervisor call (RTOS context-switch)
+0x03C   15    SysTick_Handler     Architectural 24-bit timer
+0x040   16    IRQ0                External interrupts begin here
+0x044   17    IRQ1                  …vendor-defined…
+0x048   18    IRQ2                
+…       …    …                   up to 240 (Cortex-M3/M4/M7) or 480 (M33+)
+</code></pre>
+
+<p>In Zephyr (and most modern frameworks) you don't write the table by hand — the linker collects <code>IRQ_CONNECT()</code> registrations into a generated table and places it at the right offset. But on bare-metal, you might write the table directly:</p>
+
+<pre><code>// Minimal vector table in C (gcc-arm-none-eabi)
+extern uint32_t _stack_top;            // from linker script
+
+void Reset_Handler(void);
+void NMI_Handler(void)       __attribute__((weak, alias("Default_Handler")));
+void HardFault_Handler(void) __attribute__((weak, alias("Default_Handler")));
+// ...etc
+
+__attribute__((section(".isr_vector"), used))
+const void * const vector_table[] = {
+    (void*)&_stack_top,    // 0x00 initial MSP
+    Reset_Handler,         // 0x04
+    NMI_Handler,           // 0x08
+    HardFault_Handler,     // 0x0C
+    MemManage_Handler,
+    BusFault_Handler,
+    UsageFault_Handler,
+    0, 0, 0, 0,
+    SVC_Handler,
+    DebugMon_Handler,
+    0,
+    PendSV_Handler,
+    SysTick_Handler,
+    // External IRQs:
+    USART1_IRQHandler,
+    USART2_IRQHandler,
+    // ... vendor-specific list ...
+};
+</code></pre>
+
+<p>The linker script must place <code>.isr_vector</code> at the start of flash (<code>0x00000000</code> by default, or wherever VTOR is configured to point — see <a href="#startup">startup code</a>).</p>
+
+<h3 id="exc-types">Built-in exception types</h3>
+
+<table>
+  <tr><th>#</th><th>Name</th><th>Priority</th><th>What it catches</th></tr>
+  <tr><td>1</td><td>Reset</td><td>-3 (highest)</td><td>Power-on, reset pin, software reset.</td></tr>
+  <tr><td>2</td><td>NMI</td><td>-2</td><td>Non-maskable; used by vendor for clock-fail / brown-out.</td></tr>
+  <tr><td>3</td><td>HardFault</td><td>-1</td><td>Any fault that escalates (or all faults if MemManage/BusFault/UsageFault are disabled).</td></tr>
+  <tr><td>4</td><td>MemManage</td><td>cfg</td><td>MPU violation, execution from XN region.</td></tr>
+  <tr><td>5</td><td>BusFault</td><td>cfg</td><td>Bus error on instr fetch / data load / store.</td></tr>
+  <tr><td>6</td><td>UsageFault</td><td>cfg</td><td>Undefined instruction, unaligned access (when CCR.UNALIGN_TRP=1), divide-by-zero (when CCR.DIV_0_TRP=1), invalid EXC_RETURN, SP misalignment.</td></tr>
+  <tr><td>7</td><td>SecureFault</td><td>cfg</td><td>Secure-side violation (ARMv8-M with TrustZone).</td></tr>
+  <tr><td>11</td><td>SVCall</td><td>cfg</td><td>Software-triggered supervisor call (<code>SVC #imm</code>); RTOS syscall trampoline.</td></tr>
+  <tr><td>12</td><td>DebugMonitor</td><td>cfg</td><td>Debug events when halt-mode debug is disabled.</td></tr>
+  <tr><td>14</td><td>PendSV</td><td>cfg</td><td>Pendable, deferred SVC. <strong>Used universally for RTOS context switching.</strong></td></tr>
+  <tr><td>15</td><td>SysTick</td><td>cfg</td><td>The architectural 24-bit countdown timer.</td></tr>
+  <tr><td>16+</td><td>IRQ0..n</td><td>cfg</td><td>External vendor-defined interrupts.</td></tr>
+</table>
+
+<h3 id="exc-priority">Priority encoding and grouping</h3>
+
+<p>NVIC priority is stored in 8-bit fields, but only the top <em>N</em> bits are implemented in silicon — usually 3, 4, or 8 depending on the core and vendor configuration. The Cortex-M3 baseline implements 3 bits → 8 distinct priorities. The Cortex-M33 implementation in RP2350B implements 4 bits → 16 priorities.</p>
+
+<pre><code>NVIC priority byte (8 bits, MSB-aligned)
+┌──────────────────────────┬──────────────────────────┐
+│  Pre-emption priority    │  Sub-priority            │
+│  (split via PRIGROUP)    │  (split via PRIGROUP)    │
+└──────────────────────────┴──────────────────────────┘
+   higher byte = LOWER priority (0 = highest urgency)
+</code></pre>
+
+<p>Two important conventions:</p>
+
+<ol>
+  <li><strong>Lower numeric value = higher priority.</strong> Priority 0 wins over priority 7. This trips up everyone learning NVIC for the first time.</li>
+  <li><strong>Only the implemented bits matter.</strong> If your chip implements 3 priority bits, the priorities are stored in bits [7:5], so writing 0x80 and 0xA0 both round down to the same priority value internally. CMSIS provides <code>__NVIC_PRIO_BITS</code> macros so portable code can shift correctly.</li>
+</ol>
+
+<p>The <code>SCB-&gt;AIRCR.PRIGROUP</code> field splits the 8 bits between <em>pre-emption priority</em> (whether one IRQ can pre-empt another) and <em>sub-priority</em> (tie-breaker for two pending IRQs at the same pre-emption priority).</p>
+
+<pre><code>// Set USART1 IRQ to pre-emption priority 3 on a 4-bit-implementation chip
+NVIC_SetPriority(USART1_IRQn, 3);
+NVIC_EnableIRQ(USART1_IRQn);
+</code></pre>
+
+<h3 id="exc-entry">Exception entry: hardware stacking</h3>
+
+<p>When an exception fires, the Cortex-M core does this in hardware, before your handler runs:</p>
+
+<ol>
+  <li><strong>Push 8 registers</strong> onto the active stack (MSP if from Handler mode or from Thread/MSP, PSP if from Thread/PSP). The order is fixed:
+    <pre><code>SP -&gt; ┌──────────────┐  &lt;-- lower address
+       │     R0       │
+       │     R1       │
+       │     R2       │
+       │     R3       │
+       │     R12      │
+       │     LR       │
+       │     PC       │  &lt;-- the address of the *next* instruction the
+       │     xPSR     │      interrupted code would have run
+       └──────────────┘  &lt;-- higher address
+</code></pre>
+  </li>
+  <li><strong>Load LR with EXC_RETURN.</strong> A magic value (<code>0xFFFFFFFx</code>) that encodes "this is an exception return" plus which mode/SP to return to. See below.</li>
+  <li><strong>Fetch the vector</strong> from the vector table at offset (4 &times; exception_number). This is concurrent with stacking — Cortex-M overlaps the two.</li>
+  <li><strong>Set IPSR</strong> to the exception number; switch to Handler mode; SP becomes MSP.</li>
+  <li><strong>Branch</strong> to the handler.</li>
+</ol>
+
+<p>Because R0–R3, R12, LR, PC, and xPSR are all auto-saved, an interrupt handler written in C is correct without any assembly prologue — the C ABI just sees a normal function call where the saved registers are already on the stack. <strong>This is why Cortex-M ISRs are written in C with no special attributes.</strong> (On AVR or PIC, you have to mark a function <code>__interrupt</code> so the compiler emits a save/restore preamble; on Cortex-M, you don't.)</p>
+
+<p>If the FPU is in use and dirty, an additional 18 words (S0–S15 plus FPSCR plus padding) are stacked — this is the <em>extended stack frame</em>. Cortex-M4F and later support <strong>lazy FP stacking</strong>: the space is reserved on the stack, but the actual S0–S15 are only saved if the handler itself touches FP, saving cycles in pure-integer ISRs.</p>
+
+<h3 id="exc-return">Exception return: EXC_RETURN values</h3>
+
+<p>When the handler returns (via <code>BX LR</code>, <code>POP {PC}</code>, etc.), the core sees the magic LR value and unstacks. EXC_RETURN encodes:</p>
+
+<table>
+  <tr><th>EXC_RETURN</th><th>Mode after return</th><th>SP after return</th><th>Frame type</th></tr>
+  <tr><td><code>0xFFFFFFF1</code></td><td>Handler</td><td>MSP</td><td>Basic (8-word)</td></tr>
+  <tr><td><code>0xFFFFFFF9</code></td><td>Thread</td><td>MSP</td><td>Basic</td></tr>
+  <tr><td><code>0xFFFFFFFD</code></td><td>Thread</td><td>PSP</td><td>Basic</td></tr>
+  <tr><td><code>0xFFFFFFE1</code></td><td>Handler</td><td>MSP</td><td>Extended (with FP)</td></tr>
+  <tr><td><code>0xFFFFFFE9</code></td><td>Thread</td><td>MSP</td><td>Extended</td></tr>
+  <tr><td><code>0xFFFFFFED</code></td><td>Thread</td><td>PSP</td><td>Extended</td></tr>
+</table>
+
+<p>An RTOS context switch in PendSV typically <em>modifies</em> the EXC_RETURN value before returning — for example, switching from "return to MSP" to "return to PSP" so the next thread runs on its own stack.</p>
+
+<h3 id="exc-tailchain">Tail-chaining and late-arrival</h3>
+
+<p>Two important optimisations the core does automatically — they affect interrupt-latency calculations and the design of priority assignments.</p>
+
+<p><strong>Tail-chaining:</strong> if an ISR is about to return (unstacking) and another exception is already pending, the core skips the unstack-then-restack sequence (which would push and pop the same 8 registers) and jumps directly to the next handler with the original frame still on the stack. Saves ~6 cycles per chained IRQ pair.</p>
+
+<p><strong>Late arrival:</strong> if a higher-priority exception fires while the core is still <em>stacking</em> for a lower-priority one, the core can switch targets — fetch the higher-priority handler's vector instead, while the same stack frame is reused. The lower-priority IRQ then becomes pending and tail-chains afterwards. Saves the latency of completing the stack-then-unstack pair.</p>
+
+<h3 id="exc-svc-pendsv">SVC, PendSV, and SysTick — the RTOS triad</h3>
+
+<p>Three exceptions exist specifically because RTOSes need them, and almost every Cortex-M RTOS (FreeRTOS, Zephyr, ThreadX, RT-Thread, Mbed) uses them in essentially the same way:</p>
+
+<ul>
+  <li><strong>SVC (SVCall)</strong> — A synchronous, deliberate trap from Thread to Handler mode, invoked by the <code>SVC #imm</code> instruction. Used as the entry into kernel syscalls (e.g. <code>k_yield()</code>, <code>k_sleep()</code>): the user task executes <code>SVC #N</code>, the SVC handler reads the immediate, dispatches the corresponding kernel function. Why use SVC instead of a regular function call? Because SVC promotes execution to privileged mode, so the kernel can do things the unprivileged task can't.</li>
+  <li><strong>PendSV (Pendable SV)</strong> — A pending, deferrable exception used universally for <strong>context switching</strong>. Configured at the lowest priority. When the kernel decides to switch tasks (from a higher-priority ISR, from SVC, from a SysTick tick), it sets <code>SCB-&gt;ICSR.PENDSVSET</code>. The PendSV handler then runs <em>after</em> all higher-priority work is done, performs the actual save-old-context / restore-new-context sequence, and returns into the new task. This guarantees task switches happen at a quiet moment, not in the middle of a high-priority IRQ.</li>
+  <li><strong>SysTick</strong> — A 24-bit architectural countdown timer baked into every Cortex-M core. The RTOS configures it to fire every 1 ms (or whatever <code>CONFIG_SYS_CLOCK_TICKS_PER_SEC</code> is) to drive scheduling decisions. Because SysTick is part of the core, kernel code that uses it is portable across all Cortex-M vendors.</li>
+</ul>
+
+<pre><code>// Sketch of a PendSV-based context switch (simplified, ARM asm):
+PendSV_Handler:
+    cpsid  i               // mask interrupts during the swap
+    mrs    r0, psp         // r0 = current task's PSP
+    stmdb  r0!, {r4-r11}   // push callee-saved (R4-R11) onto its stack
+
+    ldr    r1, =current_tcb
+    ldr    r2, [r1]        // r2 = current TCB
+    str    r0, [r2]        // save new SP into current TCB
+
+    bl     scheduler_pick_next   // returns next TCB in r0
+    str    r0, [r1]              // current_tcb = next
+
+    ldr    r0, [r0]              // r0 = next task's saved SP
+    ldmia  r0!, {r4-r11}         // pop R4-R11
+    msr    psp, r0               // PSP = top of next task's frame
+
+    cpsie  i
+    bx     lr               // hardware unstacks R0-R3,R12,LR,PC,xPSR
+                            // EXC_RETURN says "Thread + PSP", so we
+                            // return into the next task naturally.
+</code></pre>
+
+<p class="small">Sources: <a href="https://developer.arm.com/documentation/dui0552/a/the-cortex-m3-processor/exception-model/exception-entry-and-return">Arm DUI 0552 — exception entry and return</a>, <a href="https://interrupt.memfault.com/blog/arm-cortex-m-exceptions-and-nvic">Memfault Interrupt — Cortex-M Exception Handling</a>, <a href="https://www.state-machine.com/doc/ARM-AN298.pdf">Quantum Leaps AN298 — Cortex-M Lazy Stacking</a>.</p>
+
+<!-- =========================================================== -->
+<h2 id="memory-model">Memory model — map, types, barriers, bit-banding</h2>
+
+<p>Cortex-M defines a single 4 GB physical address space, the same on every core, with a fixed default partitioning. Vendors place their actual peripherals, RAM, and flash inside the appropriate region — that's why an STM32 and an LPC and an RP2350 all <em>agree</em> on where the SRAM lives (somewhere in <code>0x20000000</code>–<code>0x3FFFFFFF</code>) even though the chips are completely different products.</p>
+
+<h3 id="memmap">The default memory map</h3>
+
+<pre><code>                Cortex-M default memory map (4 GB)
+0xFFFFFFFF ┌────────────────────────────┐
+           │  Vendor system region      │  Implementation-defined.
+0xE0100000 ├────────────────────────────┤
+           │  Private Peripheral Bus    │  NVIC, SCB, SysTick, MPU, ITM,
+           │  (PPB) — strongly-ordered  │  DWT, FPB, Debug — internal.
+0xE0000000 ├────────────────────────────┤
+           │  External device region    │  Off-chip device-mapped I/O.
+0xA0000000 ├────────────────────────────┤
+           │  External RAM region       │  Off-chip RAM (e.g. SDRAM via
+           │  (cacheable WB-WA)         │  FSMC). Code-execution OK.
+0x60000000 ├────────────────────────────┤
+           │  Peripheral region         │  On-chip peripherals: GPIO,
+           │  (non-cacheable, XN)       │  USART, I2C, SPI, etc.
+0x40000000 ├────────────────────────────┤
+           │  SRAM region               │  On-chip SRAM. Cacheable
+           │  (cacheable WB-WA)         │  (where caches exist).
+0x20000000 ├────────────────────────────┤
+           │  Code region               │  On-chip flash (XIP) /
+           │  (cacheable WT, code-OK)   │  ROM. Vector table default.
+0x00000000 └────────────────────────────┘
+</code></pre>
+
+<table>
+  <tr><th>Region</th><th>Range</th><th>Default attributes</th><th>Typical use</th></tr>
+  <tr><td>Code</td><td>0x00000000–0x1FFFFFFF</td><td>Normal, write-through, instruction-fetchable</td><td>On-chip flash mapped in for execute-in-place. Vector table at 0x00000000 by default.</td></tr>
+  <tr><td>SRAM</td><td>0x20000000–0x3FFFFFFF</td><td>Normal, write-back-write-allocate</td><td>On-chip SRAM. Optional bit-band region at 0x22000000 (M3/M4).</td></tr>
+  <tr><td>Peripheral</td><td>0x40000000–0x5FFFFFFF</td><td>Device, non-cacheable, XN (no execute)</td><td>On-chip peripheral registers. Optional bit-band at 0x42000000.</td></tr>
+  <tr><td>External RAM</td><td>0x60000000–0x9FFFFFFF</td><td>Normal, cacheable</td><td>Off-chip RAM (SDRAM, PSRAM) via memory-controller peripherals.</td></tr>
+  <tr><td>External device</td><td>0xA0000000–0xDFFFFFFF</td><td>Device, non-cacheable, XN</td><td>Off-chip memory-mapped peripherals.</td></tr>
+  <tr><td>PPB</td><td>0xE0000000–0xE00FFFFF</td><td>Strongly-ordered</td><td>Core-internal: NVIC, SCB, SysTick, MPU, ITM, DWT, FPB.</td></tr>
+  <tr><td>Vendor</td><td>0xE0100000–0xFFFFFFFF</td><td>Vendor-defined</td><td>Implementation-specific.</td></tr>
+</table>
+
+<h3 id="mem-types">Memory types: Normal, Device, Strongly-Ordered</h3>
+
+<p>Cortex-M classifies every memory region into one of three types. The classification controls what the bus / cache infrastructure may legally do.</p>
+
+<table>
+  <tr><th>Type</th><th>Reordering</th><th>Speculative read</th><th>Combinable writes</th><th>Examples</th></tr>
+  <tr><td>Normal</td><td>Allowed</td><td>Allowed</td><td>Yes</td><td>Code (flash), SRAM, off-chip RAM. Highest performance.</td></tr>
+  <tr><td>Device</td><td>Within same peripheral, no</td><td>No</td><td>No</td><td>Memory-mapped peripheral registers (UART, GPIO, etc.).</td></tr>
+  <tr><td>Strongly-Ordered</td><td>Never</td><td>Never</td><td>Never</td><td>PPB. Critical sequences (e.g. clearing a pending IRQ).</td></tr>
+</table>
+
+<p>The implication: if you write to two peripheral registers in sequence, the bus is allowed to reorder accesses to <em>different</em> Device-type regions, but not within the same one. Strongly-Ordered is the strict-ordering "do this exactly in program order" type and is mostly used inside the PPB.</p>
+
+<h3 id="mem-barriers">Memory barriers: DMB, DSB, ISB</h3>
+
+<p>Modern Cortex-M cores (M7, M33, M55, M85) have multi-stage write buffers and varying degrees of speculative execution. The ISA provides three barrier instructions; learning when to use each is part of the craft.</p>
+
+<table>
+  <tr><th>Instruction</th><th>Stops</th><th>When to use</th></tr>
+  <tr><td><code>DMB</code> Data Memory Barrier</td><td>Memory accesses on either side cannot be observed out-of-order by the rest of the system.</td><td>Multi-master / multi-core synchronisation: producer/consumer flag patterns, lock-free queues.</td></tr>
+  <tr><td><code>DSB</code> Data Synchronization Barrier</td><td>Like DMB, but the core also waits for all prior memory accesses to actually complete before continuing.</td><td>Before disabling the cache or MMU; before <code>WFI</code> in an ISR-clearing path; after writing system control registers.</td></tr>
+  <tr><td><code>ISB</code> Instruction Synchronization Barrier</td><td>Flushes the pipeline; subsequent instructions are fetched again.</td><td>After changing <code>CONTROL</code>, <code>VTOR</code>, MPU, or any privileged state that affects how subsequent instructions execute.</td></tr>
+</table>
+
+<pre><code>// Classic example: clearing a pending NVIC interrupt and immediately calling
+// WFI. Without DSB, the WFI may execute before the clear has been observed
+// by the NVIC, and the interrupt re-fires immediately.
+NVIC_ClearPendingIRQ(USART1_IRQn);
+__DSB();   // wait for the clear to actually reach the NVIC
+__WFI();   // sleep until the next interrupt
+</code></pre>
+
+<h3 id="mem-bitband">Bit-banding (Cortex-M3 and M4 only)</h3>
+
+<p>Two address regions on M3/M4 are <em>aliased</em> so each bit of memory in the source region maps to a 32-bit word in the alias region. Writing to that word atomically sets or clears the corresponding bit. This is the <strong>bit-banding</strong> region — a feature that lets you do "set bit 7 of GPIO PORTA's data register" without a read-modify-write sequence.</p>
+
+<pre><code>// Bit-banding on Cortex-M3/M4 (NOT present on M0/M0+/M23/M33)
+// SRAM bit-band:        0x20000000 -> alias 0x22000000
+// Peripheral bit-band:  0x40000000 -> alias 0x42000000
+
+// Address translation:
+//   alias = base_alias + (byte_offset * 32) + (bit_pos * 4)
+
+#define BITBAND_PERIPH(addr, bit) \
+    (*(volatile uint32_t *) \
+     (0x42000000 + (((uint32_t)(addr) - 0x40000000) * 32) + ((bit) * 4)))
+
+BITBAND_PERIPH(&GPIOA->ODR, 5) = 1;   // atomic set of GPIOA pin 5
+BITBAND_PERIPH(&GPIOA->ODR, 5) = 0;   // atomic clear of GPIOA pin 5
+</code></pre>
+
+<p><strong>Bit-banding was removed in ARMv8-M.</strong> Cortex-M23, M33, M55, M85 do not have it — too much address-space "waste" in a security-extended world. To do atomic bit operations on those cores, use exclusive load/store (<code>LDREX</code>/<code>STREX</code>) or vendor-specific atomic-set/clear registers (e.g. RP2350's GPIO has <code>SET</code>/<code>CLR</code>/<code>XOR</code> alias registers in the SIO block).</p>
+
+<h3 id="mem-endian">Endianness</h3>
+
+<p>Cortex-M cores can be configured for little-endian or "BE-8" (byte-invariant big-endian) at reset; almost every shipped chip is little-endian. Don't assume — but in practice, for embedded ARM, it's safe to assume little-endian unless you've been told otherwise. The endianness is fixed at silicon reset; you cannot switch at runtime.</p>
+
+<!-- =========================================================== -->
+<h2 id="mpu">Memory Protection Unit (MPU)</h2>
+
+<p>The MPU is an optional hardware unit (present on most M3/M4/M7/M23/M33/M55/M85 implementations, configurable by the licensee) that lets privileged code mark regions of the address space as <em>readable / writable / executable / cacheable / shareable</em> with finer granularity than the default memory map. Unlike a Cortex-A MMU, the MPU does <em>not translate</em> addresses — it only checks that the current access is permitted; if not, it raises a MemManage fault.</p>
+
+<h3 id="mpu-regions">Region model</h3>
+
+<p>The Cortex-M MPU exposes a fixed number of <em>regions</em> — usually 8 or 16, vendor-configurable. Each region has:</p>
+
+<ul>
+  <li>A base address (with size-aligned constraint on v7-M; arbitrary 32-byte-aligned on v8-M).</li>
+  <li>A size (power-of-two 32 B–4 GB on v7-M; 32-byte multiples on v8-M).</li>
+  <li>Access permissions (RWX combinations, separately for privileged vs unprivileged).</li>
+  <li>A memory-type attribute (Normal / Device / SO and cacheability).</li>
+  <li>An "execute never" (XN) bit.</li>
+  <li>A subregion-disable mask (v7-M only; splits a region into 8 equal subregions).</li>
+</ul>
+
+<p>Regions can overlap — <strong>higher-numbered regions take priority</strong> over lower-numbered ones. The default "background region" (when MPU is enabled but no region matches) can be configured to use the default memory map (privileged-only) or to fault.</p>
+
+<h3 id="mpu-uses">When MPU pays for itself</h3>
+
+<ul>
+  <li><strong>RTOS task isolation.</strong> Each task gets a region that allows access to its own stack and heap, plus shared regions for kernel data. A bug in one task that writes wild pointers gets caught immediately rather than silently corrupting another task.</li>
+  <li><strong>Stack-overflow detection.</strong> Place a 32-byte XN+R0+W0 region just below each task's stack. An overflow raises MemManage at the moment it happens, not later when the corrupted data is used.</li>
+  <li><strong>NULL-pointer dereferences.</strong> Mark <code>0x00000000</code>–<code>0x000000FF</code> as fault-on-access. Any code that does <code>*((uint32_t*)0)</code> traps, even though physically there's flash there.</li>
+  <li><strong>Functional Safety / MISRA / ISO 26262.</strong> Required by the standards above for separating mixed-criticality tasks.</li>
+</ul>
+
+<div class="callout">
+  <span class="label">When MPU is overkill</span>
+  Single-task firmware (one main loop, one ISR each for the peripherals you use) doesn't need an MPU. Adding one only makes sense once the firmware has multiple tasks at multiple criticalities <em>or</em> you're chasing a particularly nasty bug in a complex codebase. edevkit1's firmware is multi-task (USB stack on core 0, protocol engines on core 1) and will eventually use the MPU for stack-overflow detection per thread; it does not currently.
+</div>
+
+<h3 id="mpu-example">Configuring an MPU region in CMSIS</h3>
+
+<pre><code>// Cortex-M33 / ARMv8-M MPU example (CMSIS-Core)
+#include "core_cm33.h"
+
+void mpu_setup(void) {
+    ARM_MPU_Disable();
+
+    // Region 0: flash (read+execute, no write)
+    ARM_MPU_SetRegion(0,
+        ARM_MPU_RBAR(0x00000000UL,
+                     ARM_MPU_SH_NON,    // non-shareable
+                     1, 1, 0),          // RO, NP-OK, XN-no
+        ARM_MPU_RLAR(0x00200000UL - 1, 0));   // up to 2 MB
+
+    // Region 1: SRAM (RW, no execute)
+    ARM_MPU_SetRegion(1,
+        ARM_MPU_RBAR(0x20000000UL, ARM_MPU_SH_NON, 0, 1, 1),
+        ARM_MPU_RLAR(0x20040000UL - 1, 0));
+
+    // Region 2: peripherals (RW, device memory, no execute)
+    ARM_MPU_SetRegion(2,
+        ARM_MPU_RBAR(0x40000000UL, ARM_MPU_SH_OUTER, 0, 1, 1),
+        ARM_MPU_RLAR(0x60000000UL - 1, 1));   // attribute index 1 = Device
+
+    // Enable MPU; default region disabled (any access outside our regions faults)
+    ARM_MPU_Enable(MPU_CTRL_PRIVDEFENA_Msk);
+}
+</code></pre>
+
+<!-- =========================================================== -->
+<h2 id="systick">SysTick — the architectural heartbeat</h2>
+
+<p>SysTick is a 24-bit countdown timer baked into <em>every</em> Cortex-M core. It exists for one reason: to give an OS-portable tick source that doesn't depend on any vendor peripheral. Every RTOS port for Cortex-M uses it as its primary tick (FreeRTOS's <code>xPortSysTickHandler</code>, Zephyr's <code>z_arm_systick</code>, Mbed's <code>os_tick</code>).</p>
+
+<h3 id="systick-regs">SysTick registers</h3>
+
+<table>
+  <tr><th>Register</th><th>Address</th><th>Function</th></tr>
+  <tr><td><code>SYST_CSR</code></td><td>0xE000E010</td><td>Control / status: ENABLE, TICKINT, CLKSOURCE, COUNTFLAG.</td></tr>
+  <tr><td><code>SYST_RVR</code></td><td>0xE000E014</td><td>Reload value (0 to 0x00FFFFFF — 24-bit).</td></tr>
+  <tr><td><code>SYST_CVR</code></td><td>0xE000E018</td><td>Current value (read-only counter; write any value to clear).</td></tr>
+  <tr><td><code>SYST_CALIB</code></td><td>0xE000E01C</td><td>Calibration value (vendor-defined "10 ms reload").</td></tr>
+</table>
+
+<pre><code>// Configure SysTick for a 1 ms tick at SystemCoreClock = 150 MHz
+SysTick->LOAD = (150000000 / 1000) - 1;  // 149_999
+SysTick->VAL  = 0;                       // clear current value
+SysTick->CTRL = SysTick_CTRL_CLKSOURCE_Msk |  // use processor clock
+                SysTick_CTRL_TICKINT_Msk   |  // generate IRQ on wrap
+                SysTick_CTRL_ENABLE_Msk;
+
+// SysTick handler — runs every 1 ms
+void SysTick_Handler(void) {
+    g_ticks++;     // simple monotonic millisecond counter
+}
+</code></pre>
+
+<p>For most purposes you'll never write SysTick code directly — your RTOS or HAL configures it for you. You'll see it in two situations: (a) <em>writing your own RTOS</em>, in which case you study the SysTick chapter of the Cortex-M Generic User Guide; (b) <em>debugging RTOS tick storms</em>, in which case you check that SYST_RVR and SYST_CSR match what the kernel expects.</p>
+
+<!-- =========================================================== -->
+<h2 id="debug">Debug architecture — CoreSight, DAP, ITM, DWT, FPB, ETM, SWO</h2>
+
+<p>One of the major reasons to choose an ARM core over a discrete 8-bit MCU is the debug architecture. Cortex-M ships with <strong>CoreSight</strong>, an industry-standard, on-chip, multi-component debug system that gives you halt/run, hardware breakpoints, watchpoints, instruction trace, data trace, and printf-style messaging — all over a 2-pin (SWD) or 5-pin (JTAG) cable. Every modern probe (probe-rs, OpenOCD, J-Link, ST-Link, BlackMagic, CMSIS-DAP, Pi Pico Debug Probe, edevkit1 itself) talks to CoreSight.</p>
+
+<h3 id="debug-coresight">CoreSight overview</h3>
+
+<pre><code>┌──────────────────────────────────────────────────────────────────┐
+│                    CoreSight on a Cortex-M chip                  │
+│                                                                  │
+│   Host PC                                                        │
+│   ┌──────────┐                                                   │
+│   │ probe-rs │            USB                                    │
+│   │ OpenOCD  │ ◄──────────────────────►  ┌────────────────┐      │
+│   │ J-Link   │                           │  Debug Probe   │      │
+│   └──────────┘                           │  (CMSIS-DAP /  │      │
+│                                          │   J-Link / ST) │      │
+│                                          └───────┬────────┘      │
+│                                                  │ SWD or JTAG   │
+│                                          ┌───────▼────────┐      │
+│                                          │      DAP       │      │
+│                                          │  (Debug Access │      │
+│                                          │      Port)     │      │
+│                                          └───────┬────────┘      │
+│                                                  │ AHB-AP        │
+│       ┌──────────────────────────────────────────┴────────────┐  │
+│       │                  System bus                            │ │
+│       └─┬──────────┬─────────┬─────────┬──────────┬─────────┬──┘ │
+│         │          │         │         │          │         │    │
+│       ┌─▼─┐      ┌─▼─┐     ┌─▼─┐     ┌─▼─┐      ┌─▼─┐     ┌─▼─┐  │
+│       │NVIC│     │FPB│     │DWT│     │ITM│      │ETM│     │TPIU│ │
+│       └────┘     └───┘     └───┘     └─┬─┘      └─┬─┘     └─┬──┘ │
+│                                        └──ATB────►│         │    │
+│                                                   └──ATB───►│    │
+│                                              SWO single pin◄┘    │
+└──────────────────────────────────────────────────────────────────┘
+</code></pre>
+
+<p>CoreSight is modular — chip vendors include the components they want, and the components are connected internally by the <em>ATB</em> (Advanced Trace Bus) for trace data and the <em>APB-D</em> bus for control. The host probe interacts only with the DAP; everything else is driven through DAP transactions.</p>
+
+<h3 id="debug-dap">DAP — Debug Access Port</h3>
+
+<p>The DAP is the entry point. The probe sends serial bits in over SWD or JTAG; the DAP turns them into bus transactions on the chip's internal AHB. Two halves:</p>
+
+<ul>
+  <li><strong>SW-DP / JTAG-DP</strong> — the Debug Port, which talks to the probe (Serial Wire Debug Port or JTAG Debug Port). SWD is 2-pin (SWCLK + SWDIO), JTAG is 5-pin (TCK, TMS, TDI, TDO, nTRST). Most modern Cortex-M chips can do both, switchable.</li>
+  <li><strong>AP — Access Port(s)</strong>. An AP is a slave on the DAP that implements one specific kind of access. AHB-AP gives memory-bus access (read/write any address, the workhorse). APB-AP gives access to the slow APB-D control bus. JTAG-AP gives JTAG-chain access for tap-mounted IP. Most Cortex-M chips have at least an AHB-AP.</li>
+</ul>
+
+<p>The probe's job, fundamentally, is to expose "read 32-bit word at address X" and "write 32-bit word at address X" over USB to the host. Everything else — halt/run, breakpoints, ITM, ETM — is reading and writing specific memory-mapped registers in the PPB through the AHB-AP.</p>
+
+<h3 id="debug-itm">ITM — Instrumentation Trace Macrocell</h3>
+
+<p>The ITM is a peripheral inside the PPB at <code>0xE0000000</code> that exposes 32 "stimulus ports" (FIFOs) that firmware can write 8/16/32-bit values to. Each write becomes a packet on the trace bus and is forwarded out via SWO or via ETM's TPIU. The host decodes the packets and shows them as a stream.</p>
+
+<p>The most common use: <strong>printf-over-SWO</strong>. You wire <code>fputc()</code> or <code>_write()</code> to write each character to ITM port 0. The probe captures the stream and displays it in the debugger console. Latency is microseconds, throughput is up to a few Mbps with a fast trace clock — far better than a UART, and uses a single chip pin.</p>
+
+<pre><code>// Minimal "printf over ITM" using CMSIS-Core
+#include "core_cm33.h"
+
+int _write(int file, const char *ptr, int len) {
+    for (int i = 0; i &lt; len; i++) {
+        // Wait until ITM port 0 is ready
+        while ((ITM->PORT[0].u32 &amp; 1) == 0) { }
+        // Write the character (ITM_SendChar() in CMSIS does the same)
+        ITM->PORT[0].u8 = (uint8_t)ptr[i];
+    }
+    return len;
+}
+
+// Now printf("hello, ITM\n") goes out via SWO.
+</code></pre>
+
+<p>ITM also generates <em>timestamp packets</em> — a hardware-stamped time on every packet, useful for measuring how long things actually take instead of guessing.</p>
+
+<h3 id="debug-dwt">DWT — Data Watchpoint and Trace</h3>
+
+<p>The DWT block at <code>0xE0001000</code> provides:</p>
+
+<ul>
+  <li><strong>Hardware watchpoints</strong> — up to 4 (M3/M4/M7) or 8 (M33+). A watchpoint can fire when a specific address is read, written, or accessed at all, optionally with a data-value match. Indispensable for "who is corrupting this variable?" debugging.</li>
+  <li><strong>CYCCNT — cycle counter.</strong> A free-running 32-bit counter that ticks every CPU cycle. Used for cycle-accurate profiling: read it, do the thing, read it again, subtract. Wraps every ~28 seconds at 150 MHz.</li>
+  <li><strong>Function profiling counters</strong> — count exception entries, sleeps, folded instructions, LSU stalls.</li>
+  <li><strong>PC sampler</strong> — periodically reports the PC value. Used for sampling profilers at the system level.</li>
+</ul>
+
+<pre><code>// Enable CYCCNT and measure how long a function takes
+CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+DWT->CYCCNT = 0;
+DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;
+
+uint32_t t0 = DWT->CYCCNT;
+expensive_function();
+uint32_t t1 = DWT->CYCCNT;
+
+uint32_t cycles = t1 - t0;        // wraps cleanly modulo 2**32
+uint32_t microseconds = cycles / (SystemCoreClock / 1000000);
+</code></pre>
+
+<h3 id="debug-fpb">FPB — Flash Patch and Breakpoint</h3>
+
+<p>The FPB at <code>0xE0002000</code> implements <strong>hardware breakpoints</strong> (M3/M4: 6 comparators; M7: 8; M33+: configurable, typically 4–8). The breakpoint comparator watches the program counter; when it equals the configured address, the core halts. Hardware breakpoints don't modify the code in flash (unlike software breakpoints, which patch a <code>BKPT</code> instruction in), so they work in code that's executing-from-flash and code in non-rewritable ROM.</p>
+
+<p>The "Flash Patch" half lets you patch a few instructions in ROM by redirecting fetches to an alternative SRAM location. Mostly used for chip-vendor errata workarounds; rarely in user firmware.</p>
+
+<h3 id="debug-etm">ETM — Embedded Trace Macrocell</h3>
+
+<p>ETM is the heavyweight: full instruction trace. Every instruction the core executes generates a tiny trace packet, compressed and shipped out via the TPIU (Trace Port Interface Unit) on either SWO (low bandwidth) or a parallel trace port (4-bit @ tens of MHz, hundreds of Mbps). With instruction trace, you can reconstruct the exact PC history leading up to a fault — not just "we're here", but "we got here from here from here, and the heap allocator looked like this on the way in".</p>
+
+<p>ETM is optional and not present on every Cortex-M chip. M3 and M4 designs often omit it for area reasons. M7 and M33 often include it. The RP2350B's M33 cores include ETM.</p>
+
+<h3 id="debug-swo">SWO — Serial Wire Output</h3>
+
+<p>SWO is a single chip pin that carries trace data (ITM and/or low-bandwidth ETM) as an asynchronous UART or Manchester-encoded stream out to the probe. SWO + SWD = three pins total (SWCLK + SWDIO + SWO) for a complete debug + trace setup, vs. JTAG's 5+. <strong>edevkit1 captures SWO via a PIO state machine</strong> on PIO0 SM1 and forwards the stream to the host as part of the CMSIS-DAP v2 USB endpoint — see <a href="edevkit1.html">edevkit1.html §6.1</a>.</p>
+
+<h3 id="debug-connector">The 10-pin Cortex Debug Connector</h3>
+
+<p>Arm publishes a standard pinout for the debug header. The "10-pin Cortex Debug Connector" (1.27 mm pitch, sometimes called the "0.05 inch SWD header") is the de-facto standard on every Cortex-M development board.</p>
+
+<pre><code>      Cortex Debug Connector (10-pin, 1.27 mm)
+       ┌─────────────────────────────────────┐
+   1 → │ Vtgt          │ SWDIO / TMS         │ ← 2
+   3 → │ GND           │ SWCLK / TCK         │ ← 4
+   5 → │ GND           │ SWO    / TDO        │ ← 6
+   7 → │ KEY (no pin)  │ NC     / TDI        │ ← 8
+   9 → │ GNDDetect     │ nRESET              │ ← 10
+       └─────────────────────────────────────┘
+       (target side)              (probe side)
+</code></pre>
+
+<p>"Vtgt" is sensed by the probe so it can level-shift to match the target's IO voltage — this is why edevkit1 has separate Vtgt and Vio domains (see CLAUDE.md gotcha #3). "GNDDetect" lets the probe know the target is connected.</p>
+
+<h3 id="debug-host-tools">How a host debugger talks to the chip</h3>
+
+<p>End-to-end, when you type <code>probe-rs run</code> or click "step over" in your IDE, here's what happens:</p>
+
+<ol>
+  <li>Host tool sends a USB request to the probe (CMSIS-DAP, J-Link, ST-Link, BlackMagic — same idea, different protocol).</li>
+  <li>Probe receives "read word at 0xE000ED30" (a DHCSR access).</li>
+  <li>Probe encodes the request as SWD bits and clocks them on SWCLK/SWDIO.</li>
+  <li>The chip's SW-DP receives the request, hands it to the AHB-AP.</li>
+  <li>AHB-AP issues a 32-bit AHB read to <code>0xE000ED30</code> — that's a register inside the SCB.</li>
+  <li>The result comes back through AHB-AP → SW-DP → probe → USB → host tool.</li>
+  <li>Host tool interprets the value as the Debug Halting Control / Status register, sees that the core is halted, displays "Stopped at line 42" in your editor.</li>
+</ol>
+
+<p>Step-over, breakpoint set, watch-update, memory dump, all work the same way — they're combinations of "read register X" and "write register Y" through the DAP. Knowing this is what lets you write your own probe (which is what edevkit1 does) or debug a probe that's misbehaving.</p>
+
+<p class="small">Sources: <a href="https://arm-software.github.io/CMSIS-DAP/latest/">CMSIS-DAP overview</a>, <a href="https://gettobyte.com/debug-and-trace-arm-coresight-architecture/">CoreSight Architecture overview</a>, Joseph Yiu, <em>The Definitive Guide to ARM Cortex-M3 and Cortex-M4 Processors</em> (3rd ed., 2014) — chapter 14 covers the debug system in depth.</p>
+
+<!-- =========================================================== -->
+<h2 id="power">Power management — sleep modes, WFI, WFE</h2>
+
+<p>Battery-life-sensitive applications spend most of their wall-clock time <em>not</em> running code. Cortex-M defines two architectural sleep states; vendor SoCs add their own deeper states layered on top. Knowing the architectural ones is enough to write portable low-power firmware; the SoC-specific ones (STOP / STANDBY / SHUTDOWN on STM32, dormant on RP2350, etc.) live in vendor reference manuals.</p>
+
+<h3 id="power-sleep">Sleep and Deep Sleep</h3>
+
+<table>
+  <tr><th>State</th><th>Trigger</th><th>What stops</th><th>Wake-up</th></tr>
+  <tr><td><strong>Sleep</strong></td><td><code>WFI</code> or <code>WFE</code> with <code>SLEEPDEEP=0</code></td><td>Core clock gated; bus and peripherals continue to run.</td><td>Any unmasked interrupt; any event for WFE.</td></tr>
+  <tr><td><strong>Deep Sleep</strong></td><td><code>WFI</code>/<code>WFE</code> with <code>SLEEPDEEP=1</code></td><td>Core + (optionally) PLLs, oscillators, regulators — vendor-specific.</td><td>Configured wake-up sources (RTC, GPIO, etc.); usually slower wake than Sleep.</td></tr>
+</table>
+
+<p>The <code>SLEEPDEEP</code> bit lives in <code>SCB-&gt;SCR</code> and is cleared by default. The actual depth of "Deep Sleep" — what gets gated, what stays alive — is a vendor decision; ARM only specifies that the core can request "go deeper than Sleep" and the rest of the system honors it.</p>
+
+<h3 id="power-wfi-wfe">WFI vs WFE</h3>
+
+<ul>
+  <li><strong><code>WFI</code> — Wait For Interrupt.</strong> Halt the core until an interrupt is pending. The pending interrupt then either (a) wakes the core and fires its handler if unmasked; or (b) wakes the core and resumes after the WFI without firing the handler if masked (PRIMASK=1 etc. — useful for "wake up but don't yet service it"). Most "go to sleep" idle loops use WFI.</li>
+  <li><strong><code>WFE</code> — Wait For Event.</strong> Halt until an <em>event</em> is observed. Events are generated by <code>SEV</code> (set event) instructions on <em>any</em> core (so multi-core cores can wake each other), by external <code>RXEV</code> signals, and (if SEVONPEND is set) by interrupt-pending transitions. Useful for low-overhead spinlock / mailbox patterns between cores.</li>
+</ul>
+
+<pre><code>// The simplest battery-saving idle loop
+while (1) {
+    if (work_queue_empty()) {
+        __WFI();           // sleep until any IRQ wakes us
+    } else {
+        process_work();
+    }
+}
+</code></pre>
+
+<h3 id="power-sleeponexit">SLEEPONEXIT</h3>
+
+<p>If you set <code>SCB-&gt;SCR.SLEEPONEXIT</code>, the core automatically enters Sleep when it returns from an exception to Thread mode and the exception was the only thing keeping it awake. This is the canonical pattern for "interrupt-driven, sleep-otherwise" code: <code>main()</code> initialises, then enters an infinite WFI; every IRQ wakes briefly, runs, returns, and the core goes back to sleep without an explicit WFI in the main loop.</p>
+
+<pre><code>int main(void) {
+    SystemInit();
+    init_peripherals();
+    SCB->SCR |= SCB_SCR_SLEEPONEXIT_Msk;   // sleep on exception return
+    __WFI();                               // first sleep
+    // never returns; ISRs do all the work
+}
+</code></pre>
+
+<h3 id="power-sevonpend">SEVONPEND</h3>
+
+<p><code>SCB-&gt;SCR.SEVONPEND</code> makes any new pending interrupt — <em>even masked ones</em> — generate a wake event. Useful for a thread that wants to wake even on masked interrupts (e.g. it wants to peek at the IRQ then re-enable masking).</p>
+
+<!-- =========================================================== -->
+<h2 id="software-stack">The software stack — CMSIS, HALs, RTOSes, startup</h2>
+
+<p>An ARM firmware engineer touches a tower of libraries. From bottom (closest to silicon) to top (closest to your app):</p>
+
+<pre><code>┌────────────────────────────────────────────────────────────┐
+│  Your application                                          │
+├────────────────────────────────────────────────────────────┤
+│  RTOS (Zephyr / FreeRTOS / ThreadX / Mbed / RT-Thread)     │
+├────────────────────────────────────────────────────────────┤
+│  RTOS porting layer (Cortex-M arch backend)                │
+├────────────────────────────────────────────────────────────┤
+│  Vendor HAL (ST HAL, NXP MCUXpresso, Nordic nrfx, RP SDK)  │
+├────────────────────────────────────────────────────────────┤
+│  CMSIS-Core, CMSIS-Driver, CMSIS-DSP, CMSIS-NN             │
+├────────────────────────────────────────────────────────────┤
+│  Startup (reset handler, vector table, .data copy, .bss)   │
+├────────────────────────────────────────────────────────────┤
+│  Linker script (.text / .rodata / .data / .bss / stack)    │
+├────────────────────────────────────────────────────────────┤
+│  Cortex-M core hardware                                    │
+└────────────────────────────────────────────────────────────┘
+</code></pre>
+
+<h3 id="cmsis">CMSIS — Cortex Microcontroller Software Interface Standard</h3>
+
+<p>CMSIS is Arm's "thin standard library for Cortex-M". It is <strong>not a HAL</strong>; it does not abstract any peripherals. It provides:</p>
+
+<ul>
+  <li><strong>CMSIS-Core</strong> — typedefs and inline functions for accessing core hardware: NVIC, SysTick, SCB, MPU, ITM, DWT, FPB. Files like <code>core_cm33.h</code>, <code>core_cm0.h</code>, etc. <strong>Every Cortex-M project includes CMSIS-Core, directly or indirectly.</strong></li>
+  <li><strong>CMSIS-Driver</strong> — abstract C API for common peripherals (USART, SPI, I2C, USB). Standardised but rarely used directly; vendor HALs usually provide their own.</li>
+  <li><strong>CMSIS-DSP</strong> — ARM's reference DSP library (FFTs, FIR/IIR, matrix math). Hand-tuned for M4/M7 with the DSP extensions; runnable on M0/M0+ at slower speed.</li>
+  <li><strong>CMSIS-NN</strong> — neural-network kernels for keyword spotting, image classification on M-class hardware. Heavily used in TinyML.</li>
+  <li><strong>CMSIS-RTOS2</strong> — a thin standard wrapper over RTOS APIs. Less common than direct RTOS APIs; some safety-critical projects use it for portability.</li>
+  <li><strong>CMSIS-Pack / CMSIS-DAP</strong> — packaging and debug-probe interface specs (orthogonal to CMSIS-Core).</li>
+</ul>
+
+<p>CMSIS source lives at <a href="https://github.com/ARM-software/CMSIS_6">github.com/ARM-software/CMSIS_6</a>. Every chip vendor ships a <em>device support pack</em> on top: <code>stm32f4xx.h</code>, <code>nrf52840.h</code>, <code>RP2350.h</code> — these define the vendor's peripheral struct layouts as <code>volatile</code> structs that you read/write from C.</p>
+
+<h3 id="vendor-hals">Vendor HALs</h3>
+
+<table>
+  <tr><th>Vendor</th><th>HAL</th><th>Notes</th></tr>
+  <tr><td>STMicroelectronics</td><td>STM32 HAL / LL</td><td>Two flavours — HAL is full-featured but heavyweight; LL is closer to register access. Generated by STM32CubeMX. Massive but ubiquitous.</td></tr>
+  <tr><td>NXP</td><td>MCUXpresso SDK</td><td>Driver-per-peripheral, generally clean. Same SDK across Kinetis, LPC, i.MX RT.</td></tr>
+  <tr><td>Nordic Semi</td><td>nrfx + nrf SDK / Connect SDK</td><td>nrfx is a low-level driver layer on top of CMSIS; the higher SDK adds Bluetooth, networking. Connect SDK is Zephyr-native.</td></tr>
+  <tr><td>Raspberry Pi</td><td>pico-sdk</td><td>For RP2040/RP2350. Used directly in bare-metal builds; <strong>edevkit1 uses Zephyr instead</strong> and bypasses pico-sdk for the application.</td></tr>
+  <tr><td>Microchip</td><td>Harmony / Atmel START / MCC</td><td>Several generations of HAL — Harmony for PIC32+SAM, Atmel START for older AVR/SAM lines.</td></tr>
+  <tr><td>TI</td><td>SimpleLink SDK / TI-RTOS</td><td>Tightly integrated with TI-RTOS for CC13xx / CC26xx; standalone for MSPM0 / TM4C.</td></tr>
+  <tr><td>Renesas</td><td>FSP (Flexible Software Package)</td><td>For RA / RX cores; integrates with their e² studio.</td></tr>
+</table>
+
+<h3 id="rtos-choices">RTOS choices for Cortex-M</h3>
+
+<table>
+  <tr><th>RTOS</th><th>License</th><th>Posture</th></tr>
+  <tr><td><strong>Zephyr</strong></td><td>Apache 2.0</td><td>Linux-Foundation-hosted, broad architecture support (ARM, RISC-V, Xtensa, ARC), large device-tree-driven driver ecosystem, native USB, networking, Bluetooth, MCUboot integration. <strong>edevkit1 uses Zephyr 4.x.</strong></td></tr>
+  <tr><td><strong>FreeRTOS</strong></td><td>MIT</td><td>Amazon-stewarded. Tiny kernel, vast existing porting; most "what RTOS do I use" answers are FreeRTOS by default. Less batteries-included than Zephyr.</td></tr>
+  <tr><td>ThreadX</td><td>Microsoft (now MIT)</td><td>Strong real-time guarantees, in-depth instrumentation tools (TraceX). Originally Express Logic, acquired by Microsoft in 2019, made open source.</td></tr>
+  <tr><td>Mbed OS</td><td>Apache 2.0</td><td>Arm-stewarded; integrated with the Mbed online IDE. Active maintenance has slowed since 2022.</td></tr>
+  <tr><td>RT-Thread</td><td>Apache 2.0</td><td>Chinese-origin RTOS, large ecosystem in Asia, BSP coverage especially good on STM32 and Nuvoton.</td></tr>
+  <tr><td>NuttX</td><td>BSD-3-Clause</td><td>POSIX-flavoured, used by PX4 (drone autopilots) and many quirky-niche systems.</td></tr>
+</table>
+
+<h3 id="startup">Startup code — what happens between reset and main()</h3>
+
+<p>Every Cortex-M firmware needs four things at the bottom: a vector table, a reset handler, a linker script, and a <em>startup file</em> that ties them together. Most vendor SDKs provide one (<code>startup_stm32f407.s</code>, etc.); Zephyr provides one too. But you should know what's inside.</p>
+
+<pre><code>/* Reset handler skeleton — gcc-arm-none-eabi assembly */
+    .syntax unified
+    .cpu    cortex-m33
+    .thumb
+
+    .section .isr_vector, "a"
+    .word   _stack_top              /* 0x00: initial MSP            */
+    .word   Reset_Handler           /* 0x04: reset                  */
+    .word   NMI_Handler             /* 0x08                          */
+    .word   HardFault_Handler       /* 0x0C                          */
+    /* ... rest of vectors ...                                       */
+
+    .section .text.Reset_Handler, "ax"
+    .global Reset_Handler
+    .type   Reset_Handler, %function
+Reset_Handler:
+    /* 1. Set up the stack — already done by hardware loading MSP */
+
+    /* 2. Copy .data from flash LMA to SRAM VMA */
+    ldr     r0, =_data_start
+    ldr     r1, =_data_end
+    ldr     r2, =_data_lma
+1:  cmp     r0, r1
+    beq     2f
+    ldr     r3, [r2], #4
+    str     r3, [r0], #4
+    b       1b
+
+    /* 3. Zero .bss */
+2:  ldr     r0, =_bss_start
+    ldr     r1, =_bss_end
+    movs    r2, #0
+3:  cmp     r0, r1
+    beq     4f
+    str     r2, [r0], #4
+    b       3b
+
+    /* 4. Optional: enable FPU (set CP10/CP11 full access in CPACR) */
+4:  ldr     r0, =0xE000ED88
+    ldr     r1, [r0]
+    orr     r1, r1, #(0xF &lt;&lt; 20)
+    str     r1, [r0]
+    dsb
+    isb
+
+    /* 5. Call vendor's SystemInit() (clocks, voltage, flash latency) */
+    bl      SystemInit
+
+    /* 6. Run C++ static constructors (not used on bare-metal C) */
+    bl      __libc_init_array
+
+    /* 7. Jump to main */
+    bl      main
+
+    /* 8. main() returned — spin forever */
+5:  b       5b
+    .size   Reset_Handler, . - Reset_Handler
+</code></pre>
+
+<h3 id="linker-script">Linker script anatomy</h3>
+
+<p>The linker script tells the linker where each section ends up. Minimal Cortex-M skeleton:</p>
+
+<pre><code>/* Memory regions */
+MEMORY
+{
+    FLASH (rx)  : ORIGIN = 0x10000000, LENGTH = 2M
+    SRAM  (rwx) : ORIGIN = 0x20000000, LENGTH = 520K
+}
+
+ENTRY(Reset_Handler)
+
+SECTIONS
+{
+    .isr_vector : {
+        KEEP(*(.isr_vector))    /* place vector table at flash base */
+    } &gt; FLASH
+
+    .text : {
+        *(.text*)               /* code              */
+        *(.rodata*)             /* read-only data    */
+        _etext = .;             /* end of code/rodata */
+    } &gt; FLASH
+
+    /* .data: lives in SRAM at runtime, but is *loaded* from flash. */
+    .data : AT(_etext) {
+        _data_start = .;
+        *(.data*)
+        _data_end = .;
+    } &gt; SRAM
+    _data_lma = LOADADDR(.data);
+
+    .bss : {
+        _bss_start = .;
+        *(.bss*)
+        *(COMMON)
+        _bss_end = .;
+    } &gt; SRAM
+
+    /* Stack grows downward from the top of SRAM */
+    _stack_top = ORIGIN(SRAM) + LENGTH(SRAM);
+}
+</code></pre>
+
+<p>Three concepts to internalise here:</p>
+
+<ol>
+  <li><strong>VMA vs LMA.</strong> <em>VMA</em> (virtual / link-time address) is where a section <em>lives at runtime</em>. <em>LMA</em> (load address) is where it's <em>stored in the binary</em>. <code>.data</code> lives in SRAM (VMA = 0x20000000…) but is stored in flash after <code>.text</code> (LMA = end of flash). The reset handler copies LMA → VMA.</li>
+  <li><strong><code>.bss</code> is in the binary as a size, not as content.</strong> The linker just records "0x800 bytes of bss starting at 0x20003000"; the reset handler fills it with zeros. This is why <code>static int x[1000];</code> doesn't bloat your firmware image.</li>
+  <li><strong>Stack grows down from the top of SRAM.</strong> The vector table's slot 0 holds <code>_stack_top</code>, which the linker computes as ORIGIN(SRAM) + LENGTH(SRAM). The hardware loads MSP from there before the first instruction runs.</li>
+</ol>
+
+<!-- =========================================================== -->
+<h2 id="toolchains">Toolchains — gcc-arm-none-eabi, LLVM, IAR, Arm Compiler</h2>
+
+<p>You need a C/C++ compiler that targets ARM Cortex-M. There are four main families; the first one is what edevkit uses, the others exist for completeness.</p>
+
+<table>
+  <tr><th>Toolchain</th><th>License</th><th>Status</th><th>Notes</th></tr>
+  <tr><td><strong>arm-none-eabi-gcc</strong></td><td>GPL (compiler), various (libs)</td><td>Open-source, Arm-maintained</td><td>The default. Installable via Zephyr SDK, distro packages, or direct download from Arm. <strong>edevkit1 uses this via the Zephyr SDK.</strong></td></tr>
+  <tr><td><strong>LLVM / clang for ARM</strong></td><td>Apache 2.0 + LLVM exception</td><td>Open-source, multi-vendor</td><td>Arm packages a "LLVM Embedded Toolchain for Arm". Smaller binaries on some workloads, better diagnostics, but ecosystem support lags GCC. Increasingly viable since 2022.</td></tr>
+  <tr><td><strong>Arm Compiler 6 (AC6)</strong></td><td>Commercial</td><td>Maintained by Arm</td><td>LLVM-based since v6. Bundled with Keil MDK / Arm Development Studio. Strong code-size and performance, especially on Helium. Subscription-priced.</td></tr>
+  <tr><td><strong>IAR EWARM</strong></td><td>Commercial</td><td>Maintained by IAR</td><td>Long history in safety-critical (medical, aerospace). Excellent code generation, certified compiler builds for ISO 26262 / IEC 61508. Expensive.</td></tr>
+</table>
+
+<p>For everything in edevkit you want <code>arm-none-eabi-gcc</code>, normally installed via the Zephyr SDK (<code>zephyr-sdk-1.0.x</code> or whatever's current). It's free, open, and matches what every CI provider runs. If you're cross-compiling outside of Zephyr (hello-ARM walkthrough below uses it directly), grab the standalone <a href="https://developer.arm.com/Tools%20and%20Software/GNU%20Toolchain">GNU Toolchain for Arm Embedded Processors</a>.</p>
+
+<h3 id="tool-flags">Common compiler flags for Cortex-M</h3>
+
+<table>
+  <tr><th>Flag</th><th>Effect</th></tr>
+  <tr><td><code>-mcpu=cortex-m33</code></td><td>Tell the compiler which core to target.</td></tr>
+  <tr><td><code>-mthumb</code></td><td>Generate Thumb-2 (mandatory on M-profile; the default for <code>-mcpu=cortex-mNN</code>).</td></tr>
+  <tr><td><code>-mfpu=fpv5-sp-d16</code></td><td>Use the M33's single-precision FPU (or <code>-mfpu=fpv4-sp-d16</code> for M4F, etc.).</td></tr>
+  <tr><td><code>-mfloat-abi=hard</code></td><td>Pass FP arguments in FP registers. <code>softfp</code> uses integer regs but still emits FP instructions; <code>soft</code> emulates everything in software.</td></tr>
+  <tr><td><code>-Os</code> / <code>-Og</code></td><td>Optimise for size / for debug. <code>-O2</code> is rarely worth it on Cortex-M; <code>-Os</code> is the default for production.</td></tr>
+  <tr><td><code>-ffunction-sections -fdata-sections</code></td><td>Put each function/variable in its own section so the linker can drop unused ones.</td></tr>
+  <tr><td><code>-Wl,--gc-sections</code></td><td>Tell the linker to drop unreferenced sections — essential for small binaries.</td></tr>
+  <tr><td><code>-specs=nosys.specs</code></td><td>Stub out POSIX system calls that don't exist on bare-metal.</td></tr>
+  <tr><td><code>-T link.ld</code></td><td>Use this linker script instead of the default.</td></tr>
+</table>
+
+<h3 id="tool-builds">Build systems</h3>
+
+<p>Three options dominate Cortex-M land:</p>
+
+<ul>
+  <li><strong>CMake.</strong> The default for Zephyr (which generates a CMake project per board). Cross-platform, well-supported by every IDE.</li>
+  <li><strong>Make.</strong> Many vendor SDKs and tutorial projects ship a Makefile. Simple, hackable; struggles at scale.</li>
+  <li><strong>Meson.</strong> Used by some newer projects (e.g. some PX4 components). Faster than CMake but smaller embedded ecosystem.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="flash-tools">Debug &amp; flash tools — probe-rs, OpenOCD, J-Link, the 10-pin header</h2>
+
+<p>You wrote firmware. Now what? You need a <em>probe</em> (hardware that does SWD/JTAG over USB) plus a <em>host tool</em> that drives it. Some probes are tied to specific software; others speak open protocols.</p>
+
+<h3 id="probes">Common probes</h3>
+
+<table>
+  <tr><th>Probe</th><th>Protocol</th><th>License</th><th>Host tools</th></tr>
+  <tr><td><strong>CMSIS-DAP</strong> (any vendor)</td><td>USB HID / Bulk + SWD/JTAG</td><td>Open standard</td><td>probe-rs, pyOCD, OpenOCD. <strong>edevkit1 implements CMSIS-DAP v2.</strong></td></tr>
+  <tr><td><strong>Pi Pico Debug Probe</strong></td><td>CMSIS-DAP v2 over USB</td><td>Open hw + fw</td><td>Same as CMSIS-DAP. ~$12, picoprobe firmware.</td></tr>
+  <tr><td><strong>Segger J-Link</strong></td><td>Proprietary J-Link protocol</td><td>Commercial (EDU $20, BASE $400+)</td><td>JLinkExe, J-Flash, GDBServer. Best-supported by IDE vendors.</td></tr>
+  <tr><td><strong>ST-Link/V2 / V3</strong></td><td>STMicro proprietary; some firmware can be reflashed to J-Link</td><td>Free with ST devkits</td><td>STM32CubeProg, OpenOCD, probe-rs, pyOCD.</td></tr>
+  <tr><td><strong>BlackMagic Probe</strong></td><td>GDB remote serial protocol directly over USB CDC</td><td>Open hw + fw</td><td>Plain <code>gdb</code> with <code>target extended-remote /dev/ttyACMx</code>. No GDB server process needed.</td></tr>
+  <tr><td><strong>NXP MCU-Link</strong></td><td>CMSIS-DAP</td><td>Free with NXP devkits</td><td>Same as CMSIS-DAP.</td></tr>
+  <tr><td><strong>edevkit1</strong></td><td>CMSIS-DAP v2 + SWO + 2× UART + I²C/SPI tester</td><td>Open hw + fw (you're reading the spec)</td><td>probe-rs, pyOCD, OpenOCD; plus edevkit GUI/CLI for the protocol-tester features.</td></tr>
+</table>
+
+<h3 id="host-tools">Host tools</h3>
+
+<table>
+  <tr><th>Tool</th><th>Language</th><th>Strengths</th></tr>
+  <tr><td><strong>probe-rs</strong></td><td>Rust</td><td>Modern, single static binary, excellent <code>cargo embed</code> integration, RTT support out of the box, fast. <strong>edevkit recommends probe-rs.</strong></td></tr>
+  <tr><td><strong>OpenOCD</strong></td><td>C</td><td>Oldest, supports the widest range of obscure targets, scriptable with Tcl. Slower than probe-rs.</td></tr>
+  <tr><td><strong>pyOCD</strong></td><td>Python</td><td>From Arm, easy to extend, has a Python API for automation. Slower than probe-rs.</td></tr>
+  <tr><td><strong>JLinkExe / GDBServer</strong></td><td>C (closed)</td><td>Required for J-Link probes. Fastest flash-write speeds in the industry.</td></tr>
+  <tr><td><strong>STM32CubeProg / cli</strong></td><td>C (closed)</td><td>ST-Link-only; useful for "official" ST workflows.</td></tr>
+</table>
+
+<h3 id="rtt">RTT — Real-Time Transfer</h3>
+
+<p>An aside that's worth knowing: <strong>RTT</strong> is a Segger-invented protocol (now widely supported) that uses two ring buffers in target SRAM as a bidirectional communication channel with the probe. The probe polls the buffers via SWD reads and writes; firmware just reads/writes them like any RAM. RTT is faster than ITM/SWO, full-duplex, and works without dedicating a chip pin. probe-rs and J-Link both speak it; many embedded shops use RTT instead of UART for log output.</p>
+
+<!-- =========================================================== -->
+<h2 id="hello-arm">Hello, ARM — a complete walkthrough</h2>
+
+<p>The fastest way to internalise the previous 1500 lines is to build a working firmware from scratch — startup file, linker script, <code>main()</code> that toggles a GPIO — and flash it. We'll target the <strong>Raspberry Pi Pico 2 (RP2350)</strong> because it's the same silicon edevkit1 uses and you can buy one for ~$5. The walkthrough also works with minor changes for STM32 Nucleo or any other Cortex-M devkit.</p>
+
+<div class="callout info">
+  <span class="label">prerequisites</span>
+  Follow <a href="installation.html">installation.html</a> first to get <code>arm-none-eabi-gcc</code>, <code>probe-rs</code>, and a Pi Pico Debug Probe (or another edevkit) on your machine. We assume those exist for the rest of this section.
+</div>
+
+<h3 id="hello-files">Project layout</h3>
+
+<pre><code>hello-arm/
+├── main.c              ← our application
+├── startup.s           ← reset handler + vector table
+├── link.ld             ← linker script
+└── Makefile            ← build glue
+</code></pre>
+
+<h3 id="hello-main">main.c — toggle the on-board LED</h3>
+
+<p>The Pi Pico 2's on-board LED is on GPIO25. To toggle it we (1) enable the GPIO pad, (2) set the function-select to "SIO" (single-cycle IO), (3) toggle the SIO output register.</p>
+
+<pre><code>/* hello-arm/main.c */
+#include &lt;stdint.h&gt;
+
+#define IO_BANK0_BASE  0x40028000UL
+#define PADS_BANK0_BASE 0x40038000UL
+#define SIO_BASE       0xD0000000UL
+#define RESETS_BASE    0x40020000UL
+
+#define GPIO25_CTRL  (*(volatile uint32_t*)(IO_BANK0_BASE + 0x0CC))
+#define GPIO25_PAD   (*(volatile uint32_t*)(PADS_BANK0_BASE + 0x68))
+#define GPIO_OE_SET  (*(volatile uint32_t*)(SIO_BASE + 0x024))
+#define GPIO_OUT_XOR (*(volatile uint32_t*)(SIO_BASE + 0x01C))
+#define RESETS_RESET (*(volatile uint32_t*)(RESETS_BASE + 0x00))
+
+static void delay(volatile uint32_t n) {
+    while (n--) __asm volatile ("nop");
+}
+
+int main(void) {
+    /* Bring IO_BANK0 and PADS_BANK0 out of reset */
+    RESETS_RESET &amp;= ~((1u &lt;&lt; 5) | (1u &lt;&lt; 8));
+    while (RESETS_RESET &amp; ((1u &lt;&lt; 5) | (1u &lt;&lt; 8))) { /* wait */ }
+
+    /* Function select 5 = SIO; clear pad isolation */
+    GPIO25_CTRL = 5;
+    GPIO25_PAD  = 0;
+
+    /* Enable output on GPIO25 */
+    GPIO_OE_SET = (1u &lt;&lt; 25);
+
+    /* Blink */
+    while (1) {
+        GPIO_OUT_XOR = (1u &lt;&lt; 25);
+        delay(2000000);
+    }
+}
+</code></pre>
+
+<p>Notice what's <em>not</em> in this file: no #includes from a vendor SDK, no CMSIS, no startup setup. We're talking directly to RP2350's IO_BANK / PADS_BANK / SIO peripherals because we want to see every layer.</p>
+
+<h3 id="hello-startup">startup.s — vector table and reset handler</h3>
+
+<pre><code>/* hello-arm/startup.s — minimal RP2350 reset for Cortex-M33 core 0 */
+    .syntax unified
+    .cpu    cortex-m33
+    .thumb
+
+    .section .isr_vector, "a", %progbits
+    .word   _stack_top              /* 0: initial MSP */
+    .word   Reset_Handler           /* 1: reset       */
+    .word   Default_Handler         /* 2: NMI         */
+    .word   Default_Handler         /* 3: HardFault   */
+    /* (rest left as Default_Handler — see real vendor file for full list) */
+
+    .section .text.Reset_Handler, "ax", %progbits
+    .global Reset_Handler
+    .type   Reset_Handler, %function
+Reset_Handler:
+    /* Copy .data from flash (LMA) to SRAM (VMA) */
+    ldr     r0, =_data_start
+    ldr     r1, =_data_end
+    ldr     r2, =_data_lma
+1:  cmp     r0, r1
+    bge     2f
+    ldr     r3, [r2], #4
+    str     r3, [r0], #4
+    b       1b
+
+    /* Zero .bss */
+2:  ldr     r0, =_bss_start
+    ldr     r1, =_bss_end
+    movs    r3, #0
+3:  cmp     r0, r1
+    bge     4f
+    str     r3, [r0], #4
+    b       3b
+
+    /* Jump to main */
+4:  bl      main
+    /* If main() returns, hang */
+5:  b       5b
+
+    .global Default_Handler
+    .type   Default_Handler, %function
+Default_Handler:
+    b       Default_Handler
+</code></pre>
+
+<h3 id="hello-link">link.ld — linker script</h3>
+
+<pre><code>/* hello-arm/link.ld — RP2350 XIP flash + SRAM */
+MEMORY
+{
+    FLASH (rx)  : ORIGIN = 0x10000100, LENGTH = 2M - 0x100
+    SRAM  (rwx) : ORIGIN = 0x20000000, LENGTH = 520K
+}
+
+ENTRY(Reset_Handler)
+
+SECTIONS
+{
+    .isr_vector : {
+        KEEP(*(.isr_vector))
+    } &gt; FLASH
+
+    .text : {
+        *(.text*)
+        *(.rodata*)
+        _etext = .;
+    } &gt; FLASH
+
+    .data : AT(_etext) {
+        _data_start = .;
+        *(.data*)
+        _data_end = .;
+    } &gt; SRAM
+    _data_lma = LOADADDR(.data);
+
+    .bss : {
+        _bss_start = .;
+        *(.bss*)
+        *(COMMON)
+        _bss_end = .;
+    } &gt; SRAM
+
+    _stack_top = ORIGIN(SRAM) + LENGTH(SRAM);
+}
+</code></pre>
+
+<div class="callout warn">
+  <span class="label">Real RP2350 boot</span>
+  RP2350 needs a "Stage-2 boot" block at <code>0x10000000</code> to configure the QSPI flash before XIP can run, plus a metadata "image definition" block. We're cheating in this minimal example by starting at <code>0x10000100</code> (after the boot2 region) and assuming a probe loaded the real boot2 already, or that we're writing into RAM. For a real flashable image, see the RP2350 datasheet chapter 5 ("Bootrom") and the picotool-generated headers. This walkthrough is for understanding the layers, not for production.
+</div>
+
+<h3 id="hello-makefile">Makefile</h3>
+
+<pre><code># hello-arm/Makefile
+TARGET   := hello-arm
+CC       := arm-none-eabi-gcc
+LD       := arm-none-eabi-gcc
+OBJCOPY  := arm-none-eabi-objcopy
+SIZE     := arm-none-eabi-size
+
+CFLAGS   := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
+            -Os -g -ffunction-sections -fdata-sections \
+            -Wall -Wextra -std=c11 -nostdlib
+
+LDFLAGS  := -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
+            -nostdlib -nostartfiles -T link.ld -Wl,--gc-sections \
+            -Wl,-Map=$(TARGET).map
+
+OBJS := startup.o main.o
+
+all: $(TARGET).elf $(TARGET).bin
+	$(SIZE) $(TARGET).elf
+
+%.o: %.s
+	$(CC) $(CFLAGS) -c $&lt; -o $@
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $&lt; -o $@
+
+$(TARGET).elf: $(OBJS)
+	$(LD) $(LDFLAGS) $^ -o $@
+
+$(TARGET).bin: $(TARGET).elf
+	$(OBJCOPY) -O binary $&lt; $@
+
+clean:
+	rm -f *.o *.elf *.bin *.map
+
+.PHONY: all clean
+</code></pre>
+
+<h3 id="hello-build">Build it</h3>
+
+<pre><code>$ cd hello-arm
+$ make
+arm-none-eabi-gcc -mcpu=cortex-m33 -mthumb ... -c startup.s -o startup.o
+arm-none-eabi-gcc -mcpu=cortex-m33 -mthumb ... -c main.c -o main.o
+arm-none-eabi-gcc -mcpu=cortex-m33 -mthumb ... -T link.ld ... -o hello-arm.elf
+arm-none-eabi-objcopy -O binary hello-arm.elf hello-arm.bin
+   text	   data	    bss	    dec	    hex	filename
+    192	      0	      0	    192	     c0	hello-arm.elf
+</code></pre>
+
+<p>192 bytes of code. That's the entirety of "blink an LED on a 32-bit ARM" with no library, no SDK, just the chip's reference manual and the C compiler.</p>
+
+<h3 id="hello-flash">Flash and run</h3>
+
+<pre><code># Connect a Pi Pico Debug Probe (or a second Pico flashed with picoprobe firmware)
+# to the target Pico 2's SWD pins, then:
+
+$ probe-rs run --chip RP2350 hello-arm.elf
+
+      Erasing sectors ✔
+      Programming pages ✔
+      Finished in 0.42s
+</code></pre>
+
+<p>The on-board LED should now be blinking ~once per second. Congratulations — you have a working ARM firmware build environment.</p>
+
+<h3 id="hello-deepen">What to do next</h3>
+
+<ol>
+  <li><strong>Add a SysTick interrupt</strong> in place of the busy-wait <code>delay()</code>. You'll need to populate the SysTick slot in the vector table and write a handler. Easy.</li>
+  <li><strong>Use CMSIS-Core</strong> by including <code>core_cm33.h</code> and the RP2350 device-support header. Watch the build size grow ~200 bytes; in return you get <code>NVIC_EnableIRQ()</code>, <code>__WFI()</code>, etc.</li>
+  <li><strong>Switch to Zephyr.</strong> Read <a href="installation.html">installation.html</a>, set up a west workspace, and run <code>west build -b rpi_pico2 zephyr/samples/basic/blinky</code>. You'll see the same blinking LED, but the project is now using a full RTOS, device-tree-driven drivers, and a tested USB stack — at the cost of ~50 KB of binary.</li>
+</ol>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to go next</h2>
+
+<p>This document is intentionally a tour, not a textbook. To go deeper:</p>
+
+<h3 id="next-arm">Official Arm references</h3>
+
+<ul>
+  <li><a href="https://developer.arm.com/documentation/ddi0403/latest/">ARMv7-M Architecture Reference Manual (DDI 0403)</a> — the canonical specification for M3/M4/M7. ~700 pages of authoritative truth.</li>
+  <li><a href="https://developer.arm.com/documentation/ddi0553/latest/">ARMv8-M Architecture Reference Manual (DDI 0553)</a> — for M23/M33/M35P/M52/M55/M85.</li>
+  <li><a href="https://developer.arm.com/documentation/dui0552/a/">Cortex-M3 Generic User Guide (DUI 0552)</a> — gentle gateway to the architectural ideas; same content as DDI 0403 but targeted at firmware engineers rather than chip designers.</li>
+  <li><a href="https://developer.arm.com/documentation/100166/latest/">Cortex-M0+ Devices Generic User Guide (DUI 0662)</a> — the equivalent for M0+.</li>
+  <li><a href="https://developer.arm.com/documentation/107555/latest/">Cortex-M33 Generic User Guide</a> — the M33-specific user guide.</li>
+  <li><a href="https://github.com/ARM-software/CMSIS_6">CMSIS_6 source on GitHub</a> — read <code>core_cm33.h</code> alongside the GUG and you'll see exactly how every architectural feature maps to a C macro / inline.</li>
+</ul>
+
+<h3 id="next-books">Books</h3>
+
+<ul>
+  <li>Joseph Yiu, <em>The Definitive Guide to ARM Cortex-M3 and Cortex-M4 Processors</em> (3rd ed., 2014). The book on M3/M4. Yiu was an Arm Senior Embedded Technology Manager and writes with first-hand authority.</li>
+  <li>Joseph Yiu, <em>The Definitive Guide to Arm Cortex-M23 and Cortex-M33 Processors</em> (2021). Sequel covering ARMv8-M, TrustZone-M, and the M33 specifically. <strong>Recommended for edevkit work.</strong></li>
+  <li>Joseph Yiu, <em>System-on-Chip Design with Arm Cortex-M Processors</em> (2019). For people building chips around Cortex-M, not just firmware.</li>
+  <li>Jonathan Valvano, <em>Embedded Systems: Introduction to Arm Cortex-M Microcontrollers</em>. University-textbook style, gentle ramp.</li>
+</ul>
+
+<h3 id="next-edevkit">edevkit-specific</h3>
+
+<ul>
+  <li><a href="arm_cortex_m33.html">arm_cortex_m33.html</a> — sister doc, M33-specific deep dive (TrustZone-M, the M33 pipeline, CoreSight on M33, RP2350-particulars).</li>
+  <li><a href="installation.html">installation.html</a> — get the toolchain on your machine.</li>
+  <li><a href="edevkit1.html">edevkit1.html</a> — the v1 product spec; §6 onwards covers exactly how the firmware uses what's described in this document.</li>
+</ul>
+
+<h3 id="next-online">Online tutorials worth your time</h3>
+
+<ul>
+  <li><a href="https://interrupt.memfault.com/">Memfault's Interrupt blog</a> — long-form embedded engineering. Their Cortex-M faults / exception / RTT articles are gold.</li>
+  <li><a href="https://www.state-machine.com/doc/">Quantum Leaps app-notes</a> — Miro Samek writes about RTOSes and Cortex-M with deep care.</li>
+  <li><a href="https://docs.zephyrproject.org/latest/">Zephyr Project documentation</a> — read the "Architecture" and "Kernel" sections.</li>
+  <li><a href="https://probe.rs/docs/">probe-rs documentation</a> — both for using probe-rs and to understand modern open-source debug-probe internals.</li>
+</ul>
+
+<div class="callout good">
+  <span class="label">Closing note</span>
+  ARM Cortex-M is not "the easiest microcontroller architecture" — but it is the one with the most consistent, documented, and well-supported tooling. Time invested in understanding the architectural model pays dividends across vendors and across years. Every one of the architectural concepts in this document — the programmer's model, the exception model, the memory model, CoreSight — has been stable since 2004. Learn it once; use it for the rest of your career.
+</div>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="shell_helpers.html"><span class="dir">← Previous</span><span class="cat">Workflow</span><span class="title">Shell helpers reference</span></a>
+<a class="next" href="arm_cortex_m33.html"><span class="dir">Next →</span><span class="cat">Architecture</span><span class="title">Cortex-M33 Deep Dive (Armv8-M Mainline + TrustZone-M)</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit · tools/web/pages/arm_architecture.html · ARM history, Cortex-M family, programmer's model, exception model, memory model, MPU, CoreSight, software stack, hello-ARM walkthrough · companion to <a href="arm_cortex_m33.html">arm_cortex_m33.html</a> and <a href="installation.html">installation.html</a>. Update this file when ARM ships a new M-profile core or when material below drifts.
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script>
+(function () {
+  // theme toggle (light → dark → system → light)
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  function eff() {
+    var t = localStorage.getItem(key);
+    if (t === 'dark' || t === 'light') return t;
+    return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  // scroll-to-top
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  // hide back-to-hub when opened directly via file:// (no hub running)
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  // T toggles theme outside form fields
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body>
+</html>

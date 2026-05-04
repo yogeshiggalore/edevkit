@@ -1,0 +1,1663 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — Cortex-M33 Deep Dive (Armv8-M Mainline + TrustZone-M)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Tutorial-quality reference on the Arm Cortex-M33: Armv8-M Mainline ISA, microarchitecture, TrustZone-M (SAU/IDAU, banked registers, SG/BXNS/BLXNS, NSC veneers), MPUv8, stack-limit registers, FPv5-SP-D16, NVIC under TrustZone, debug architecture, vendor configurations (RP2350, nRF5340/91, LPC55S69, STM32L5/U5), migration, and edevkit specifics.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">Cortex-M33 deep dive</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · architecture · Cortex-M33</div>
+  <h1>Cortex-M33 — the Armv8-M Mainline core, with TrustZone-M</h1>
+  <p class="small">A focused deep dive on the Arm <strong>Cortex-M33</strong> — the core sitting in the <strong>RP2350B</strong> that drives <strong>edevkit1</strong>, and the dominant choice across modern security-aware MCUs (Nordic <em>nRF5340 / nRF91 / nRF54</em>, NXP <em>LPC55Sxx</em>, ST <em>STM32L5 / U5</em>, Renesas <em>RA</em>, Microchip <em>SAM L1x</em>). This is the document you read after <a href="arm_architecture.html">arm_architecture.html</a> when you actually have to write or debug code on this specific core.</p>
+  <p class="small"><strong>What's covered here vs the sister doc.</strong> General Cortex-M material — the programmer's model, the exception model, the memory model, CoreSight basics, the M-profile family — lives in <a href="arm_architecture.html">arm_architecture.html</a>. This doc is the <em>delta</em> the M33 brings on top: the <strong>Armv8-M Mainline</strong> ISA, <strong>TrustZone-M</strong>, the <strong>Security Attribution Unit</strong>, the new <strong>banked registers</strong>, <strong>stack-limit checking</strong> (PSPLIM/MSPLIM), <strong>MPU v8</strong>, the optional <strong>FPv5-SP-D16</strong> FPU, and how all of this is wired up in real silicon — including the RP2350B that ends up on every edevkit1 board.</p>
+  <p class="small"><strong>Audience.</strong> A firmware engineer who has used a Cortex-M before (M3/M4/M7) and now has an M33-based SoC on the bench. Or someone bringing up Zephyr/MCUboot on an M33 and wondering what the new <code>cmse_nonsecure_entry</code>, <code>__TZ_set_PSPLIM_NS</code>, and "secure" / "non-secure" build outputs are for. By the end you should understand exactly what TrustZone-M buys you, exactly what it costs, and how to opt in or out per project.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Positioning</span>
+  <ol>
+    <li><a href="#about">What is the Cortex-M33</a></li>
+    <li><a href="#microarch">Microarchitecture — pipeline, interfaces, options</a></li>
+  </ol>
+  <span class="heading">Armv8-M Mainline</span>
+  <ol>
+    <li><a href="#armv8m">What's new in Armv8-M Mainline vs Armv7-M</a></li>
+    <li><a href="#stack-limits">Stack-limit registers — PSPLIM and MSPLIM</a></li>
+    <li><a href="#mpu-v8">MPU v8 (PMSAv8)</a></li>
+    <li><a href="#fpu">FPU — FPv5-SP-D16 and lazy stacking</a></li>
+    <li><a href="#dsp">DSP extensions and the coprocessor interface</a></li>
+  </ol>
+  <span class="heading">TrustZone-M</span>
+  <ol>
+    <li><a href="#trustzone">TrustZone-M — the centerpiece</a></li>
+    <li><a href="#banked">Banked registers under TrustZone</a></li>
+    <li><a href="#sau-idau">SAU and IDAU — memory attribution</a></li>
+    <li><a href="#sg-bxns">State transitions — SG, BXNS, BLXNS, TT</a></li>
+    <li><a href="#nvic-tz">NVIC under TrustZone — ITNS, AIRCR.PRIS</a></li>
+    <li><a href="#cmse">CMSE toolchain — gcc &amp; armclang attributes</a></li>
+    <li><a href="#secure-faults">Faults under TrustZone — SecureFault &amp; friends</a></li>
+  </ol>
+  <span class="heading">Debug, vendor configs &amp; migration</span>
+  <ol>
+    <li><a href="#debug">Debug under M33 — DHCSR.S_SDE, secure debug auth</a></li>
+    <li><a href="#vendor-configs">Vendor configurations of the M33</a></li>
+    <li><a href="#migration">Migration — from M3/M4 (and from M0+) to M33</a></li>
+  </ol>
+  <span class="heading">Code, gotchas &amp; edevkit</span>
+  <ol>
+    <li><a href="#code-snippets">Concrete code &amp; build snippets</a></li>
+    <li><a href="#gotchas">Common gotchas &amp; errata-class behaviors</a></li>
+    <li><a href="#edevkit">edevkit (RP2350) specific notes</a></li>
+    <li><a href="#further">Where to go next</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="about">What is the Cortex-M33</h2>
+
+<p>The <strong>Cortex-M33</strong> is Arm's flagship "mainstream secure microcontroller" core. It was announced in October 2016 alongside the smaller Cortex-M23, and the first commercial silicon shipped in 2017–2018 (NXP LPC55S69, Microchip SAM L11, then everyone else). It implements the <strong>Armv8-M Mainline</strong> profile — the M-class evolution that finally brought TrustZone to microcontrollers. Where M3/M4 are Armv7-M and M0/M0+ are Armv6-M, the M23/M33 sit on Armv8-M (Baseline / Mainline respectively) and are usually the first M-profile core a vendor ships when they want a "secure-capable" MCU line.</p>
+
+<p>Mentally, place the M33 here:</p>
+
+<pre><code>Armv6-M  Baseline   ── Cortex-M0,  M0+, M1   (cheapest, smallest)
+Armv7-M  Mainline   ── Cortex-M3,  M4,  M7   (workhorse 2006–2016)
+Armv7E-M Mainline+DSP ── Cortex-M4, M7        (DSP+FPU variants)
+Armv8-M  Baseline   ── Cortex-M23             (M0+ replacement, +TrustZone)
+Armv8-M  Mainline   ── Cortex-M33, M35P       (M4 replacement, +TrustZone)
+Armv8.1-M Mainline  ── Cortex-M52, M55, M85   (Helium / MVE; not M33)
+</code></pre>
+
+<div class="callout info">
+  <span class="label">key idea</span>
+  <strong>The M33 is the M4 plus eight years of lessons:</strong> a near-identical pipeline and DSP feature set, but with TrustZone, stack-limit registers, MPU v8, a refined FPU (FPv5-SP-D16 instead of FPv4-SP-D16), and a slightly tidier reset/exception model. If you've shipped Cortex-M4 firmware before, the M33 will feel familiar — most of your code compiles unchanged with <code>-mcpu=cortex-m33</code>. The big new thing is what you can <em>opt into</em>: TrustZone-M.
+</div>
+
+<h3 id="why-m33">"Why M33 instead of M4?"</h3>
+
+<p>If you're choosing a vendor SoC today and you have the option, you pick M33 over M4 for one or more of these reasons:</p>
+
+<ul>
+  <li><strong>Hardware-enforced isolation.</strong> TrustZone-M lets you run an untrusted app and a trusted root-of-trust on the same core, with hardware preventing the app from touching secure code, secure RAM, secure peripherals, or secure NVIC entries. This is the only feature you literally cannot synthesize on an M4.</li>
+  <li><strong>Stack overflow as a first-class fault.</strong> The PSPLIM/MSPLIM registers turn silent stack-into-heap corruption into an immediate UsageFault — a top-five bug class on M4 simply ceases to exist.</li>
+  <li><strong>Security-certifiable.</strong> Many "secure boot", "PSA Certified", or "SESIP Level 3" claims need TrustZone-grade isolation; M33 SoCs are how you check that box.</li>
+  <li><strong>Long support.</strong> M3/M4 are now in late-life. New SoC lines are M33 or higher; staying on Armv8-M is the future-proof choice.</li>
+  <li><strong>FreeRTOS / Zephyr / Mbed OS / TF-M now assume v8-M.</strong> Trusted Firmware-M (TF-M) only targets Armv8-M (and 8.1-M); if you want a vetted secure partition manager, M33 is the on-ramp.</li>
+</ul>
+
+<p>Reasons you'd <em>still</em> pick M4 in 2026: existing tooling/firmware is already on M4 and rewrites aren't justified, the SoC you need isn't available with an M33 (still common in motor-control parts), or you don't care about TrustZone and want the cheapest possible core. For greenfield designs that need security, M33 is the default.</p>
+
+<h3 id="where-found">Where you'll find an M33</h3>
+
+<p>By 2026 the Cortex-M33 is in shipping silicon from essentially every major MCU vendor. A non-exhaustive roundup:</p>
+
+<table>
+  <tr><th>Vendor</th><th>Family</th><th>Notable parts</th><th>Cores</th><th>TZ</th><th>FPU</th><th>Highlights</th></tr>
+  <tr><td><strong>Raspberry Pi</strong></td><td>RP2350</td><td>RP2350A / RP2350B</td><td>2× M33 + 2× Hazard3 RV</td><td>Yes</td><td>Yes (FPv5-SP)</td><td>150 MHz; 12× PIO; 520 KB SRAM; OTP + signed boot.</td></tr>
+  <tr><td><strong>Nordic</strong></td><td>nRF5340</td><td>nRF5340 (App + Net)</td><td>2× M33</td><td>Yes</td><td>App: yes</td><td>BLE 5.x, App @ 128 MHz, Net @ 64 MHz, CryptoCell-312.</td></tr>
+  <tr><td><strong>Nordic</strong></td><td>nRF91</td><td>nRF9160, nRF9161, nRF9151</td><td>1× M33</td><td>Yes</td><td>Yes</td><td>Cellular IoT (LTE-M / NB-IoT) with TF-M secure firmware.</td></tr>
+  <tr><td><strong>Nordic</strong></td><td>nRF54L / nRF54H</td><td>nRF54L15, nRF54H20</td><td>1–4× M33</td><td>Yes</td><td>Yes</td><td>Latest-gen BLE, M33 + RISC-V coexistence in H20.</td></tr>
+  <tr><td><strong>NXP</strong></td><td>LPC55Sxx</td><td>LPC55S69, LPC55S28, LPC55S16</td><td>1–2× M33</td><td>Yes</td><td>Yes</td><td>PowerQuad DSP accel, CASPER crypto, PRINCE flash encryption.</td></tr>
+  <tr><td><strong>NXP</strong></td><td>i.MX RT600</td><td>RT685</td><td>1× M33 + 1× HiFi 4 DSP</td><td>Yes</td><td>Yes</td><td>Crossover MCU; audio focus.</td></tr>
+  <tr><td><strong>NXP</strong></td><td>MCX N94x / N54x</td><td>MCXN947, MCXN54x</td><td>2× M33</td><td>Yes</td><td>Yes</td><td>EdgeLock crypto, eIQ NPU on some parts.</td></tr>
+  <tr><td><strong>STMicro</strong></td><td>STM32L5</td><td>STM32L552, L562</td><td>1× M33</td><td>Yes</td><td>Yes</td><td>Ultra-low-power, TZSC bus-level firewall.</td></tr>
+  <tr><td><strong>STMicro</strong></td><td>STM32U5</td><td>STM32U535–U599</td><td>1× M33</td><td>Yes</td><td>Yes</td><td>160 MHz, ART accelerator, GTZC system-level TZ controller.</td></tr>
+  <tr><td><strong>STMicro</strong></td><td>STM32H5 / WBA</td><td>STM32H5x3, STM32WBA</td><td>1× M33</td><td>Yes</td><td>Yes</td><td>250 MHz on H5; WBA = secure BLE.</td></tr>
+  <tr><td><strong>Renesas</strong></td><td>RA4M2 / RA4M3</td><td>RA4M2, RA4M3</td><td>1× M33</td><td>Optional</td><td>Yes</td><td>100 MHz, capacitive-touch, motor.</td></tr>
+  <tr><td><strong>Renesas</strong></td><td>RA6M5 / RA6T2</td><td>RA6M5, RA6T2</td><td>1× M33</td><td>Yes</td><td>Yes</td><td>200 MHz, secure crypto engine.</td></tr>
+  <tr><td><strong>Microchip</strong></td><td>SAM L1x / PIC32CX</td><td>SAM L11, PIC32CX-BZ2</td><td>1× M23 or M33</td><td>Yes</td><td>varies</td><td>Ultra-low-power, secure boot.</td></tr>
+  <tr><td><strong>Silicon Labs</strong></td><td>EFR32 Series 2</td><td>MG24, BG24, FG28</td><td>1× M33</td><td>Yes</td><td>Yes</td><td>Wireless SoCs (Zigbee, Thread, BLE), AN1374 covers their TZ usage.</td></tr>
+  <tr><td><strong>Infineon</strong></td><td>PSoC Edge / 6 Secure</td><td>PSE84xx, CYW20829</td><td>1–2× M33</td><td>Yes</td><td>Yes</td><td>Mixed-signal, ML accelerator on Edge, BLE on CYW.</td></tr>
+</table>
+
+<p class="small">Sources cross-checked: <a href="https://en.wikipedia.org/wiki/ARM_Cortex-M">Wikipedia — ARM Cortex-M</a>, <a href="https://en.wikipedia.org/wiki/RP2350">Wikipedia — RP2350</a>, <a href="https://www.nordicsemi.com/Products/nRF5340">Nordic nRF5340</a>, <a href="https://www.nxp.com/docs/en/data-sheet/LPC55S6x.pdf">NXP LPC55S6x datasheet</a>, <a href="https://www.silabs.com/documents/public/application-notes/an1374-trustzone.pdf">Silicon Labs AN1374</a>. The "TZ" column says <em>whether silicon includes TrustZone</em>; vendors may sell both "S" (TrustZone-enabled) and non-S parts in the same family — always read the part number suffix.</p>
+
+<!-- =========================================================== -->
+<h2 id="microarch">Microarchitecture — pipeline, interfaces, options</h2>
+
+<p>The M33 core is a <strong>3-stage in-order single-issue pipeline</strong>: <em>Fetch → Decode → Execute</em>. That is the same depth as the M3 and M4. There is no out-of-order execution, no superscalar issue, and no branch predictor in the classical sense (the core has a small branch-target speculation hint, but it is not user-tunable). Designers picked 3 stages because it minimises the branch-mispredict penalty (one cycle wasted, not eight) and keeps interrupt latency tight — both of which matter more than peak IPC on a microcontroller.</p>
+
+<pre><code>            ┌─────────┐   ┌─────────┐   ┌─────────┐
+   PC ────► │  FETCH  ├──►│ DECODE  ├──►│ EXECUTE ├──► result
+            └─────────┘   └─────────┘   └─────────┘
+                ▲                            │
+                │  branch target / EXC_RETURN│
+                └────────────────────────────┘</code></pre>
+
+<p>Most "ALU op" instructions retire in 1 cycle. Multiply is 1–2 cycles. Divide is hardware (3–7 cycles). Loads and stores are 2 cycles when both code and data hit different buses; longer when they contend. Single-cycle GPIO is feasible if the GPIO peripheral lives on a dedicated AHB-Lite slave (the RP2350 SIO block, for example).</p>
+
+<h3 id="ifaces">External interfaces</h3>
+
+<p>The M33's bus interface is <strong>AHB5</strong> — an evolution of AHB-Lite that adds the security attributes (HNONSEC bit) needed by TrustZone-M. From a vendor's standpoint, AHB5 is mostly "AHB-Lite + a sideband signal," so existing AHB peripherals integrate with minimal changes. Cores can also expose a separate <strong>D-AHB</strong> for code memory (an "I-AHB" / "D-AHB" split improves memory-bandwidth utilisation when code is in flash and data is in SRAM).</p>
+
+<table>
+  <tr><th>Interface</th><th>Purpose</th><th>Width</th></tr>
+  <tr><td>I-Code AHB5</td><td>Instruction fetches from the Code region (0x00000000–0x1FFFFFFF)</td><td>32-bit</td></tr>
+  <tr><td>D-Code AHB5</td><td>Literal-pool / debug data accesses to the Code region</td><td>32-bit</td></tr>
+  <tr><td>System AHB5</td><td>SRAM, peripherals, anything outside the Code region</td><td>32-bit</td></tr>
+  <tr><td>PPB</td><td>Private Peripheral Bus — internal NVIC/SCB/MPU/SAU/SysTick/ITM/DWT registers (0xE0000000–0xE00FFFFF)</td><td>32-bit (internal)</td></tr>
+</table>
+
+<h3 id="options">Synthesis-time options (vendor-configurable)</h3>
+
+<p>The M33 is delivered to silicon vendors as a configurable RTL macro. Each vendor chooses which features to include, which is why "Cortex-M33" parts have visibly different feature sets across vendors. The major options:</p>
+
+<ul>
+  <li><strong>FPU</strong> — FPv5-SP-D16 (single-precision IEEE-754, 16 D-registers / 32 S-registers). Optional.</li>
+  <li><strong>DSP extensions</strong> — the SIMD / saturating-arithmetic instruction set inherited from Armv7E-M (M4). Optional.</li>
+  <li><strong>TrustZone Security Extension</strong> — adds Secure / Non-secure states, banked registers, SAU, etc. Optional but increasingly the default.</li>
+  <li><strong>MPU</strong> — 0, 4, 8, or 16 regions per security state. Optional but ubiquitous; without TrustZone there's one MPU, with TrustZone there are two (MPU_S and MPU_NS).</li>
+  <li><strong>Coprocessor interface</strong> — up to 8 user-defined coprocessors via the Custom Datapath Extension (CDE). Rare.</li>
+  <li><strong>ETM / MTB</strong> — instruction trace (ETM) and the cheaper Micro Trace Buffer. Optional.</li>
+  <li><strong>WIC</strong> — Wake-up Interrupt Controller for ultra-low-power state-retention sleep. Optional.</li>
+  <li><strong>Bit-banding</strong> — <em>removed</em> in Armv8-M. The M33 has no bit-band region. Use the <code>BFI</code> / <code>UBFX</code> instructions or atomic <code>LDREX</code>/<code>STREX</code> sequences instead.</li>
+</ul>
+
+<div class="callout">
+  <span class="label">M33 ≠ M55 ≠ M85</span>
+  The M33 does <strong>not</strong> have Helium (M-Profile Vector Extensions / MVE). Helium ships only on Armv8.1-M cores: M52, M55, M85. The M33 also has <strong>no L1 cache</strong> — caches are an M55/M85 feature. If a vendor part numbered as "M33" lists I/D caches, those are <em>system-level</em> caches sitting between the core and external memory (e.g. STM32U5's ICACHE), not core-internal caches.
+</div>
+
+<p class="small">Source: <a href="https://developer.arm.com/documentation/100230/latest/">Arm Cortex-M33 Technical Reference Manual (DDI 0479 / 100230)</a>, sections "Configurable options" and "Programmer's model".</p>
+
+<!-- =========================================================== -->
+<h2 id="armv8m">What's new in Armv8-M Mainline vs Armv7-M</h2>
+
+<p>If you've shipped Cortex-M3/M4 firmware (Armv7-M), most of your code rebuilds for M33 unchanged. The Armv8-M ISA was deliberately a near-superset of Armv7-M so existing toolchains, RTOSes, and CMSIS-Core code keep working. The differences are concentrated in five areas:</p>
+
+<table>
+  <tr><th>Area</th><th>Armv7-M (M3/M4/M7)</th><th>Armv8-M Mainline (M33)</th></tr>
+  <tr><td>Security states</td><td>One state</td><td>Two states (Secure, Non-secure) when Security Extension is enabled</td></tr>
+  <tr><td>Banked SP/MSP/PSP</td><td>2 stacks (MSP, PSP)</td><td>4 stacks: MSP_S, PSP_S, MSP_NS, PSP_NS</td></tr>
+  <tr><td>Stack-limit registers</td><td>None</td><td>MSPLIM, PSPLIM (banked under TZ → 4 limit regs)</td></tr>
+  <tr><td>MPU</td><td>PMSAv7 — region size = power of 2, 8 region attribute formats</td><td>PMSAv8 — region = base+limit, 8 attribute slots in MAIR0/MAIR1</td></tr>
+  <tr><td>Bit-banding</td><td>0x22000000 + 0x42000000 alias regions</td><td>Removed</td></tr>
+  <tr><td>Vector tables</td><td>One (VTOR)</td><td>Two (VTOR_S, VTOR_NS)</td></tr>
+  <tr><td>NVIC</td><td>Up to 240 IRQs</td><td>Up to 480 IRQs; each can target S or NS</td></tr>
+  <tr><td>FPU</td><td>FPv4-SP-D16 (M4) or FPv5 (M7)</td><td>FPv5-SP-D16</td></tr>
+  <tr><td>New instructions</td><td>—</td><td><code>SG</code>, <code>BXNS</code>, <code>BLXNS</code>, <code>TT</code>, <code>TTT</code>, <code>TTA</code>, <code>TTAT</code>, <code>VLLDM</code>, <code>VLSTM</code></td></tr>
+</table>
+
+<p>Most of the new instructions only have meaning when the Security Extension is implemented (they manage state transitions and address-attribute checks). If your vendor sells a non-TZ M33 variant, those instructions execute as unpredictable / NOP-like.</p>
+
+<p>The other change worth flagging: <strong>Armv8-M deprecates the SCB-&gt;CCR.UNALIGN_TRP and STKALIGN behaviours</strong> from Armv7-M's late-stage refinements. Defaults are now safer (8-byte stack alignment is always on), and a few CCR bits move. Existing CMSIS-Core(M) code handles this, but you'll see a different reset value if you're reading CCR by hand.</p>
+
+<p class="small">Source: <a href="https://developer.arm.com/documentation/ddi0553/latest/">Arm Architecture Reference Manual — Armv8-M (DDI 0553)</a>; <a href="https://developer.arm.com/documentation/107565/latest/">Migrating to Armv8-M (107565)</a>.</p>
+
+<!-- =========================================================== -->
+<h2 id="stack-limits">Stack-limit registers — PSPLIM and MSPLIM</h2>
+
+<p>Stack overflow is, empirically, in the top three causes of "weird intermittent crashes" on Cortex-M3/M4 firmware. The stack grows downward; if a function uses too much locals or recursion, the SP walks off the bottom of the stack region and into whatever memory is below — typically <code>.bss</code> or another task's stack. The result is silent corruption that surfaces hours later as a wild branch or a struct field that "spontaneously" went wrong.</p>
+
+<p>Armv8-M fixes this with two new banked special-purpose registers:</p>
+
+<ul>
+  <li><strong>MSPLIM</strong> — the lower bound (limit) of the Main Stack Pointer.</li>
+  <li><strong>PSPLIM</strong> — the lower bound of the Process Stack Pointer.</li>
+</ul>
+
+<p>On every push, the core checks <code>SP &gt;= SPLIM</code>. If the proposed new SP would fall below the limit, the write is blocked and a <strong>UsageFault</strong> is raised with <code>UFSR.STKOF = 1</code> ("stack overflow"). Crucially, the corrupting write never lands — your stack region's neighbour is intact, and you can debug the fault from a known-good state.</p>
+
+<p>Both registers are banked under TrustZone:</p>
+
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│  Secure state:      MSP_S    PSP_S    MSPLIM_S    PSPLIM_S   │
+│  Non-secure state:  MSP_NS   PSP_NS   MSPLIM_NS   PSPLIM_NS  │
+└──────────────────────────────────────────────────────────────┘</code></pre>
+
+<p>Setting them up is one MSR per stack you care about. Typical reset-handler sequence on a single-core M33:</p>
+
+<pre><code class="language-c">/* In Reset_Handler, before main() */
+extern uint32_t __StackLimit;        /* defined by linker */
+extern uint32_t __StackTop;
+
+__set_MSPLIM((uint32_t)&amp;__StackLimit);   /* main stack lower bound */
+__set_MSP   ((uint32_t)&amp;__StackTop);     /* main stack initial top */
+
+/* If you also use a PSP for an RTOS / unprivileged thread mode: */
+__set_PSPLIM(task_stack_limit);
+__set_PSP   (task_stack_top);
+</code></pre>
+
+<p>Where <code>__set_MSPLIM</code> is a CMSIS-Core(M) intrinsic that emits <code>MSR MSPLIM, Rn</code>. Your linker script typically defines <code>__StackLimit</code> at the bottom of the stack region and <code>__StackTop</code> at the top.</p>
+
+<h3 id="rtos-stklim">RTOS interaction</h3>
+
+<p>Modern RTOSes set PSPLIM as part of their context switch:</p>
+
+<ul>
+  <li><strong>Zephyr</strong> — when <code>CONFIG_BUILTIN_STACK_GUARD=y</code> on Armv8-M, the kernel writes PSPLIM in <code>arch/arm/core/cortex_m/swap.c</code> on every task switch, pointing to the per-thread stack base. Cheaper and faster than the MPU-based stack guard used on Armv7-M.</li>
+  <li><strong>FreeRTOS</strong> — sets <code>PSPLIM</code> in <code>port.c</code> when <code>configENABLE_TRUSTZONE</code> or the M33 port is selected. The task control block carries a <code>pxStackLimit</code> field.</li>
+  <li><strong>ThreadX</strong> — same idea; the M33 port writes PSPLIM during thread restore.</li>
+</ul>
+
+<div class="callout info">
+  <span class="label">tip</span>
+  Stack-limit checks are <strong>free</strong> — they run on every push in hardware. On Armv7-M the equivalent protection costs you an MPU region per task plus the MPU reprogram cost on every context switch. On M33 with PSPLIM, you get strictly better protection at strictly lower cost. Always enable it.
+</div>
+
+<p class="small">Source: Armv8-M ARM section B11.5 "Stack pointer limit registers"; Zephyr <code>arch/arm/core/cortex_m</code>; FreeRTOS-Kernel <code>portable/GCC/ARM_CM33</code>.</p>
+
+<!-- =========================================================== -->
+<h2 id="mpu-v8">MPU v8 (PMSAv8)</h2>
+
+<p>The Memory Protection Unit on M33 is PMSAv8 — a redesign of the v7 MPU that fixes its biggest pain points: power-of-2 region sizes (you couldn't protect a 12 KB stack without splitting it) and per-region inline attribute encoding (every region carried its full attribute bits, blowing up the number of MPU writes during a context switch).</p>
+
+<h3 id="mpu-v8-shape">Region shape — base + limit</h3>
+
+<p>v7-M region: base + size (power of 2) + sub-region disable bits. v8-M region: <strong>base address + limit address</strong>. Any 32-byte-aligned region size is now legal; no more sub-regions, no more "round my 12 KB up to 16 KB and waste 4 KB".</p>
+
+<pre><code>MPU_RBAR (Region Base Address Register)
+  31..5   BASE       Region start (32-byte aligned)
+  4..3    SH         Shareability (00 non-, 01 reserved, 10 outer, 11 inner)
+  2..1    AP         Access permissions (RW/RO × priv/unpriv)
+  0       XN         Execute-never
+
+MPU_RLAR (Region Limit Address Register)
+  31..5   LIMIT      Region end (inclusive, must be ≥ BASE)
+  4..1    AttrIndx   Index into MAIR0/MAIR1 (0..7)
+  0       EN         Region enable</code></pre>
+
+<h3 id="mair">Attribute indirection — MAIR0 / MAIR1</h3>
+
+<p>The bigger conceptual change: instead of every region carrying a full 8-bit memory-attribute encoding (Normal/Device, cacheability, etc.) inline in its descriptor, v8-M defines <strong>8 attribute slots</strong> in two new registers (<code>MAIR0</code> for slots 0–3, <code>MAIR1</code> for slots 4–7). Each region's <code>RLAR.AttrIndx</code> is a 3-bit index into those 8 slots. Set up your "this is normal cacheable RAM", "this is device memory", "this is XIP flash" attributes once in MAIR; thereafter every region just references them.</p>
+
+<pre><code class="language-c">/* Typical M33 attribute setup */
+#define ATTR_NORMAL_WT_NA  0x44  /* normal, write-through, no allocate */
+#define ATTR_NORMAL_WB_RA  0xFF  /* normal, write-back, read-allocate, write-allocate */
+#define ATTR_DEVICE_NGNRE  0x04  /* device, non-Gathering, non-Reordering, Early ack */
+
+MPU-&gt;MAIR0 = (ATTR_NORMAL_WB_RA &lt;&lt; 0)   /* slot 0: normal RAM   */
+           | (ATTR_DEVICE_NGNRE  &lt;&lt; 8)   /* slot 1: peripherals  */
+           | (ATTR_NORMAL_WT_NA  &lt;&lt; 16); /* slot 2: XIP flash    */
+
+/* Region 0: 4..16 KB SRAM, normal RAM, RW, no execute */
+MPU-&gt;RNR  = 0;
+MPU-&gt;RBAR = (0x20001000) | (0 &lt;&lt; 1) | (1 &lt;&lt; 0);  /* AP=RW priv, XN=1 */
+MPU-&gt;RLAR = (0x20003FFF) | (0 &lt;&lt; 1) | 1;          /* AttrIndx=0, EN=1 */
+</code></pre>
+
+<h3 id="mpu-banked">Banked MPU under TrustZone</h3>
+
+<p>With the Security Extension, there are <strong>two MPUs</strong> — <code>MPU_S</code> (at <code>0xE000ED90</code>) and <code>MPU_NS</code> (at <code>0xE002ED90</code>). Each has its own region set, MAIRs, and CTRL register. Secure code can program both; Non-secure code can only see <code>MPU_NS</code>. They are completely independent: an address can be readable in one security state and unreachable in the other.</p>
+
+<p class="small">Source: Armv8-M ARM chapter B8 "PMSAv8"; <a href="https://developer.arm.com/documentation/100166/latest/">Arm Cortex-M33 Devices Generic User Guide (100166)</a>.</p>
+
+<!-- =========================================================== -->
+<h2 id="fpu">FPU — FPv5-SP-D16 and lazy stacking</h2>
+
+<p>When configured with the FPU, the M33 implements <strong>FPv5-SP-D16</strong>: IEEE-754 single-precision (32-bit) floats, with 16 doubleword registers <code>D0..D15</code> aliased as 32 single-word registers <code>S0..S31</code>. Operations covered: add, sub, mul, mac/msc, divide, sqrt, compare, convert, abs/neg, min/max, fused multiply-add. No double precision.</p>
+
+<p>The "5" in FPv5 vs "4" in FPv4 (M4) is a refinement: FPv5 adds VSEL (conditional select), VRINTx (rounding to integer keeping float type), VMINNM/VMAXNM (with NaN handling per IEEE-754-2008), and improved conversions. From a programmer's standpoint the differences are minor — most C float code compiles identically. The compiler picks them up via <code>-mfpu=fpv5-sp-d16 -mfloat-abi=hard</code>.</p>
+
+<h3 id="fpu-stacking">Lazy stacking</h3>
+
+<p>FP context (<code>S0..S15</code>, FPSCR) is 17 words. If every interrupt entry stacked all of it, ISR latency would balloon by ~17 cycles on a 3-stage core. Armv7-M (M4) introduced <em>lazy stacking</em>: on exception entry, the core only <em>reserves</em> stack space for FP context but doesn't actually save it. If the ISR never touches the FPU, no FP save/restore happens and there's no penalty. If the ISR does execute its first FP instruction, the hardware traps, walks back, lazy-saves the old FP context, then resumes the ISR.</p>
+
+<p>M33 inherits and refines this. Two registers control the behaviour:</p>
+
+<ul>
+  <li><strong>FPCCR</strong> — FP Context Control. Bits: <code>ASPEN</code> (auto-enable FP context preservation), <code>LSPEN</code> (lazy state preservation enable), <code>LSPACT</code> (lazy state pending — set on entry, cleared when actually saved), and several TZ-related bits (<code>S</code>, <code>SFRDY</code>, <code>BFRDY</code>, <code>MMRDY</code>, <code>UFRDY</code>, <code>HFRDY</code>, <code>TS</code>, <code>CLRONRET</code>, <code>CLRONRETS</code>).</li>
+  <li><strong>FPCAR</strong> — FP Context Address. Holds the address where lazy stacking <em>will</em> save FP context if needed. The address points 64 bytes into the stack frame (the reserved FP region).</li>
+</ul>
+
+<h3 id="fpu-tz">FPU + TrustZone — CLRONRET</h3>
+
+<p>An information-leak gotcha: if Secure code uses the FPU and is preempted by a Non-secure interrupt without lazy-saving FP context, the Non-secure handler can <em>read</em> the secure FP register file and exfiltrate secrets. Armv8-M defines <code>FPCCR.TS</code> (treat FP as secure) and <code>CLRONRET</code> (clear FP regs on return from secure to non-secure) to plug this. On M33 with TZ, set both bits at boot in your secure init code. CMSIS-Core(M) headers expose <code>FPU-&gt;FPCCR_S |= (FPU_FPCCR_TS_Msk | FPU_FPCCR_CLRONRET_Msk);</code>.</p>
+
+<p class="small">Source: Armv8-M ARM section B11.4 "Floating-point support"; AN298 lazy stacking on Armv7-M (still applicable mechanism).</p>
+
+<!-- =========================================================== -->
+<h2 id="dsp">DSP extensions and the coprocessor interface</h2>
+
+<p>The M33 may include the <strong>DSP extension</strong> — the same SIMD-style instructions originally added to Armv7E-M (M4). When present, they cover:</p>
+
+<ul>
+  <li><strong>Packed 16-bit / 8-bit arithmetic</strong> — <code>SADD16</code>, <code>SADD8</code>, <code>SSUB16</code>, <code>SSUB8</code>, etc. Operate on two 16-bit halves or four 8-bit lanes per 32-bit register.</li>
+  <li><strong>Saturating arithmetic</strong> — <code>SSAT</code>, <code>USAT</code>, <code>QADD</code>, <code>QSUB</code>, <code>QDADD</code>, <code>QDSUB</code>. Mandatory in fixed-point DSP code.</li>
+  <li><strong>Multiply-and-accumulate</strong> — <code>SMLAD</code>, <code>SMLAL</code>, <code>SMLALD</code>, <code>SMUAD</code>, <code>SMUSD</code>. Single-cycle FIR/IIR taps.</li>
+  <li><strong>Sign extension and packing</strong> — <code>SXTB16</code>, <code>UXTB16</code>, <code>PKHBT</code>, <code>PKHTB</code>.</li>
+</ul>
+
+<p>If your part has the DSP option, the CMSIS-DSP library accelerates dramatically (FFT, FIR, IIR, matrix, distance) — typically 4–10× over plain C. The library's source is at <a href="https://github.com/ARM-software/CMSIS-DSP">github.com/ARM-software/CMSIS-DSP</a>.</p>
+
+<p>Whether the option is present is determined at synthesis time and reported via the SCB feature registers (<code>SCB-&gt;ID_PFR1</code>, <code>SCB-&gt;ID_DFR0</code>) — see DDI 0553 chapter D1 for the encoding. CMSIS exposes a build-time macro <code>__ARM_FEATURE_DSP</code> that's set by the compiler when invoked with <code>-mcpu=cortex-m33</code> on a part that has DSP enabled (or with explicit <code>-march=armv8-m.main+dsp</code>).</p>
+
+<h3 id="cde">Custom Datapath Extension (CDE)</h3>
+
+<p>An exotic option: M33 supports up to 8 vendor-defined coprocessors via the <strong>Custom Datapath Extension</strong>. These appear in the ISA as <code>CX1</code>/<code>CX2</code>/<code>CX3</code> instructions and let an SoC designer add a few cycles of fixed-function logic on the core's pipeline (e.g. a CRC accelerator, a small XOR engine, a packet-header parser). Almost no general-purpose chip ships with CDE; it's mostly used in domain-specific microcontrollers (some ASIL-D motor controllers, niche IoT). Mention it for completeness; you will not encounter it on Nordic / NXP / ST / RP2350.</p>
+
+<p class="small">Source: Armv8-M ARM section A6.3 "DSP extension"; Cortex-M33 TRM section 1.4 "Configurable options".</p>
+
+<!-- =========================================================== -->
+<h2 id="trustzone">TrustZone-M — the centerpiece</h2>
+
+<p>This is the headline feature of the M33 and the reason most modern security-conscious vendors moved off the M4. <strong>TrustZone for Armv8-M</strong> (TZ-M) brings the same hardware-isolation idea that Cortex-A has had since 2003 down to a microcontroller-class core, but redesigned to fit a real-time deeply-embedded model: low interrupt latency, no monitor mode, no virtualization layer, no MMU.</p>
+
+<h3 id="why-tz">Why hardware isolation matters</h3>
+
+<p>Imagine your firmware needs to: (a) hold a private key and use it to sign things on behalf of an application, and (b) run a large pile of third-party application code (network stacks, BLE host, ML inference, file system). Without isolation, every line of (b) is in the same address space as the key in (a) — one buffer overflow in the BLE parser, one logic bug in the file system, and the key is exfiltrated. Software-only mitigations (ASLR, stack canaries, MPU-based sandboxing) help but don't fundamentally bound the attack surface.</p>
+
+<p>TrustZone-M draws a hardware line. The core can be in <strong>Secure</strong> state or <strong>Non-secure</strong> state at any moment. Memory regions, peripherals, NVIC slots, MPU regions, and stacks are <em>statically attributed</em> as Secure or Non-secure (the SAU/IDAU make that decision per address). When the core is in NS state, any access to an S-attributed address fails — instruction fetch, data load, MMIO write — with a SecureFault delivered to the secure side. The NS code literally cannot read or call the secure code, no matter what bug it has.</p>
+
+<h3 id="tz-states">Two states, four contexts</h3>
+
+<pre><code>                ┌──────────────────────────┐
+                │   Cortex-M33 with TZ     │
+                ├──────────────────────────┤
+                │  ┌────────┐  ┌────────┐  │
+   Privileged   │  │  S+P   │  │ NS+P   │  │
+                │  └────────┘  └────────┘  │
+                │  ┌────────┐  ┌────────┐  │
+   Unprivileged │  │  S+U   │  │ NS+U   │  │
+                │  └────────┘  └────────┘  │
+                └──────────────────────────┘
+                   Secure     Non-secure
+                ▲                          ▲
+                │                          │
+            via SG                     normal
+        (Secure Gateway)              instructions</code></pre>
+
+<p>Each cell has its own banked SP/MSP/PSP/MSPLIM/PSPLIM/CONTROL/PRIMASK/FAULTMASK/BASEPRI. The CPU also banks SCB (most of it), MPU, SAU access, NVIC bits, SysTick, and the vector table base (VTOR). Crossing between Secure and Non-secure happens only through specific instructions (<code>SG</code>, <code>BXNS</code>, <code>BLXNS</code>) — the next section is dedicated to those.</p>
+
+<div class="callout info">
+  <span class="label">mental model</span>
+  TrustZone-M is best thought of as <em>two CPUs sharing a pipeline</em>. Each "CPU" has its own MSP, PSP, vector table, NVIC view, SysTick, MPU. They share the actual silicon — the same instruction goes through the same fetch/decode/execute. The "CPU" identity is the security state. Calls cross from one to the other only at vetted gateway addresses; everywhere else, the hardware enforces isolation.
+</div>
+
+<h3 id="tz-not">What TrustZone-M is <em>not</em></h3>
+
+<ul>
+  <li><strong>Not a hypervisor.</strong> No second guest OS, no monitor mode, no virtualization. It's two flat address spaces sharing one CPU.</li>
+  <li><strong>Not crypto.</strong> TZ-M provides isolation; the actual crypto (AES, SHA, ECDSA) runs in software in the secure partition or on a dedicated peripheral.</li>
+  <li><strong>Not a sandbox for arbitrary mutual-distrust workloads.</strong> The security boundary is one-way — secure trusts non-secure to follow the gateway protocol, but secure code is the trusted side. There is no symmetric isolation between two non-secure tasks (you'd use the MPU for that).</li>
+  <li><strong>Not free at design time.</strong> Memory partitioning, secure-callable veneers, ABI design across the boundary — these are engineering choices that take real effort to get right. The reward is hardware-enforced isolation; the cost is a new mental model.</li>
+</ul>
+
+<p class="small">Source: <a href="https://developer.arm.com/Architectures/TrustZone%20for%20Cortex-M">Arm — TrustZone for Cortex-M</a>; <a href="https://developer.arm.com/documentation/100690/latest/">Building secure software with TrustZone for Armv8-M (100690)</a>; Joseph Yiu, <em>Definitive Guide to Cortex-M23/M33</em>, chapters 5–7.</p>
+
+<!-- =========================================================== -->
+<h2 id="banked">Banked registers under TrustZone</h2>
+
+<p>"Banking" means the same logical register has two physical copies, one per security state. The CPU presents whichever copy matches the current state. Most banking is automatic — you reference <code>MSP</code>, you get the copy for whichever state you're in. Some banked registers can be reached cross-state through suffixed access mnemonics (<code>MSP_NS</code>, <code>MRS r0, PSP_S</code>) — but the CPU will only honour those when issued from Secure state. NS state cannot read or write Secure-side banked copies.</p>
+
+<table>
+  <tr><th>Logical register</th><th>Banked?</th><th>Notes</th></tr>
+  <tr><td>R0–R12</td><td>No</td><td>General-purpose; clobbered through transitions but not banked.</td></tr>
+  <tr><td>SP / MSP / PSP</td><td>Yes</td><td>4 stacks total: <code>MSP_S</code>, <code>PSP_S</code>, <code>MSP_NS</code>, <code>PSP_NS</code>.</td></tr>
+  <tr><td>MSPLIM / PSPLIM</td><td>Yes</td><td>Each stack has its own limit; 4 limits total.</td></tr>
+  <tr><td>CONTROL</td><td>Yes</td><td>SPSEL, nPRIV, FPCA bit per state.</td></tr>
+  <tr><td>PRIMASK / FAULTMASK / BASEPRI</td><td>Yes</td><td>Each state has its own interrupt-mask state.</td></tr>
+  <tr><td>VTOR</td><td>Yes</td><td>VTOR_S, VTOR_NS — independent vector tables.</td></tr>
+  <tr><td>SHCSR (System Handler Control)</td><td>Yes</td><td>Each state controls its own MemManage/BusFault/UsageFault enables.</td></tr>
+  <tr><td>SCB-&gt;CCR, SHPR1..3</td><td>Mostly yes</td><td>Each state owns its handler priorities; some bits are state-shared.</td></tr>
+  <tr><td>MPU</td><td>Yes</td><td>MPU_S at 0xE000ED90, MPU_NS at 0xE002ED90.</td></tr>
+  <tr><td>SysTick</td><td>Yes</td><td>SysTick_S at 0xE000E010, SysTick_NS at 0xE002E010 (when NS has access).</td></tr>
+  <tr><td>NVIC IPRn / ISER / ICER</td><td>Per-IRQ targeted</td><td>Not strictly banked; NVIC.ITNS routes each IRQ to S or NS.</td></tr>
+  <tr><td>SAU</td><td>Secure-only</td><td>Visible only from Secure state.</td></tr>
+  <tr><td>R13/R14/R15 (SP/LR/PC)</td><td>SP banked, LR/PC not</td><td>LR carries EXC_RETURN tags that encode state transitions.</td></tr>
+  <tr><td>FPU registers (S0–S31, FPSCR)</td><td>No</td><td>One FPU register file, but lazy-stacking + CLRONRET prevent leakage.</td></tr>
+</table>
+
+<h3 id="banked-mmio">Banked memory map of system control space</h3>
+
+<p>The internal SCS (System Control Space) is also doubly-mapped. Secure aliases live at <code>0xE000Exxx</code>; Non-secure aliases at <code>0xE002Exxx</code>. From Secure code, both are reachable; from Non-secure, only the <code>0xE002Exxx</code> bank is. Examples:</p>
+
+<pre><code>0xE000ED00  SCB_S       (Secure System Control Block)
+0xE002ED00  SCB_NS      (Non-secure SCB)
+0xE000ED90  MPU_S
+0xE002ED90  MPU_NS
+0xE000E010  SysTick_S
+0xE002E010  SysTick_NS
+0xE000EDD0  SAU         (Secure-only, no NS alias)
+0xE000EF50  FPCCR       (FP Context Control — single, with TZ-aware bits)</code></pre>
+
+<p class="small">Source: Armv8-M ARM section B3.5 "Banking"; Cortex-M33 TRM section 4.6 "Programmer's model with Security Extension".</p>
+
+<!-- =========================================================== -->
+<h2 id="sau-idau">SAU and IDAU — memory attribution</h2>
+
+<p>How does the CPU know whether a given physical address is Secure, Non-secure, or Non-secure-Callable? Two cooperating units make that decision: the <strong>IDAU</strong> (Implementation Defined Attribution Unit) and the <strong>SAU</strong> (Security Attribution Unit). They run in parallel; the result of both is combined to produce the address's attribution.</p>
+
+<h3 id="idau">IDAU — vendor-fixed</h3>
+
+<p>The IDAU is hardwired by the silicon vendor and immutable at runtime. It typically encodes coarse, conservative defaults — for example, "the bottom 32 KB of flash is Non-secure-Callable; the upper bits of the address space follow a fixed pattern." On NXP LPC55S69, the IDAU uses <strong>address-bit aliasing</strong>: address bit [28] selects security — the same physical memory appears at both a secure alias and a non-secure alias 256 MB apart. On RP2350, the IDAU is simpler — it leaves attribution entirely to the SAU.</p>
+
+<p>You don't program the IDAU. Read your silicon vendor's reference manual to learn the fixed map; design your software around it.</p>
+
+<h3 id="sau">SAU — software-defined</h3>
+
+<p>The SAU is programmable. It implements 4 or 8 region descriptors (vendor-configured, but always at least 4). Each region is described by:</p>
+
+<pre><code>SAU_RBAR (Region Base Address)         — start (32-byte aligned)
+SAU_RLAR (Region Limit Address)        — end + NSC bit + EN bit
+  RLAR.LIMIT[31..5]   end address (inclusive)
+  RLAR.NSC            1 = Non-secure Callable, 0 = Non-secure
+  RLAR.EN             1 = enabled
+
+SAU_CTRL                                — global controls
+  ALLNS  1 = treat everything as NS (used during early boot)
+  ENABLE 1 = SAU active</code></pre>
+
+<p>An SAU region attributes a memory range as either <strong>Non-secure</strong> (NSC=0) or <strong>Non-secure Callable</strong> (NSC=1). Anything not covered by an enabled SAU region is <strong>Secure</strong> by default (the SAU is "secure unless told otherwise"). This default is what makes secure boot possible — at reset everything is secure, you set up the SAU to carve out NS regions, then you launch NS code.</p>
+
+<h3 id="combine">Combining IDAU and SAU</h3>
+
+<p>For each access, both the IDAU and SAU return a "what is this address" answer. The <em>more secure</em> answer wins:</p>
+
+<table>
+  <tr><th>SAU says</th><th>IDAU says</th><th>Result</th></tr>
+  <tr><td>Secure</td><td>any</td><td>Secure</td></tr>
+  <tr><td>NSC</td><td>Secure</td><td>Secure (IDAU is more conservative)</td></tr>
+  <tr><td>NSC</td><td>NSC</td><td>NSC</td></tr>
+  <tr><td>NSC</td><td>NS</td><td>NSC</td></tr>
+  <tr><td>NS</td><td>Secure</td><td>Secure (IDAU wins)</td></tr>
+  <tr><td>NS</td><td>NSC</td><td>NSC</td></tr>
+  <tr><td>NS</td><td>NS</td><td>NS</td></tr>
+</table>
+
+<h3 id="sau-example">A worked example</h3>
+
+<p>Imagine a 1 MB flash + 256 KB SRAM SoC. You want:</p>
+<ul>
+  <li>Flash 0x00000000–0x000FFFFF (1 MB): bottom 256 KB Secure (boot ROM + secure firmware), middle 4 KB Non-secure-Callable (the veneer table), upper Non-secure (the application image).</li>
+  <li>SRAM 0x20000000–0x2003FFFF (256 KB): bottom 64 KB Secure, upper Non-secure.</li>
+  <li>Peripherals 0x40000000–0x60000000: vendor-attributed via IDAU and a secondary firewall; SAU leaves them alone (treated as NS by SAU, hardware firewall does final check).</li>
+</ul>
+
+<pre><code class="language-c">/* Secure init code, before launching NS */
+SAU-&gt;RNR = 0;
+SAU-&gt;RBAR = 0x00040000;                           /* NS flash starts at 256 KB  */
+SAU-&gt;RLAR = (0x000FFFE0) | (0 &lt;&lt; 1) | 1;          /* NS up to ~1 MB, NSC=0, EN  */
+
+SAU-&gt;RNR = 1;
+SAU-&gt;RBAR = 0x0003F000;                           /* NSC veneer region          */
+SAU-&gt;RLAR = (0x0003FFE0) | (1 &lt;&lt; 1) | 1;          /* NSC=1, EN                  */
+
+SAU-&gt;RNR = 2;
+SAU-&gt;RBAR = 0x20010000;                           /* NS SRAM starts at +64 KB   */
+SAU-&gt;RLAR = (0x2003FFE0) | (0 &lt;&lt; 1) | 1;          /* NS rest of SRAM            */
+
+SAU-&gt;RNR = 3;
+SAU-&gt;RBAR = 0x40000000;                           /* NS peripherals             */
+SAU-&gt;RLAR = (0x5FFFFFE0) | (0 &lt;&lt; 1) | 1;
+
+SAU-&gt;CTRL = 1;                                    /* enable SAU                 */
+</code></pre>
+
+<p>After this, secure code runs from <code>0x00000000</code>, calls into the veneer table at <code>0x0003F000</code>, and the application running from <code>0x00040000</code> is hardware-isolated from secure flash and secure SRAM.</p>
+
+<p class="small">Source: Armv8-M ARM section B8.2 "SAU"; <a href="https://developer.arm.com/documentation/100690/latest/">100690 — Building secure software</a>; Joseph Yiu, chapter 6.</p>
+
+<!-- =========================================================== -->
+<h2 id="sg-bxns">State transitions — SG, BXNS, BLXNS, TT</h2>
+
+<p>Crossing the security boundary is the part of TrustZone-M that surprises people. There are exactly four mechanisms, each with a specific direction and protocol.</p>
+
+<h3 id="ns-to-s">NS → S — the Secure Gateway dance</h3>
+
+<p>Non-secure code wants to call a secure function. It calls a <strong>veneer</strong>, which lives in NSC memory (Non-secure-Callable: visible to NS as a callable address, but classified as a security boundary). The veneer's first instruction must be <code>SG</code> — the Secure Gateway. Anything else trips a SecureFault.</p>
+
+<pre><code>; Veneer in NSC region, e.g. at 0x0003F010
+secure_function_veneer:
+    SG                       ; Secure Gateway — switches CPU to Secure state
+    B   secure_function      ; tail-call into the real implementation</code></pre>
+
+<p>Mechanically: NS code does <code>BL secure_function_veneer</code>. The CPU fetches at the veneer address, the IDAU/SAU say "this is NSC", and on entry the very first instruction is checked: if it's <code>SG</code>, the state flips to Secure and execution continues. If anything else, SecureFault. The branch immediately after <code>SG</code> goes to the real secure function (which lives in Secure memory, unreachable to NS directly).</p>
+
+<h3 id="s-to-ns">S → NS — BXNS / BLXNS</h3>
+
+<p>Secure code wants to call into Non-secure. Two instructions, with the <strong>NS</strong> suffix:</p>
+
+<ul>
+  <li><code>BXNS Rn</code> — branch and switch state to NS. Like <code>BX</code> but transitions to Non-secure. <code>Rn</code>'s low bit must be <strong>0</strong> (the inversion of the normal Thumb/ARM hint).</li>
+  <li><code>BLXNS Rn</code> — branch with link, switch state to NS. The hardware pushes a special "FNC_RETURN" frame on the secure stack so when the callee does an ordinary <code>BX LR</code>, the CPU realises the return needs to switch back to Secure and unstacks correctly.</li>
+</ul>
+
+<p>For a one-way "boot the application" handover, you use <code>BXNS</code>. For a callback (S calls NS, NS does work, returns to S), you use <code>BLXNS</code>.</p>
+
+<h3 id="boot-handover">Boot handover sequence</h3>
+
+<pre><code class="language-c">/* Secure bootloader, after SAU setup */
+extern uint32_t __ns_vector_table;     /* linker symbol — NS reset vector */
+
+/* Set NS vector table */
+SCB_NS-&gt;VTOR = (uint32_t)&amp;__ns_vector_table;
+
+/* Set NS MSP from NS vector table[0] (initial MSP) */
+__TZ_set_MSP_NS(((uint32_t *)&amp;__ns_vector_table)[0]);
+
+/* Resolve NS reset handler from vector table[1], drop the Thumb bit, BXNS */
+uint32_t ns_reset = ((uint32_t *)&amp;__ns_vector_table)[1] &amp; ~1u;
+typedef void (*ns_func_t)(void) __attribute__((cmse_nonsecure_call));
+((ns_func_t)ns_reset)();
+</code></pre>
+
+<p>The <code>__attribute__((cmse_nonsecure_call))</code> tells GCC to emit <code>BLXNS</code> at the call site, scrub general-purpose registers, and clear FP regs if needed.</p>
+
+<h3 id="tt">TT, TTT, TTA, TTAT — query an address's attribution</h3>
+
+<p>How does Secure code check, before dereferencing a Non-secure pointer, that the pointer actually points into NS memory and not, say, an NSC veneer being passed as a confused-deputy attack? The <code>TT</code> family answers:</p>
+
+<ul>
+  <li><code>TT  Rd, Rn</code> — Test Target. <code>Rd</code> ← attribution of the address in <code>Rn</code> as the <em>current</em> security state.</li>
+  <li><code>TTT Rd, Rn</code> — same, but query MPU privilege bit too.</li>
+  <li><code>TTA Rd, Rn</code> — Test Target, Alternate. Query as the <em>other</em> security state. Used by Secure code to ask "what would NS see at this address?"</li>
+  <li><code>TTAT Rd, Rn</code> — alternate + privilege.</li>
+</ul>
+
+<p>Secure entry-point code uses <code>TTA</code>/<code>TTAT</code> (via the GCC builtin <code>cmse_check_address_range()</code>) to validate every NS-supplied pointer at the boundary. Skipping this is the most common TZ-M bug class.</p>
+
+<p class="small">Source: Armv8-M ARM sections C2.5 "SG", C2.6 "BXNS/BLXNS", C2.7 "TT family".</p>
+
+<!-- =========================================================== -->
+<h2 id="nvic-tz">NVIC under TrustZone — ITNS, AIRCR.PRIS</h2>
+
+<p>The NVIC keeps the same shape — up to 480 external IRQs, 8 priority bits per IRQ (vendor-implemented, often 3–4) — but each IRQ is independently <strong>targeted</strong> at Secure or Non-secure state. The targeting register is <code>NVIC-&gt;ITNSn</code> (Interrupt Target Non-Secure, one bit per IRQ).</p>
+
+<ul>
+  <li><code>ITNS[n] = 0</code> — IRQ <em>n</em> is targeted at Secure state. Its handler runs in Secure mode, vector resolved from <code>VTOR_S</code>. NS code can't enable, disable, pend, clear, or change priority — those operations are denied.</li>
+  <li><code>ITNS[n] = 1</code> — IRQ <em>n</em> is targeted at Non-secure. Handler runs in NS, vector from <code>VTOR_NS</code>. Secure code can still see the bit but typically leaves NS-targeted IRQs to NS to manage.</li>
+</ul>
+
+<p><code>ITNS</code> itself is Secure-only writable. NS code can read it but not modify. This is how secure boot statically partitions interrupts: a "this peripheral belongs to NS" decision is made once at boot, NS can never re-target one of its IRQs to Secure.</p>
+
+<h3 id="pris">Priority space split — AIRCR.PRIS</h3>
+
+<p>Without TZ, an 8-bit priority field gives 256 priority levels. Under TZ, you have a problem: if Secure and Non-secure share the priority space, NS code could set a priority of <code>0</code> on its own IRQ and starve the secure side. AIRCR.PRIS prevents this:</p>
+
+<ul>
+  <li><strong>AIRCR.PRIS = 0</strong> (the default) — single shared priority space. Secure and Non-secure IRQs interleave by their numerical priority. Convenient for development.</li>
+  <li><strong>AIRCR.PRIS = 1</strong> — the priority space splits in half. Secure IRQs occupy <code>0..127</code> (always preempt NS), Non-secure IRQs are remapped into <code>128..255</code> (logically, NS sees its priorities but the hardware tags them).</li>
+</ul>
+
+<p>For production secure boot you set <code>AIRCR.PRIS = 1</code> in secure init code. Once set, no NS IRQ can ever preempt a Secure IRQ regardless of how NS configures its own priorities.</p>
+
+<h3 id="nsacr">NSACR — Non-secure access control</h3>
+
+<p>The <code>NSACR</code> register controls which coprocessors NS code may use:</p>
+
+<ul>
+  <li><strong>NSACR.CP10/CP11</strong> — when set, NS may use the FPU. When clear, FP instructions in NS state trap as a UsageFault.</li>
+  <li>Custom-coprocessor bits if CDE is implemented.</li>
+</ul>
+
+<p>Most projects with FPU set both bits in secure init so the NS application can use floats. Cleared, the FPU becomes a Secure-only resource (rare; mainly for very-tight-isolation profiles).</p>
+
+<p class="small">Source: Armv8-M ARM section B3.10 "NVIC banking"; AIRCR / NSACR encodings in section B3.4.</p>
+
+<!-- =========================================================== -->
+<h2 id="cmse">CMSE toolchain — gcc &amp; armclang attributes</h2>
+
+<p>The Cortex-M Security Extensions (CMSE) are the compiler-side conventions that make TrustZone-M usable from C. Both <strong>gcc-arm-none-eabi</strong> and <strong>armclang</strong> support CMSE; the surface is identical between them. Enable it with:</p>
+
+<pre><code># GCC
+arm-none-eabi-gcc -mcpu=cortex-m33 -mcmse \
+    -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
+    secure_app.c -o secure_app.o
+
+# armclang
+armclang --target=arm-arm-none-eabi -mcpu=cortex-m33 -mcmse \
+    -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
+    secure_app.c -c -o secure_app.o</code></pre>
+
+<p>The two attributes you'll write by hand are <code>cmse_nonsecure_entry</code> (on a Secure function callable from NS) and <code>cmse_nonsecure_call</code> (on a function pointer typed as "this points at NS code").</p>
+
+<h3 id="cmse-entry">cmse_nonsecure_entry — the secure entry point</h3>
+
+<pre><code class="language-c">/* In a secure source file */
+#include &lt;arm_cmse.h&gt;
+
+uint32_t __attribute__((cmse_nonsecure_entry))
+sign_message(const uint8_t *msg, size_t len, uint8_t *sig_out)
+{
+    /* Validate that NS-supplied pointers are actually in NS memory */
+    if (!cmse_check_address_range((void*)msg,
+                                  len,
+                                  CMSE_NONSECURE | CMSE_MPU_READ))
+        return -1;
+    if (!cmse_check_address_range(sig_out,
+                                  64,
+                                  CMSE_NONSECURE | CMSE_MPU_READWRITE))
+        return -1;
+
+    /* Safe to use msg / sig_out now — we know they're NS, not S leaks */
+    return crypto_sign(msg, len, sig_out);
+}</code></pre>
+
+<p>The compiler does several things for a <code>cmse_nonsecure_entry</code> function:</p>
+
+<ul>
+  <li>Emits an <code>SG</code> instruction at the entry, then a normal prologue. The <code>SG</code> sits at the NSC veneer address.</li>
+  <li>On return, scrubs all caller-saved general-purpose registers (R0–R3, R12) of any secret values, clears LR, and uses <code>BXNS LR</code> to return to NS state.</li>
+  <li>If FP is in use, scrubs FP registers and FPSCR via <code>VLLDM</code> (which ties into <code>FPCCR.CLRONRET</code>).</li>
+  <li>Creates a linker symbol for the veneer so the placement script can put it in NSC memory.</li>
+</ul>
+
+<h3 id="cmse-call">cmse_nonsecure_call — calling into NS</h3>
+
+<pre><code class="language-c">/* Function pointer typed as NS */
+typedef void (*ns_callback_t)(uint32_t arg) __attribute__((cmse_nonsecure_call));
+
+void secure_dispatch(ns_callback_t cb, uint32_t arg)
+{
+    /* The compiler emits BLXNS for this call:
+       - clears all GPRs the NS callee shouldn't see
+       - lazy-stacks FP if needed (CLRONRET)
+       - on return, FP-context-clear runs automatically  */
+    cb(arg);
+}</code></pre>
+
+<p>Without the <code>cmse_nonsecure_call</code> attribute, GCC emits a normal <code>BLX</code> — which from Secure state to an NS address would be detected by the SAU and trap as a SecureFault. The attribute is mandatory whenever you call <em>through</em> a pointer from Secure to Non-secure.</p>
+
+<h3 id="cmse-helpers">CMSE intrinsics worth knowing</h3>
+
+<table>
+  <tr><th>Intrinsic</th><th>What it does</th></tr>
+  <tr><td><code>cmse_TT(p)</code></td><td>Wraps the <code>TT</code> instruction. Returns the address attribution as the current state would see it.</td></tr>
+  <tr><td><code>cmse_TTA(p)</code></td><td>Wraps <code>TTA</code>. Returns attribution from the <em>other</em> security state's POV (use this from Secure to ask "what does NS see").</td></tr>
+  <tr><td><code>cmse_check_address_range(p, len, flags)</code></td><td>Common wrapper — combines TT/TTA queries to check that <code>[p, p+len)</code> is fully in NS memory and matches required access flags.</td></tr>
+  <tr><td><code>cmse_check_pointed_object(p, flags)</code></td><td>Like above but <code>len</code> = <code>sizeof(*p)</code>.</td></tr>
+  <tr><td><code>cmse_nsfptr_create(p)</code></td><td>Mark a pointer as "this is NS callable" — typically applied when you receive a function pointer from NS.</td></tr>
+  <tr><td><code>cmse_is_nsfptr(p)</code></td><td>True iff the LSB of <code>p</code> indicates it's an NS function (Thumb LSB = 0 means NS in CMSE convention).</td></tr>
+</table>
+
+<p class="small">Source: <a href="https://developer.arm.com/documentation/100074/latest/">CMSE specification (100074)</a>; ACLE — <em>Arm C Language Extensions</em> chapter 12.</p>
+
+<!-- =========================================================== -->
+<h2 id="secure-faults">Faults under TrustZone — SecureFault &amp; friends</h2>
+
+<p>TrustZone adds one new fault and changes how some old ones are routed.</p>
+
+<h3 id="securefault">SecureFault (exception number 7)</h3>
+
+<p>Triggered when something violates the security boundary. Always delivered to the Secure side (handler runs in Secure state, vector from <code>VTOR_S[7]</code>). The cause is reported in <code>SFSR</code> (Secure Fault Status Register, at <code>0xE000EDE4</code>):</p>
+
+<table>
+  <tr><th>SFSR bit</th><th>Meaning</th></tr>
+  <tr><td><code>INVEP</code></td><td>Invalid entry point — NS tried to call into S, but the first instruction at the entry wasn't <code>SG</code>.</td></tr>
+  <tr><td><code>INVIS</code></td><td>Invalid integrity signature — NS tried to use a Secure return frame.</td></tr>
+  <tr><td><code>INVER</code></td><td>Invalid exception return — EXC_RETURN tag inconsistent with security state.</td></tr>
+  <tr><td><code>AUVIOL</code></td><td>Attribution unit violation — NS access to a Secure address (or vice versa).</td></tr>
+  <tr><td><code>INVTRAN</code></td><td>Invalid transition — branch from S to a Secure address that's not allowed for the current state.</td></tr>
+  <tr><td><code>LSPERR</code></td><td>Lazy state preservation error.</td></tr>
+  <tr><td><code>SFARVALID</code></td><td>SFAR (Secure Fault Address Register) holds a valid faulting address.</td></tr>
+  <tr><td><code>LSERR</code></td><td>Lazy state error — relating to FP context security tagging.</td></tr>
+</table>
+
+<h3 id="hardfault-tz">HardFault — banked</h3>
+
+<p>HardFault is banked: <code>HardFault_S</code> at vector 3 in the Secure VTOR, <code>HardFault_NS</code> at vector 3 in the Non-secure VTOR. By default, all HardFaults go to the Secure handler (so a misbehaving NS can't hide a fault). Bit <code>AIRCR.BFHFNMINS</code> can re-route NS HardFault back to NS — useful for development, dangerous for production.</p>
+
+<h3 id="other-faults">MemManage, BusFault, UsageFault</h3>
+
+<p>Each is banked. The state where the fault originated determines the handler. There are two SHCSRs (one per state); enabling <code>UsageFault</code> in <code>SHCSR_S</code> doesn't affect NS. CFSR (Configurable Fault Status Register) is per-state — when debugging a fault, read the CFSR matching the state in which the fault occurred.</p>
+
+<div class="callout">
+  <span class="label">debug tip</span>
+  In a TrustZone-M crash, your debugger's "fault decode" depends on which security state is current. Tools like <code>probe-rs</code>, <code>pyOCD</code>, and <code>JLinkExe</code> can decode CFSR/HFSR/SFSR but you must tell them which state's view to read. Most decoders default to "current state" — halt with <code>monitor halt</code>, then run <code>monitor info securestate</code> (J-Link) before reading status registers.
+</div>
+
+<p class="small">Source: Armv8-M ARM section B5.5 "Fault model with Security Extension"; <a href="https://interrupt.memfault.com/blog/cortex-m-fault-debug">Memfault Interrupt blog — Cortex-M fault debugging</a> (Armv7-M version, but the v8-M extension follows the same pattern).</p>
+
+<!-- =========================================================== -->
+<h2 id="debug">Debug under M33 — DHCSR.S_SDE, secure debug auth</h2>
+
+<p>Debug architecture under TZ is the same CoreSight stack you know from M3/M4 — DAP, ITM, DWT, FPB, optional ETM — but with new authentication signals so a debugger can't trivially break secure code's confidentiality.</p>
+
+<h3 id="auth-signals">Authentication signals</h3>
+
+<p>Four hardware signals enter the core, each gating a category of debug operations:</p>
+
+<table>
+  <tr><th>Signal</th><th>What it gates</th></tr>
+  <tr><td><code>DBGEN</code></td><td>All invasive debug — halt, single-step, register access. Required for any debugger to function at all.</td></tr>
+  <tr><td><code>NIDEN</code></td><td>Non-invasive debug — ETM/ITM trace. Allowed even when DBGEN is off (capture without halting).</td></tr>
+  <tr><td><code>SPIDEN</code></td><td>Secure-Privileged Invasive Debug Enable. Required for invasive debug into <em>Secure</em> state.</td></tr>
+  <tr><td><code>SPNIDEN</code></td><td>Secure-Privileged Non-Invasive — secure-side trace.</td></tr>
+</table>
+
+<p>Vendors typically tie these signals to the silicon's <strong>life-cycle state</strong>:</p>
+
+<ul>
+  <li><strong>Open / development</strong> — all four asserted. Full debug, including into Secure code. Convenient for development; never ship like this.</li>
+  <li><strong>Closed</strong> — DBGEN/NIDEN asserted, SPIDEN/SPNIDEN deasserted. NS code can be debugged; S code cannot. The "production debug" mode for parts that ship with a customer-facing NS application.</li>
+  <li><strong>Locked</strong> — all four deasserted. No debug at all. Final-product mode; usually irreversible (a fuse).</li>
+</ul>
+
+<h3 id="dhcsr">DHCSR.S_SDE — what the debugger sees</h3>
+
+<p>The Debug Halting Control and Status Register (<code>DHCSR</code>, at <code>0xE000EDF0</code>) gains a status bit <strong>S_SDE</strong> ("Secure Debug Enable") which the debugger reads to know whether secure-side halting is permitted. If <code>S_SDE = 0</code>, the debugger must restrict itself to NS-side operations — no halting in secure code, no inspecting secure registers, no setting breakpoints in secure memory. Tooling enforces this in software; the hardware enforces it underneath.</p>
+
+<h3 id="trace-tz">Trace under TZ</h3>
+
+<p>ITM and DWT data can be tagged with the security state at the moment of generation. <code>DEMCR.SDME</code> ("Secure DebugMonitor Enable") and the <code>ITM-&gt;TER</code> filtering controls let you decide whether NS code can write to secure-tagged trace channels (usually no, to prevent NS from forging "secure" log lines).</p>
+
+<p class="small">Source: Armv8-M ARM section D1 "Debug architecture"; Cortex-M33 TRM chapter 8 "Debug".</p>
+
+<!-- =========================================================== -->
+<h2 id="vendor-configs">Vendor configurations of the M33</h2>
+
+<p>The same M33 core looks meaningfully different across silicon vendors because each picks a different combination of synthesis options + adds vendor-specific peripherals (firewalls, crypto blocks, NVM controllers) that interact with TrustZone. Worth knowing the dominant flavours.</p>
+
+<h3 id="rp2350">Raspberry Pi RP2350 — what edevkit uses</h3>
+
+<ul>
+  <li><strong>Cores:</strong> 2× Cortex-M33 + 2× Hazard3 (RISC-V) on the same die. The user picks at boot which pair runs (M33+M33 or RV+RV).</li>
+  <li><strong>Frequency:</strong> 150 MHz typical, overclockable.</li>
+  <li><strong>FPU:</strong> Yes — FPv5-SP-D16.</li>
+  <li><strong>DSP:</strong> Yes.</li>
+  <li><strong>TrustZone:</strong> Yes. SAU has 8 regions. IDAU is permissive — defers to SAU.</li>
+  <li><strong>SRAM:</strong> 520 KB across 10 banks (8× 64 KB + 2× 4 KB).</li>
+  <li><strong>Flash:</strong> XIP from external QSPI (W25Q128 or similar). Boot ROM in mask ROM.</li>
+  <li><strong>Boot security:</strong> OTP + signed boot. Signed images verified by ROM before handing off.</li>
+  <li><strong>Distinctive blocks:</strong> 12 PIO state machines (programmable I/O — Pi Foundation's signature feature), HSTX (high-speed parallel out), per-bus security gating via the Coprocessor block.</li>
+</ul>
+
+<p>edevkit firmware currently builds for <code>rpi_pico2/rp2350a/m33</code> and <strong>does not enable TrustZone</strong> — secure boot lives in the Boot ROM, the application runs entirely in Secure state with TZ effectively unused. This is the Pico SDK / Zephyr default. See <a href="edevkit1.html">edevkit1.html §15</a> (Decision Log) for the rationale.</p>
+
+<h3 id="nrf5340">Nordic nRF5340</h3>
+
+<ul>
+  <li>Dual M33: <em>Application</em> core (128 MHz, FPU+DSP+TZ, 1 MB flash + 512 KB SRAM) and <em>Network</em> core (64 MHz, no FPU, 256 KB flash + 64 KB SRAM, runs the BLE/802.15.4 stack).</li>
+  <li>Inter-core IPC via 16 IPC channels (mailboxes).</li>
+  <li>SPU (System Protection Unit) — Nordic's bus-level firewall that complements TZ. Enforces S/NS attribution on flash regions, RAM regions, and every peripheral. Programmed alongside SAU in the secure bootloader.</li>
+  <li>CryptoCell-312 — hardware crypto + TRNG + key store. Reachable from Secure side only.</li>
+  <li>TF-M / Zephyr <code>nrf5340_audiodk_app</code> are the canonical reference implementations for "real" TZ usage.</li>
+</ul>
+
+<h3 id="lpc55s">NXP LPC55Sxx (LPC55S69 etc.)</h3>
+
+<ul>
+  <li>Dual M33: both have FPU+DSP+TZ. 150 MHz.</li>
+  <li>IDAU — uses address-bit aliasing. Bit 28 of the address selects security; same physical memory appears at a Secure alias and an NS alias 256 MB apart. Conceptually elegant; in practice surprises new users.</li>
+  <li>PowerQuad — coprocessor for FFT, biquad, matrix, transform. Reachable from CDE-style instructions.</li>
+  <li>CASPER — public-key crypto accelerator (modular arithmetic for ECC/RSA).</li>
+  <li>PRINCE — on-the-fly flash encryption, transparent to the core.</li>
+  <li>ROM-resident "secure boot ROM API" — vendor-supplied entry points NS code can call for things like image authentication.</li>
+</ul>
+
+<h3 id="stm32u5">ST STM32L5 / U5 / H5</h3>
+
+<ul>
+  <li>Single M33; all configurations include FPU+DSP+TZ. Frequencies 110/160/250 MHz across the families.</li>
+  <li>TZSC / GTZC — bus-level TrustZone System / Global TrustZone Controller. Per-peripheral S/NS gating, with the GTZC also providing watermarked memory regions and illegal-access detection.</li>
+  <li>Distinctive: ART Accelerator (instruction prefetch from flash with cache); ICACHE on H5 (system-level cache, not core-internal).</li>
+  <li>STM32CubeMX has a TrustZone wizard that emits the SAU + GTZC + flash watermark code — the lowest-friction onramp to "real" TZ on any vendor part.</li>
+</ul>
+
+<h3 id="silabs">Silicon Labs EFR32 Series 2</h3>
+
+<ul>
+  <li>Single M33 + dedicated wireless coprocessor.</li>
+  <li>Series 2 parts (MG24, BG24, FG28) ship with TZ enabled by default.</li>
+  <li>Application Note <strong>AN1374</strong> is the canonical "how to use TZ on Silabs" guide and also one of the better cross-vendor TZ-M tutorials.</li>
+</ul>
+
+<p class="small">Source: each vendor's reference manual + datasheet. Cross-checked specifically: <a href="https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf">RP2350 datasheet</a> (sections 3, 10), <a href="https://infocenter.nordicsemi.com/topic/ps_nrf5340/keyfeatures_html5.html">nRF5340 product spec</a>, <a href="https://www.nxp.com/docs/en/user-guide/UM11126.pdf">LPC55S6x UM11126</a>, <a href="https://www.st.com/resource/en/reference_manual/rm0438-stm32l552xx-and-stm32l562xx-advanced-armbased-32bit-mcus-stmicroelectronics.pdf">STM32L5 RM0438</a>, <a href="https://www.silabs.com/documents/public/application-notes/an1374-trustzone.pdf">AN1374</a>.</p>
+
+<!-- =========================================================== -->
+<h2 id="migration">Migration — from M3/M4 (and from M0+) to M33</h2>
+
+<h3 id="from-m4">Cortex-M4 → Cortex-M33</h3>
+
+<p>The friendliest possible migration. Most existing M4 firmware compiles for M33 with two flag changes:</p>
+
+<pre><code># M4 build:
+-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard
+
+# M33 build:
+-mcpu=cortex-m33 -mfpu=fpv5-sp-d16 -mfloat-abi=hard</code></pre>
+
+<p>What you'll likely change anyway:</p>
+
+<ul>
+  <li><strong>Add MSPLIM / PSPLIM init.</strong> Free stack-overflow protection; no excuse to skip it. ~5 lines in the reset handler.</li>
+  <li><strong>Update CMSIS-Core(M).</strong> The CMSIS 6 Cortex-M33 device header has different SCB/MPU/SAU layouts. CMSIS auto-handles this; just regenerate from your vendor's pack.</li>
+  <li><strong>Bit-banding code is gone.</strong> If you used <code>BIT_BAND_ALIAS()</code> macros for atomic single-bit access, they've stopped working — use bit-field-insert (<code>BFI</code>/<code>UBFX</code>) or LDREX/STREX. Most vendor HALs already abstracted this.</li>
+  <li><strong>If you want TrustZone</strong> — that's the real work. New secure-boot image, NSC veneers, SAU setup, and partitioning peripheral access. Plan a multi-week effort.</li>
+  <li><strong>Update your debugger.</strong> probe-rs, pyOCD, OpenOCD all auto-detect M33. Make sure your config selects "cortex-m33" not "cortex-m4" — the SCS layout differs in subtle ways the debugger needs to know about.</li>
+</ul>
+
+<h3 id="from-m3">Cortex-M3 → Cortex-M33</h3>
+
+<p>Same as M4→M33 but you also need to decide whether to enable FPU and DSP. If your M3 code does any float work in software, switching FPU on is a 5–20× speedup on float kernels for free.</p>
+
+<h3 id="from-m0">Cortex-M0 / M0+ → Cortex-M33</h3>
+
+<p>Bigger jump. Things you gain:</p>
+
+<ul>
+  <li>Full Thumb-2 ISA (32-bit instructions, IT blocks, hardware divide, multi-cycle multiply).</li>
+  <li>8-bit priority field (256 levels) instead of 2-bit (4 levels).</li>
+  <li>Optional FPU, DSP, TZ.</li>
+  <li>MSPLIM/PSPLIM (no equivalent on M0+).</li>
+  <li>MPU v8 with 8 regions (instead of 0 or 8 v6-M regions).</li>
+</ul>
+
+<p>Things to watch:</p>
+
+<ul>
+  <li>If your M0+ code did precise nanosecond timing using cycle counts, the M33's longer pipeline + speculative-fetch behaviour means timing must be re-validated. Use DWT-&gt;CYCCNT for measurements, never assume.</li>
+  <li>Vector table layout grows — M0+ has up to 32 IRQs, M33 has up to 480. You'll want to autogenerate the vector table or use CMSIS's startup file template.</li>
+  <li>If you used <code>__disable_irq()</code> for naïve mutual exclusion, that still works but you now have BASEPRI for finer-grained masking — adopt it for low-priority RTOS critical sections.</li>
+</ul>
+
+<p class="small">Source: <a href="https://developer.arm.com/documentation/107565/latest/">Arm 107565 — Migrating to Armv8-M</a>; Joseph Yiu, <em>Definitive Guide to Cortex-M23/M33</em> chapter 3.</p>
+
+<!-- =========================================================== -->
+<h2 id="code-snippets">Concrete code &amp; build snippets</h2>
+
+<p>Putting the pieces together. The following snippets are minimal but production-ready patterns.</p>
+
+<h3 id="snip-reset">M33 reset handler with stack limits</h3>
+
+<pre><code class="language-c">/* startup_m33.c (or .S) — the absolute first code that runs */
+extern uint32_t __StackTop;       /* top of main stack    */
+extern uint32_t __StackLimit;     /* bottom of main stack */
+extern uint32_t __etext;          /* end of .text in flash */
+extern uint32_t __data_start__;
+extern uint32_t __data_end__;
+extern uint32_t __bss_start__;
+extern uint32_t __bss_end__;
+
+void Reset_Handler(void)
+{
+    /* 1. Set MSP and MSPLIM as early as possible */
+    __set_MSP   ((uint32_t)&amp;__StackTop);
+    __set_MSPLIM((uint32_t)&amp;__StackLimit);
+
+    /* 2. Copy .data from flash to RAM */
+    uint32_t *src = &amp;__etext;
+    for (uint32_t *dst = &amp;__data_start__; dst &lt; &amp;__data_end__; ) *dst++ = *src++;
+
+    /* 3. Zero .bss */
+    for (uint32_t *dst = &amp;__bss_start__; dst &lt; &amp;__bss_end__; ) *dst++ = 0;
+
+    /* 4. Vendor system init (PLL, flash wait states, peripheral clocks) */
+    SystemInit();
+
+    /* 5. Hand off to libc + main */
+    __libc_init_array();
+    main();
+
+    /* main returned (it shouldn't on bare metal) */
+    while (1) __WFI();
+}</code></pre>
+
+<h3 id="snip-sau">Minimal SAU setup for a one-flash, one-RAM partition</h3>
+
+<pre><code class="language-c">/* Called from secure init, before any NS handover */
+static void sau_init(void)
+{
+    /* Region 0: NS flash 0x00040000..0x000FFFFF */
+    SAU-&gt;RNR  = 0;
+    SAU-&gt;RBAR = 0x00040000u;
+    SAU-&gt;RLAR = (0x000FFFE0u) | (0u &lt;&lt; 1) | 1u;     /* NSC=0, EN=1 */
+
+    /* Region 1: NSC veneers 0x0003F000..0x0003FFFF */
+    SAU-&gt;RNR  = 1;
+    SAU-&gt;RBAR = 0x0003F000u;
+    SAU-&gt;RLAR = (0x0003FFE0u) | (1u &lt;&lt; 1) | 1u;     /* NSC=1, EN=1 */
+
+    /* Region 2: NS RAM 0x20010000..0x2003FFFF */
+    SAU-&gt;RNR  = 2;
+    SAU-&gt;RBAR = 0x20010000u;
+    SAU-&gt;RLAR = (0x2003FFE0u) | (0u &lt;&lt; 1) | 1u;
+
+    /* Region 3: NS peripheral window */
+    SAU-&gt;RNR  = 3;
+    SAU-&gt;RBAR = 0x40000000u;
+    SAU-&gt;RLAR = (0x5FFFFFE0u) | (0u &lt;&lt; 1) | 1u;
+
+    SAU-&gt;CTRL = SAU_CTRL_ENABLE_Msk;                /* enable SAU */
+    __DSB(); __ISB();
+}</code></pre>
+
+<h3 id="snip-nsc">An NSC veneer + secure entry function</h3>
+
+<pre><code class="language-c">/* secure.c, compiled with -mcmse */
+#include &lt;arm_cmse.h&gt;
+
+uint32_t __attribute__((cmse_nonsecure_entry))
+secure_get_serial(uint8_t *out, size_t out_len)
+{
+    if (out_len &lt; 16) return 0;
+    if (!cmse_check_address_range(out, out_len,
+                                  CMSE_NONSECURE | CMSE_MPU_READWRITE))
+        return 0;
+
+    /* Pull serial from secure-only OTP */
+    extern const uint8_t __otp_serial[16];
+    for (size_t i = 0; i &lt; 16; ++i) out[i] = __otp_serial[i];
+    return 16;
+}</code></pre>
+
+<p>The compiler emits an <code>SG</code> at function entry and a <code>BXNS LR</code> at exit, with all caller-saved registers scrubbed in between. The linker places this function in the NSC region (you tell it via section attribute or a placement file).</p>
+
+<h3 id="snip-handover">Secure-to-Non-secure boot handover</h3>
+
+<pre><code class="language-c">/* End of secure init — launch the NS application */
+typedef void (*ns_func_t)(void) __attribute__((cmse_nonsecure_call));
+
+__attribute__((noreturn))
+void launch_nonsecure(uint32_t ns_vector_table_addr)
+{
+    /* 1. Point the NS vector table at the NS app */
+    SCB_NS-&gt;VTOR = ns_vector_table_addr;
+
+    /* 2. Set NS MSP from vector table[0] */
+    uint32_t ns_msp = ((uint32_t *)ns_vector_table_addr)[0];
+    __TZ_set_MSP_NS(ns_msp);
+
+    /* 3. Set NS MSPLIM from a linker-defined NS stack limit */
+    extern uint32_t __ns_stack_limit;
+    __TZ_set_MSPLIM_NS((uint32_t)&amp;__ns_stack_limit);
+
+    /* 4. Resolve NS reset vector, call as cmse_nonsecure_call */
+    uint32_t ns_reset = ((uint32_t *)ns_vector_table_addr)[1] &amp; ~1u;
+    ns_func_t ns_entry = (ns_func_t)ns_reset;
+    ns_entry();      /* compiler emits BLXNS, scrubs regs, transitions */
+
+    /* Should never return */
+    while (1) __WFI();
+}</code></pre>
+
+<h3 id="snip-priority">NVIC priority space split + interrupt targeting</h3>
+
+<pre><code class="language-c">/* Once per boot, in secure init */
+SCB-&gt;AIRCR = (0x05FAUL &lt;&lt; SCB_AIRCR_VECTKEY_Pos)
+           | SCB_AIRCR_PRIS_Msk;     /* split priority space */
+
+/* Send IRQ #14 (UART2) to Non-secure */
+NVIC-&gt;ITNS[0] |= (1u &lt;&lt; 14);
+
+/* Send IRQ #5 (RTC, used by secure code) to Secure (default, but explicit) */
+NVIC-&gt;ITNS[0] &amp;= ~(1u &lt;&lt; 5);</code></pre>
+
+<p class="small">All snippets compile under <code>arm-none-eabi-gcc -mcpu=cortex-m33 -mcmse -mfloat-abi=hard -mfpu=fpv5-sp-d16</code> with CMSIS 6 and the device header for any modern M33 SoC.</p>
+
+<!-- =========================================================== -->
+<h2 id="gotchas">Common gotchas &amp; errata-class behaviors</h2>
+
+<ol>
+  <li><strong>Forgetting <code>SG</code> as the first NSC instruction.</strong> Manually-written NSC veneers must <em>begin</em> with <code>SG</code>. Anything else — even a <code>NOP</code> — trips a SecureFault on entry. The CMSE attribute handles this for you; if you write veneers in assembly, get the prologue right.</li>
+
+  <li><strong>VTOR_NS in Secure address space.</strong> The NS vector table is configured by writing <code>SCB_NS-&gt;VTOR</code>, but that register lives in the Secure SCS alias. Only Secure code can program where NS vectors live — NS cannot relocate its own vector table. Forgetting this leads to "I tried to set up an interrupt-driven app but the vector table change has no effect" — you actually need to bounce through a secure-callable veneer that re-programs VTOR_NS.</li>
+
+  <li><strong>Lazy stacking + TZ leak window.</strong> If <code>FPCCR.TS = 0</code> and <code>FPCCR.CLRONRET = 0</code>, a Secure FP context can be lazy-stacked and then read by an NS handler. Always set both in secure init when FPU is shared.</li>
+
+  <li><strong>NSACR locks you out of FP from NS.</strong> Vendor reset values for NSACR.CP10/CP11 are sometimes <em>cleared</em>. NS code's first FP instruction then traps as UsageFault. Set both bits in secure init even if you "don't think" you need to. The fault is unhelpful — its CFSR bit doesn't say "FPU not allowed in NS"; you have to know.</li>
+
+  <li><strong>SAU regions overlap is undefined.</strong> If two SAU regions overlap, the result is implementation-defined and you'll get inconsistent behaviour across silicon revisions. Tools won't warn you. Audit your SAU map.</li>
+
+  <li><strong>Privileged-NS doesn't mean privileged-S.</strong> NS Privileged mode and Secure Privileged mode are independent — NS in privileged mode can <em>not</em> escalate into Secure unless it goes through an SG. Newcomers sometimes assume "privileged" is global; it's per-state.</li>
+
+  <li><strong>HardFault in NS goes to Secure (by default).</strong> If your NS application crashes early in development, the fault handler running is the Secure one. You'll see the trap from the wrong angle. Set <code>AIRCR.BFHFNMINS = 1</code> during NS development to route NS HardFaults back to NS — but flip it back for production.</li>
+
+  <li><strong>SP_LIMIT compares unsigned.</strong> Setting MSPLIM = 0 effectively disables the check (SP &gt;= 0 is always true). Some examples online do this on purpose to "disable" the limit; it's a footgun if you forget to set it later.</li>
+
+  <li><strong>Bit-banding is gone.</strong> Code ported from M3/M4 that uses the <code>0x22000000</code> alias region simply reads/writes the wrong addresses on M33. Search-and-replace before you compile, or you'll get faults.</li>
+
+  <li><strong>DBGEN tied to lifecycle on Nordic / NXP / ST.</strong> On a "closed" device, attaching probe-rs / pyOCD will succeed but you can't halt — the core just keeps running. The fix is restoring the open lifecycle (often requires erasing flash + provisioning); not all parts allow this.</li>
+
+  <li><strong>Secure-callable veneers must be in NSC memory.</strong> If your linker accidentally places them in plain Secure memory, NS can't see them at all (SAU classifies the address as Secure → SecureFault on call). The build error you'll see is "missing veneer", but tracing it from the error message takes a minute.</li>
+
+  <li><strong>Coprocessor instructions (CDE) silently NOP without the option.</strong> Most vendors don't include CDE. Code that uses <code>CX1</code>/<code>CX2</code> intrinsics (rare) compiles fine but executes as NOPs at runtime. If you have a project using CDE, treat the dependency as part of your part-number selection.</li>
+</ol>
+
+<!-- =========================================================== -->
+<h2 id="edevkit">edevkit (RP2350) specific notes</h2>
+
+<p>The edevkit kit uses the <strong>RP2350B</strong> — a 48-GPIO version of the same silicon family that powers the Pi Pico 2. From a pure-CPU standpoint, the M33 cores in RP2350 are a vanilla Arm M33 with the FPU, DSP, and TrustZone Security Extension all enabled. From a board-software standpoint, edevkit firmware (Zephyr 4.x via west sysbuild → MCUboot → app) treats those cores as <strong>Armv8-M Mainline without the security boundary in active use</strong>.</p>
+
+<h3 id="edevkit-fqbn">Why this works</h3>
+
+<p>The Zephyr board target <code>rpi_pico2/rp2350a/m33</code> doesn't enable Zephyr's TrustZone-aware build flags (<code>CONFIG_ARM_TRUSTZONE_M=y</code>). The result: secure-only registers (SAU, banked SCB, banked MPU) exist on the silicon but the app runs entirely in Secure state and never sets <code>SAU-&gt;CTRL.ENABLE</code>, so SAU defaults apply (everything secure) and there's no NS execution. From the firmware's POV it's "just an M33 without TZ active". This is the recommended Pi/Zephyr default for projects that don't need application-level security partitioning.</p>
+
+<h3 id="edevkit-future">When TrustZone becomes relevant for edevkit</h3>
+
+<p>Three plausible futures, each motivating TrustZone activation:</p>
+
+<ol>
+  <li><strong>Signed firmware + secure boot ROM.</strong> The RP2350 boot ROM already implements signed-image verification using the OTP key block. That's "secure boot" in the sense of "the platform won't run an unsigned image" — but it doesn't impose runtime isolation between bootloader and app. Today, MCUboot handles the equivalent at the Zephyr level. No TZ needed.</li>
+  <li><strong>Untrusted protocol stacks.</strong> If a future edevkit unit hosts a USB stack that handles enumeration from arbitrary hosts (e.g. running fuzzing scenarios), partitioning USB/USB-stack into NS while keeping the device's identity keys in S becomes attractive. That's a real TZ use case and would warrant the engineering effort.</li>
+  <li><strong>Per-customer signing.</strong> If edevkits ship with per-unit secrets (signing keys for code-signed firmware artefacts the unit produces), TZ is the right place to keep those. Today the ECC keys for MCUboot sit in flash — one MPU region away from any code that runs.</li>
+</ol>
+
+<p>Until one of those scenarios lands, the design doc's stance is to keep TZ off and treat the M33 as "M4 with stack limits and FPv5". See <a href="edevkit1.html">edevkit1.html §15 — Decision Log</a> for the full rationale and re-opening criteria.</p>
+
+<h3 id="edevkit-build">Building for the M33 in this repo</h3>
+
+<p>The shell helpers covered in <a href="shell_helpers.html">shell_helpers.html</a> wrap the right invocations:</p>
+
+<pre><code># Default board target on edevkit:
+EDEV_BOARD_DEFAULT=rpi_pico2/rp2350a/m33
+
+# Pristine sysbuild build → MCUboot + signed app
+edev_build
+
+# Build artifacts land at:
+build-rpi_pico2_rp2350a_m33/
+├── mcuboot/zephyr/zephyr.bin
+└── &lt;app-name&gt;/zephyr/zephyr.signed.bin
+</code></pre>
+
+<p>The <code>/m33</code> qualifier tells Zephyr to use the M33 core variant. The other valid RP2350 target is <code>rpi_pico2/rp2350a/hazard3</code> (the RISC-V cores) — edevkit firmware does not currently target that variant.</p>
+
+<p class="small">Cross-references: <a href="edevkit1.html">edevkit1.html</a> (full v1 design spec); <a href="installation.html">installation.html</a> (env setup); <a href="shell_helpers.html">shell_helpers.html</a> (build/flash helpers); <a href="https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf">RP2350 datasheet</a> §3 (M33 configuration), §10 (security architecture).</p>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to go next</h2>
+
+<p>You've now got the surface area to read primary sources without drowning. Recommended order:</p>
+
+<ol>
+  <li><strong><a href="https://developer.arm.com/documentation/ddi0553/latest/">Armv8-M Architecture Reference Manual (DDI 0553)</a></strong> — the full ISA + memory model + security extension spec. Treat it as a reference, not a tutorial; jump to chapters as questions arise. Sections B5 (faults), B8 (PMSAv8), and B11 (banked registers) are the densest TZ material.</li>
+  <li><strong><a href="https://developer.arm.com/documentation/100230/latest/">Cortex-M33 Technical Reference Manual</a></strong> — implementation details: pipeline timing, AHB5 interface, error handling, debug. Read the "Configurable Options" chapter first to understand what your specific silicon includes.</li>
+  <li><strong><a href="https://developer.arm.com/documentation/100690/latest/">Building Secure Software for Armv8-M (100690)</a></strong> — Arm's official "how to actually use TrustZone-M" cookbook. Most other vendor docs reference this one.</li>
+  <li><strong><a href="https://developer.arm.com/documentation/107565/latest/">Migrating to Armv8-M (107565)</a></strong> — short, practical, focused on M3/M4 → M33 source-level changes.</li>
+  <li><strong>Joseph Yiu, <em>The Definitive Guide to Arm Cortex-M23 and Cortex-M33 Processors</em> (Newnes, 2021)</strong> — the long-form book. If you can read only one thing, read this. Chapters 5–7 cover TrustZone end-to-end with worked examples that go beyond what Arm's official PDFs include.</li>
+  <li><strong>TF-M (Trusted Firmware-M) source — <a href="https://www.trustedfirmware.org/projects/tf-m/">trustedfirmware.org/projects/tf-m</a></strong> — the reference open-source secure-partition manager for Armv8-M. If you're going to build production TrustZone code, this is the codebase you'll port to your platform. Reading the source teaches more than any tutorial.</li>
+  <li><strong>Vendor app notes</strong> — <a href="https://www.silabs.com/documents/public/application-notes/an1374-trustzone.pdf">Silabs AN1374</a>, NXP AN12278 (LPC55), ST AN5347 (STM32L5), Nordic <em>nRF5340 SDK Security</em> chapter. Each picks specific real-world scenarios and shows the SAU + IDAU + peripheral-firewall code in full.</li>
+  <li><strong>Sister doc — <a href="arm_architecture.html">arm_architecture.html</a></strong> — re-read for any general Cortex-M topic this doc deferred (programmer's model, basic exception model, debug architecture overview, software stack, hello-ARM walkthrough).</li>
+</ol>
+
+<p class="small">Also worth bookmarking: the <a href="https://interrupt.memfault.com/">Memfault Interrupt blog</a> — practical writeups on Cortex-M faults, debugging, RTOS, and Armv8-M topics. Search there before searching anywhere else for "why is my M33 crashing in &lt;weird specific way&gt;".</p>
+
+</div>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="arm_architecture.html"><span class="dir">← Previous</span><span class="cat">Architecture</span><span class="title">ARM Architecture & Cortex-M Family</span></a>
+<a class="next" href="usb_cmsis_dap.html"><span class="dir">Next →</span><span class="cat">USB stack</span><span class="title">CMSIS-DAP v2 protocol & implementation</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+</body>
+</html>

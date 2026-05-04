@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="edevkit — shell helpers reference. The bash/zsh and PowerShell scripts that wrap west, sysbuild, probe-rs, UF2 flashing, mcumgr OTA, and the docs hub launcher into single commands.">
 <meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="oklch(13% 0.012 240)" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
 <style>
   /* ── tokens — aligned to the docs hub design system ─────────────────── */
   :root {
@@ -53,33 +53,33 @@
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
-      --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
-      --brand-ring: oklch(72% 0.15 215 / 0.40);
-      --accent: oklch(80% 0.15 70);   --accent-soft: oklch(28% 0.06 70);
-      --good:   oklch(72% 0.16 145);  --good-soft: oklch(28% 0.06 145);
-      --warn:   oklch(82% 0.16 80);   --warn-soft: oklch(28% 0.06 80);
-      --danger: oklch(70% 0.20 28);   --danger-soft: oklch(28% 0.06 28);
-      --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240); --bg-elev: oklch(20% 0.018 240);
-      --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240); --line-strong: oklch(35% 0.022 240);
-      --grid-dot: oklch(100% 0 0 / .05); --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
-      --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
-      --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+      --brand: oklch(74% 0.14 215); --brand-2: oklch(70% 0.15 235);
+      --brand-soft: oklch(30% 0.06 215); --brand-fg: oklch(16% 0.01 240);
+      --brand-ring: oklch(74% 0.14 215 / 0.38);
+      --accent: oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:   oklch(74% 0.14 145);  --good-soft: oklch(30% 0.05 145);
+      --warn:   oklch(84% 0.14 80);   --warn-soft: oklch(30% 0.05 80);
+      --danger: oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --bg: oklch(16% 0.005 250); --bg-soft: oklch(20% 0.006 250); --bg-elev: oklch(24% 0.007 250);
+      --line: oklch(30% 0.008 250); --line-soft: oklch(26% 0.006 250); --line-strong: oklch(40% 0.010 250);
+      --grid-dot: oklch(100% 0 0 / .025); --code-bg: oklch(18% 0.005 250); --code-border: oklch(30% 0.008 250);
+      --fg: oklch(96% 0.004 250); --fg-2: oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250); --faint: oklch(56% 0.010 250);
     }
   }
   :root[data-theme="dark"] {
-    --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
-    --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
-    --brand-ring: oklch(72% 0.15 215 / 0.40);
-    --accent: oklch(80% 0.15 70);   --accent-soft: oklch(28% 0.06 70);
-    --good:   oklch(72% 0.16 145);  --good-soft: oklch(28% 0.06 145);
-    --warn:   oklch(82% 0.16 80);   --warn-soft: oklch(28% 0.06 80);
-    --danger: oklch(70% 0.20 28);   --danger-soft: oklch(28% 0.06 28);
-    --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240); --bg-elev: oklch(20% 0.018 240);
-    --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240); --line-strong: oklch(35% 0.022 240);
-    --grid-dot: oklch(100% 0 0 / .05); --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
-    --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
-    --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+    --brand: oklch(74% 0.14 215); --brand-2: oklch(70% 0.15 235);
+    --brand-soft: oklch(30% 0.06 215); --brand-fg: oklch(16% 0.01 240);
+    --brand-ring: oklch(74% 0.14 215 / 0.38);
+    --accent: oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:   oklch(74% 0.14 145);  --good-soft: oklch(30% 0.05 145);
+    --warn:   oklch(84% 0.14 80);   --warn-soft: oklch(30% 0.05 80);
+    --danger: oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --bg: oklch(16% 0.005 250); --bg-soft: oklch(20% 0.006 250); --bg-elev: oklch(24% 0.007 250);
+    --line: oklch(30% 0.008 250); --line-soft: oklch(26% 0.006 250); --line-strong: oklch(40% 0.010 250);
+    --grid-dot: oklch(100% 0 0 / .025); --code-bg: oklch(18% 0.005 250); --code-border: oklch(30% 0.008 250);
+    --fg: oklch(96% 0.004 250); --fg-2: oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250); --faint: oklch(56% 0.010 250);
   }
 
   *, *::before, *::after { box-sizing: border-box; }
@@ -195,6 +195,9 @@
     } catch (e) {}
   })();
 </script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
 </head>
 <body>
 
@@ -454,6 +457,12 @@ exec $SHELL -l         # reload</code></pre>
   <li><a href="edevkit1.html">edevkit1 design spec</a> — what these helpers ultimately exist to build.</li>
 </ul>
 
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="installation.html"><span class="dir">← Previous</span><span class="cat">Onboarding</span><span class="title">From-scratch Developer Installation Guide</span></a>
+<a class="next" href="arm_architecture.html"><span class="dir">Next →</span><span class="cat">Architecture</span><span class="title">ARM Architecture & Cortex-M Family</span></a>
+</nav>
+<!-- edevkit:pager-end -->
 <footer>
   edevkit · tools/web/pages/shell_helpers.html · sourced from <code>tools/env_helpers.sh</code> · cross-references the <a href="installation.html">installation guide</a> and the <code>env_script.txt</code> pattern from edevtoolkit.
 </footer>
