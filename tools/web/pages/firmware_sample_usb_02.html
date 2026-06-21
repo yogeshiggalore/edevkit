@@ -1,0 +1,894 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Design + code flow for usb_02_descriptors — the second edevkit USB sample. Extends usb_01's bare enumeration with a complete device → configuration → interface → endpoint descriptor tree, while defending against every mistake we hit during usb_01 bring-up.">
+  <title>edevkit — Firmware · usb_02 design + code flow</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+<style>
+  /* tokens — match firmware_sample_walkthrough.html */
+  :root {
+    color-scheme: light dark;
+    --brand: oklch(56% 0.16 215); --brand-2: oklch(50% 0.18 235);
+    --brand-soft: oklch(94% 0.04 215); --brand-fg: oklch(99% 0.005 215);
+    --accent: oklch(72% 0.15 70); --accent-soft: oklch(95% 0.05 70);
+    --good: oklch(58% 0.14 145); --good-soft: oklch(94% 0.05 145);
+    --warn: oklch(72% 0.16 80); --warn-soft: oklch(95% 0.07 80);
+    --danger: oklch(56% 0.20 28); --danger-soft: oklch(95% 0.05 28);
+
+    --bg: oklch(99.2% 0.003 240); --bg-soft: oklch(97% 0.005 240);
+    --bg-elev: oklch(100% 0 0);
+    --line: oklch(91% 0.012 240); --line-soft: oklch(94.5% 0.008 240);
+    --line-strong: oklch(85% 0.014 240);
+    --grid-dot: oklch(0% 0 0 / .055);
+    --code-bg: oklch(96.5% 0.007 240); --code-border: oklch(91% 0.012 240);
+    --fg: oklch(20% 0.02 240); --fg-2: oklch(36% 0.02 240);
+    --muted: oklch(50% 0.02 240); --faint: oklch(64% 0.015 240);
+
+    --r-2: 6px; --r-3: 10px; --r-pill: 999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --ease: cubic-bezier(.2, 0, 0, 1); --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+      --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+      --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+      --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+      --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+      --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+      --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+      --bg-elev: oklch(20% 0.018 240);
+      --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+      --line-strong: oklch(35% 0.022 240);
+      --grid-dot: oklch(100% 0 0 / .05);
+      --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+      --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+      --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+    --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+    --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+    --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+    --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+    --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+    --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+    --bg-elev: oklch(20% 0.018 240);
+    --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+    --line-strong: oklch(35% 0.022 240);
+    --grid-dot: oklch(100% 0 0 / .05);
+    --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+    --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+    --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-text); font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg); min-height: 100dvh;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px; background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1080px; margin: 0 auto; padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none; font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600; color: var(--fg-2);
+    padding: 6px 10px; border-radius: var(--r-2);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .doc-tag {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--faint); padding: 4px 10px;
+    border-radius: var(--r-pill); background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .grow { flex: 1; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 28px 96px; }
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px; margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted);
+    padding: 5px 11px; background: var(--bg-soft);
+    border: 1px solid var(--line); border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+  header.hero h1 {
+    font-family: var(--font-sans); font-size: 38px; line-height: 1.15;
+    margin: 18px 0 12px; letter-spacing: -0.02em; font-weight: 700;
+  }
+  header.hero .lede {
+    font-size: 18px; line-height: 1.55; color: var(--fg-2); max-width: 720px;
+  }
+
+  h2 {
+    font-family: var(--font-sans); font-size: 24px;
+    margin-top: 56px; margin-bottom: 14px;
+    letter-spacing: -0.018em; font-weight: 700;
+    padding-bottom: 6px; border-bottom: 1px solid var(--line-soft);
+  }
+  h3 {
+    font-family: var(--font-sans); font-size: 19px;
+    margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-family: var(--font-mono); font-size: 12px;
+    margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  strong { font-weight: 600; }
+
+  code, pre, .mono { font-family: var(--font-mono); }
+  :not(pre) > code {
+    background: var(--code-bg); padding: 1px 6px;
+    border-radius: 4px; font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--code-border);
+    border-radius: var(--r-3); padding: 14px 16px;
+    overflow-x: auto; font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+  .file-label {
+    display: inline-block; font-family: var(--font-mono); font-size: 11px;
+    font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--brand); background: var(--brand-soft);
+    padding: 4px 10px; border-radius: var(--r-pill);
+    border: 1px solid color-mix(in oklch, var(--brand) 30%, transparent);
+    margin: 18px 0 -6px;
+  }
+
+  .callout {
+    margin: 18px 0; padding: 14px 18px; border-radius: var(--r-3);
+    background: var(--bg-soft); border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.info    { background: var(--brand-soft);  border-left-color: var(--brand); }
+  .callout.warn    { background: var(--warn-soft);   border-left-color: var(--warn); }
+  .callout.good    { background: var(--good-soft);   border-left-color: var(--good); }
+  .callout.danger  { background: var(--danger-soft); border-left-color: var(--danger); }
+  .callout-title {
+    display: inline-block; font-family: var(--font-mono);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700; color: var(--muted); margin-bottom: 4px;
+  }
+  .callout.info .callout-title    { color: var(--brand); }
+  .callout.warn .callout-title    { color: oklch(45% 0.18 80); }
+  .callout.good .callout-title    { color: var(--good); }
+  .callout.danger .callout-title  { color: var(--danger); }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child  { margin-bottom: 0; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 18px 0; font-size: 14px;
+    background: var(--bg-elev); border: 1px solid var(--line);
+    border-radius: var(--r-3); overflow: hidden;
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 8px 12px; text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  thead th {
+    background: var(--bg-soft); font-family: var(--font-sans);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  td.field { font-family: var(--font-mono); font-weight: 600; color: var(--fg); }
+  td.hex   { font-family: var(--font-mono); color: var(--brand); }
+
+  .toc { margin: 24px 0 40px; padding: 18px 22px; background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--r-3); }
+  .toc-title { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { margin: 4px 0; color: var(--fg-2); }
+  .toc li a { color: var(--fg-2); text-decoration: none; font-weight: 500; }
+  .toc li a:hover { color: var(--brand); }
+
+  .credits {
+    margin: 32px 0 0; padding: 12px 14px;
+    background: var(--bg-soft); border: 1px solid var(--line-soft);
+    border-radius: var(--r-3); font-size: 12px; line-height: 1.55;
+    color: var(--fg-2);
+  }
+  .credits strong { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" title="Back to docs hub">
+      <span aria-hidden="true">←</span> edevkit
+    </a>
+    <span class="doc-tag">Firmware · usb_02 design</span>
+    <span class="grow"></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · firmware · USB sample design doc</div>
+  <h1>usb_02 — full descriptor tree, declared not implemented</h1>
+  <p class="lede">Design + code flow for the second sample in the USB Book series. Extends <code>usb_01_hello_enum</code> from a single-interface zero-endpoint enumeration to a complete <em>device → configuration → interface → endpoint</em> descriptor tree — while explicitly defending against every mistake we burned during <code>usb_01</code> bring-up.</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Sections</div>
+  <ol>
+    <li><a href="#goal">Goal &amp; scope</a></li>
+    <li><a href="#delta">What changes vs usb_01</a></li>
+    <li><a href="#tree">The descriptor tree, byte-level</a></li>
+    <li><a href="#defenses">Carry-forward defenses (the 7+3 gotchas)</a></li>
+    <li><a href="#layout">File layout</a></li>
+    <li><a href="#flow">Boot &amp; runtime flow</a></li>
+    <li><a href="#code-main">Code: <code>src/main.c</code></a></li>
+    <li><a href="#code-class">Code: <code>src/descriptors_demo.c</code></a></li>
+    <li><a href="#code-rest">Code: <code>prj.conf</code> · <code>CMakeLists.txt</code> · <code>boards/*.overlay</code></a></li>
+    <li><a href="#build">Build, flash, RTT</a></li>
+    <li><a href="#verify">Verify on the host (Linux · macOS · Windows)</a></li>
+    <li><a href="#pitfalls">Anticipated pitfalls</a></li>
+    <li><a href="#credits-section">Attribution</a></li>
+  </ol>
+</div>
+
+<!-- ─────────────────────────── 1. GOAL ─────────────────────────── -->
+
+<h2 id="goal">1. Goal &amp; scope</h2>
+
+<p><strong>One sentence:</strong> declare a complete USB descriptor tree (device → configuration → interface → 2 bulk endpoints) so that <code>lsusb -v</code> on the host shows all four descriptor levels — without implementing any data flow on those endpoints.</p>
+
+<p>Pairs with <a href="/docs/usb/partII/06_descriptors.html">USB Book Ch 06 — Device, configuration, interface, endpoint</a> (chapter not yet written; this design doc is the source-of-truth until it is).</p>
+
+<div class="callout info">
+  <div class="callout-title">What "declared not implemented" means here</div>
+  <p>The two bulk endpoints are present in the descriptor blob the host reads, so the OS will allocate kernel resources for them (a libusb session can <code>libusb_claim_interface()</code> the interface fine). But the firmware never calls <code>usbd_ep_enqueue()</code> on either endpoint, so any actual <code>read</code>/<code>write</code> from the host will time out. That's the intentional teaching point: <em>a descriptor announces capability, the implementation backs it up</em> — and they are two separate concerns. usb_04 (Ch 08) will fill in the data-flow side.</p>
+</div>
+
+<h3>What usb_02 does <em>not</em> cover</h3>
+<ul>
+  <li><strong>Bulk/interrupt data flow</strong> — covered in later samples; usb_02's bulk endpoints exist on the wire only as descriptor entries.</li>
+  <li><strong>Custom string descriptors per interface</strong> — <code>iInterface = 0</code> for now; usb_03 redefines the serial-number string format.</li>
+  <li><strong>Class- or vendor-specific control requests</strong> — usb_04 (Ch 08) is "Control transfers in depth".</li>
+  <li><strong>HS / SuperSpeed</strong> — RP2350 is FS-only. We define <code>fs_desc[]</code>; <code>get_desc()</code> returns <code>NULL</code> for any other speed.</li>
+</ul>
+
+<h3>Locked decisions (carried over from usb_01)</h3>
+<table>
+  <thead><tr><th>Field</th><th>Value</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td class="field">VID</td><td class="hex">0x1209</td><td>pid.codes open-hardware umbrella — same across every sample.</td></tr>
+    <tr><td class="field">PID</td><td class="hex">0xede2</td><td>Scheme: <code>0xede0 + sample_number</code>. Lets you grep VID:PID in captures.</td></tr>
+    <tr><td class="field">Manufacturer</td><td>"edevkit"</td><td>Constant.</td></tr>
+    <tr><td class="field">Product</td><td>"usb_02"</td><td>Matches sample directory name.</td></tr>
+    <tr><td class="field">bcdDevice</td><td class="hex">0x0100</td><td>Bump on every iteration to bust the macOS string cache.</td></tr>
+    <tr><td class="field">Board</td><td><code>rpi_pico2/rp2350a/m33</code></td><td>Cortex-M33 cores, not Hazard3.</td></tr>
+    <tr><td class="field">Class triple</td><td>0xFF/0xFF/0xFF (vendor)</td><td>No host driver loads → no surprises while we focus on descriptors.</td></tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 2. DELTA ─────────────────────────── -->
+
+<h2 id="delta">2. What changes vs usb_01</h2>
+
+<table>
+  <thead><tr><th>Aspect</th><th>usb_01</th><th>usb_02</th></tr></thead>
+  <tbody>
+    <tr><td>PID</td><td class="hex">0xede1</td><td class="hex">0xede2</td></tr>
+    <tr><td>Product string</td><td>"usb_01"</td><td>"usb_02"</td></tr>
+    <tr><td>Class registration name</td><td><code>"hello_enum"</code></td><td><code>"descriptors_demo"</code></td></tr>
+    <tr><td>Class file name</td><td><code>src/hello_enum.c</code></td><td><code>src/descriptors_demo.c</code></td></tr>
+    <tr><td><code>bNumEndpoints</code> in interface</td><td class="hex">0</td><td class="hex">2</td></tr>
+    <tr><td>Endpoint descriptors</td><td>none</td><td>1 × bulk OUT (0x01), 1 × bulk IN (0x81), wMaxPacketSize 64</td></tr>
+    <tr><td><code>fs_desc[]</code> entries (excluding NULL terminator)</td><td>1 (interface only)</td><td>3 (interface + ep_out + ep_in)</td></tr>
+    <tr><td>Total descriptor footprint (<code>wTotalLength</code>)</td><td class="hex">18 bytes (9+9)</td><td class="hex">32 bytes (9+9+7+7)</td></tr>
+    <tr><td>Class vtable callbacks populated</td><td>init, enable, disable, get_desc</td><td>same four (no data flow → no <code>request</code> handler yet)</td></tr>
+    <tr><td>Endpoints exercised at runtime</td><td>EP0 only (control)</td><td>EP0 only — the bulk endpoints are declared but unenqueued</td></tr>
+  </tbody>
+</table>
+
+<p>Everything else — the eight-step boot sequence, the <code>USBD_DEVICE_DEFINE</code> / <code>USBD_CONFIGURATION_DEFINE</code> / <code>USBD_DESC_*_DEFINE</code> macros, the RTT logging setup, the overlay enabling <code>&amp;usbd</code> — is identical to usb_01. We're keeping the working scaffold and changing only the descriptor surface.</p>
+
+<!-- ─────────────────────────── 3. TREE ─────────────────────────── -->
+
+<h2 id="tree">3. The descriptor tree, byte-level</h2>
+
+<p>What the host reads back over EP0 in response to <code>GET_DESCRIPTOR(Configuration)</code>, in order. The 9-byte configuration descriptor at the head is generated by <code>USBD_CONFIGURATION_DEFINE</code> in <code>main.c</code>; the rest comes from our class's <code>fs_desc[]</code> array.</p>
+
+<table>
+  <thead>
+    <tr><th>Offset</th><th>Bytes</th><th>Field</th><th>Value</th><th>Meaning</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="hex">0x00</td><td class="hex">9</td><td class="field">Configuration descriptor</td><td><code>09 02 20 00 01 01 00 A0 32</code></td><td>bLength=9, bDescriptorType=CONFIG, <strong>wTotalLength=0x0020 (32)</strong>, bNumInterfaces=1, bConfigValue=1, iConfig=0, bmAttributes=0xA0 (bus-powered + remote-wakeup), bMaxPower=0x32 (50 → 100 mA).</td></tr>
+    <tr><td class="hex">0x09</td><td class="hex">9</td><td class="field">Interface descriptor</td><td><code>09 04 00 00 02 FF FF FF 00</code></td><td>bLength=9, bDescriptorType=IFACE, bInterfaceNumber=0, bAlternateSetting=0, <strong>bNumEndpoints=2</strong>, vendor class 0xFF/0xFF/0xFF, iInterface=0.</td></tr>
+    <tr><td class="hex">0x12</td><td class="hex">7</td><td class="field">Endpoint descriptor (OUT)</td><td><code>07 05 01 02 40 00 00</code></td><td>bLength=7, bDescriptorType=ENDPOINT, <strong>bEndpointAddress=0x01</strong> (OUT, EP1), bmAttributes=0x02 (Bulk), wMaxPacketSize=0x0040 (64), bInterval=0.</td></tr>
+    <tr><td class="hex">0x19</td><td class="hex">7</td><td class="field">Endpoint descriptor (IN)</td><td><code>07 05 81 02 40 00 00</code></td><td>bLength=7, bDescriptorType=ENDPOINT, <strong>bEndpointAddress=0x81</strong> (IN, EP1), bmAttributes=0x02 (Bulk), wMaxPacketSize=0x0040 (64), bInterval=0.</td></tr>
+  </tbody>
+</table>
+
+<p>Total: <code>0x20</code> = 32 bytes. The first 9 bytes are the configuration header that <em>contains</em> the rest (which is why <code>wTotalLength=32</code>, not 23). All multi-byte fields are little-endian — so <code>wTotalLength=32</code> appears on the wire as <code>20 00</code>.</p>
+
+<!-- ─────────────────────────── 4. DEFENSES ─────────────────────────── -->
+
+<h2 id="defenses">4. Carry-forward defenses (the 7+3 gotchas)</h2>
+
+<p>The seven mistakes we hit during <code>usb_01</code> bring-up are catalogued in <a href="/docs/firmware_zephyr_usbd.html">firmware_zephyr_usbd.html</a>. usb_02 introduces three more risks specific to endpoint-bearing descriptors. Every one of these is defended-against explicitly by the code in §7-§8.</p>
+
+<h3>Carried over from usb_01 (re-state, re-defend)</h3>
+
+<table>
+  <thead><tr><th>#</th><th>Gotcha</th><th>Defense in usb_02</th></tr></thead>
+  <tbody>
+    <tr><td>G1</td><td><code>get_desc</code> must return a <strong>NULL-terminated array</strong> of <code>struct usb_desc_header *</code>, never a single descriptor pointer. Bare-pointer return → <code>BUS FAULT, BFAR=0xffffff00</code> at boot.</td><td><code>fs_desc[]</code> in <code>descriptors_demo.c</code> ends with an explicit <code>NULL</code> entry. The cast is per-entry to <code>(struct usb_desc_header *)</code>.</td></tr>
+    <tr><td>G2</td><td>Don't <code>const</code> interface or endpoint descriptors. The stack writes <code>bInterfaceNumber</code> and <code>bEndpointAddress</code> at <code>usbd_init</code> time. Flash-placed descriptors cause silent failure or hard-fault.</td><td>All four descriptor structs are non-<code>const</code>. The <code>fs_desc[]</code> array itself can stay non-<code>const</code> too for symmetry.</td></tr>
+    <tr><td>G3</td><td>Class-name string in <code>USBD_DEFINE_CLASS(name, ...)</code> must <strong>exactly match</strong> the string passed to <code>usbd_register_class(&amp;ctx, "name", ...)</code>. Mismatch → silent <code>-ENOENT</code>.</td><td>A single <code>#define DESC_CLASS_NAME "descriptors_demo"</code> at the top of <code>descriptors_demo.c</code>; <code>main.c</code> includes the same header (or duplicates the literal — see code) so they cannot drift.</td></tr>
+    <tr><td>G4</td><td>Return <code>-ENOTSUP</code> from unsupported <code>control_to_*</code> callbacks, never <code>0</code>. Returning <code>0</code> claims the request was handled; host then waits forever. <code>-ENOTSUP</code> makes the core STALL, which is correct per USB 2.0 §9.2.7.</td><td>Both control callbacks are simply left as <code>NULL</code> in the vtable — the core checks for NULL before calling, and the no-handler path STALLs by default. We add no half-implemented stubs.</td></tr>
+    <tr><td>G5</td><td><code>CONFIG_USB_DEVICE_STACK_NEXT=y</code> is mandatory; without it every <code>USBD_*</code> macro is undefined.</td><td>Carried over verbatim in <code>prj.conf</code>.</td></tr>
+    <tr><td>G6</td><td>The UDC node label must exist in the active board DTS. <code>rpi_pico2</code> uses <code>usbd</code>, NOT <code>usb_dev0</code>.</td><td><code>DEVICE_DT_GET(DT_NODELABEL(usbd))</code> in <code>main.c</code>; <code>&amp;usbd { status = "okay"; };</code> in the overlay.</td></tr>
+    <tr><td>G7</td><td>Boot sequence order matters: descriptors → configuration → register class → init → enable. Out-of-order calls fail validation silently.</td><td><code>main.c</code> follows the documented eight-step order with one error-checked block per step.</td></tr>
+  </tbody>
+</table>
+
+<h3>New for usb_02 (endpoint-specific)</h3>
+
+<table>
+  <thead><tr><th>#</th><th>Gotcha</th><th>Defense</th></tr></thead>
+  <tbody>
+    <tr><td>G8</td><td><code>wMaxPacketSize</code> is little-endian on the wire, but stored as <code>uint16_t</code> in <code>struct usb_ep_descriptor</code>. Writing <code>.wMaxPacketSize = 64</code> on a little-endian MCU happens to work; on a big-endian one it would silently advertise <code>0x4000 = 16384</code> bytes — over the FS bulk limit, fail validation. Use <code>sys_cpu_to_le16()</code> always.</td><td>Both endpoint descriptors use <code>.wMaxPacketSize = sys_cpu_to_le16(64U)</code>. RP2350 is little-endian so this is cosmetic correctness, but the macro documents intent and matches Zephyr's own <code>loopback.c</code>.</td></tr>
+    <tr><td>G9</td><td>Bulk endpoint <code>bInterval</code> is reserved and must be zero (USB 2.0 §9.6.6 Table 9-13). Non-zero values are accepted by some hosts and rejected by others — undefined behaviour.</td><td>Both bulk endpoints set <code>.bInterval = 0</code> explicitly. We document <code>bInterval=1</code> for interrupt endpoints in the comment, in case usb_02 is later extended.</td></tr>
+    <tr><td>G10</td><td>Endpoint addresses 0x01 and 0x81 are the same EP number (1) in opposite directions — fine, but a common mistake is to use 0x01 and 0x82 (different EPs), which works but wastes hardware EPs that RP2350 has limited supply of (15 IN + 15 OUT, but DPRAM is the real constraint).</td><td>We pair the IN and OUT on <strong>EP1</strong> deliberately. Comment in the code explains the convention.</td></tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 5. LAYOUT ─────────────────────────── -->
+
+<h2 id="layout">5. File layout</h2>
+
+<pre><code>firmware/samples/usb/usb_02/
+├── CMakeLists.txt          # adds main.c + descriptors_demo.c
+├── prj.conf                # CONFIG_USB_DEVICE_STACK_NEXT + RTT logging
+├── README.md               # what / how / verification (auto-from this doc)
+├── boards/
+│   └── rpi_pico2_rp2350a_m33.overlay   # &amp;usbd { status = "okay"; };
+└── src/
+    ├── main.c              # boot sequence, descriptor + class registration
+    └── descriptors_demo.c  # interface + 2 bulk endpoint descriptors, vtable
+</code></pre>
+
+<!-- ─────────────────────────── 6. FLOW ─────────────────────────── -->
+
+<h2 id="flow">6. Boot &amp; runtime flow</h2>
+
+<p>Identical structurally to usb_01 — the only difference is what's <em>in</em> the class file. Steps 1–9 happen in <code>main()</code>; steps A–D are runtime callbacks fired by the USB stack thread.</p>
+
+<pre><code>BOOT (main thread, in order — order matters)
+  1. usbd_add_descriptor(&amp;ctx, &amp;lang)         language IDs first
+  2. usbd_add_descriptor(&amp;ctx, &amp;mfr)          string descriptors next
+  3. usbd_add_descriptor(&amp;ctx, &amp;product)
+  4. usbd_add_descriptor(&amp;ctx, &amp;serial)
+  5. usbd_add_configuration(&amp;ctx, USBD_SPEED_FS, &amp;cfg)
+  6. usbd_register_class(&amp;ctx, "descriptors_demo", USBD_SPEED_FS, 1)
+                                                 ^^^^^ exact string match!
+  7. usbd_init(&amp;ctx)                          validates the descriptor tree;
+                                                 writes bInterfaceNumber +
+                                                 bEndpointAddress back into
+                                                 the (non-const!) descriptors
+  8. usbd_enable(&amp;ctx)                        connects the FS pull-up;
+                                                 host now sees the device
+  9. k_sleep(K_FOREVER)                       USB stack runs in its own
+                                                 work queue; main idles
+
+RUNTIME (USB stack work queue, callback-driven)
+  A. host sends bus reset → core resets internal state
+  B. host issues GET_DESCRIPTOR(Device)        served from USBD_DEVICE_DEFINE
+  C. host issues SET_ADDRESS(N)                core handles, no callback
+  D. host issues GET_DESCRIPTOR(Configuration) core walks our fs_desc[]
+                                               and concatenates the bytes
+  E. host issues SET_CONFIGURATION(1)          → triggers our enable() cb
+  F. host issues GET_INTERFACE / SET_INTERFACE  → core handles defaults
+  G. host attempts bulk read on EP 0x81        → no buffer enqueued →
+                                                  NAK forever (intentional)
+</code></pre>
+
+<!-- ─────────────────────────── 7. CODE ─────────────────────────── -->
+
+<h2 id="code-main">7. Code: <code>src/main.c</code></h2>
+
+<p>Almost identical to <code>usb_01/src/main.c</code>. The three changed lines are flagged inline. Read the comments — every numbered step corresponds to a row of the boot-sequence flow above.</p>
+
+<div class="file-label">firmware/samples/usb/usb_02/src/main.c</div>
+<pre><code>/*
+ * usb_02 — descriptor-tree expansion of usb_01_hello_enum.
+ *
+ * Builds the same boot sequence as usb_01 but registers a class
+ * ("descriptors_demo") that declares a full device → cfg → iface → 2 ep tree.
+ * No data flow on the bulk endpoints — that's intentional, and is the
+ * teaching point this sample exists for.
+ */
+
+#include &lt;zephyr/kernel.h&gt;
+#include &lt;zephyr/usb/usbd.h&gt;
+#include &lt;zephyr/logging/log.h&gt;
+
+LOG_MODULE_REGISTER(usb_02, LOG_LEVEL_INF);
+
+/* G3 defense: single source of truth for the class-registration string. */
+#define DESC_CLASS_NAME "descriptors_demo"
+
+/* String descriptors — same shape as usb_01 (lang, mfr, product, auto-serial). */
+USBD_DESC_LANG_DEFINE(lang);
+USBD_DESC_MANUFACTURER_DEFINE(mfr,     "edevkit");
+USBD_DESC_PRODUCT_DEFINE     (product, "usb_02");           /* changed from usb_01 */
+USBD_DESC_SERIAL_NUMBER_DEFINE(serial);                      /* auto from chip ID */
+
+/*
+ * Configuration descriptor:
+ *   bmAttributes = 0xA0  (bus-powered + remote-wakeup)
+ *   bMaxPower    = 50    (in 2-mA units → 100 mA)
+ *   iConfig      = NULL  (no per-config string)
+ *
+ * The wTotalLength field is filled in by the stack at usbd_init() time
+ * after walking every registered class's fs_desc[] for this configuration.
+ */
+USBD_CONFIGURATION_DEFINE(cfg, USB_SCD_REMOTE_WAKEUP, 50, NULL);
+
+/*
+ * Device-level identity.
+ *   VID 0x1209 — pid.codes umbrella
+ *   PID 0xede2 — sample 2 of the edevkit USB Book series  (changed from usb_01)
+ *   The board DTS exposes the UDC node as &amp;usbd; do not guess "usb_dev0".
+ */
+USBD_DEVICE_DEFINE(usbd_ctx, DEVICE_DT_GET(DT_NODELABEL(usbd)),
+                   0x1209, 0xede2);
+
+int main(void)
+{
+    int err;
+
+    /* (1)–(4) Add string descriptors. Order matters — index slots in the
+     * device descriptor are assigned in the order we add them.            */
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;lang);
+    if (err) { LOG_ERR("add lang: %d", err);    return -1; }
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;mfr);
+    if (err) { LOG_ERR("add mfr: %d", err);     return -1; }
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;product);
+    if (err) { LOG_ERR("add product: %d", err); return -1; }
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;serial);
+    if (err) { LOG_ERR("add serial: %d", err);  return -1; }
+
+    /* (5) Add the configuration. We're FS-only on RP2350. */
+    err = usbd_add_configuration(&amp;usbd_ctx, USBD_SPEED_FS, &amp;cfg);
+    if (err) { LOG_ERR("add cfg: %d", err); return -1; }
+
+    /* (6) Attach the descriptors_demo class instance to configuration 1.
+     *     Class-name string MUST match USBD_DEFINE_CLASS in the class file. */
+    err = usbd_register_class(&amp;usbd_ctx, DESC_CLASS_NAME,
+                              USBD_SPEED_FS, 1 /* config index */);
+    if (err) { LOG_ERR("register class: %d", err); return -1; }
+
+    /* (7) Validate + finalize. The stack walks every class's fs_desc[],
+     *     computes wTotalLength, and writes bInterfaceNumber +
+     *     bEndpointAddress back into our (non-const!) descriptor structs. */
+    err = usbd_init(&amp;usbd_ctx);
+    if (err) { LOG_ERR("usbd_init: %d", err); return -1; }
+
+    /* (8) Connect the pull-up. From this moment the host can see us. */
+    err = usbd_enable(&amp;usbd_ctx);
+    if (err) { LOG_ERR("usbd_enable: %d", err); return -1; }
+
+    LOG_INF("usb_02 descriptors_demo: enabled, idle on EP0");
+
+    /* (9) Stack runs in its own work queue. Nothing for main thread to do. */
+    while (true) {
+        k_sleep(K_FOREVER);
+    }
+    return 0;
+}
+</code></pre>
+
+<h2 id="code-class">8. Code: <code>src/descriptors_demo.c</code></h2>
+
+<p>This is where usb_02 actually differs from usb_01. Three descriptor structs (interface + 2 endpoints) instead of one, all wired together via a 4-entry NULL-terminated <code>fs_desc[]</code> array.</p>
+
+<div class="file-label">firmware/samples/usb/usb_02/src/descriptors_demo.c</div>
+<pre><code>/*
+ * descriptors_demo — vendor class, 1 interface, 2 bulk endpoints.
+ *
+ * Declares a complete descriptor tree (device → cfg → iface → 2 ep)
+ * for teaching purposes. Endpoints are advertised but no buffers are
+ * ever enqueued — host bulk reads/writes will NAK until usb_04 wires
+ * up the data path.
+ *
+ * Pattern derived from Zephyr's own subsys/usb/device_next/class/loopback.c
+ * (Apache-2.0). See attribution at the end of firmware_sample_usb_02.html.
+ */
+
+#include &lt;zephyr/kernel.h&gt;
+#include &lt;zephyr/usb/usbd.h&gt;
+#include &lt;zephyr/usb/usb_ch9.h&gt;
+#include &lt;zephyr/sys/byteorder.h&gt;       /* sys_cpu_to_le16  */
+#include &lt;zephyr/logging/log.h&gt;
+
+LOG_MODULE_REGISTER(descriptors_demo, LOG_LEVEL_INF);
+
+/* G3 defense: same string as in main.c. If the two ever drift, registration
+ * silently returns -ENOENT and the device never enumerates. Keep both
+ * usages anchored to a single literal. */
+#define DESC_CLASS_NAME "descriptors_demo"
+
+/* ===========================================================================
+ * Descriptor structs — non-const because the stack writes into them at init.
+ * (G2 defense: don't const these. Don't even const the array.)
+ * =========================================================================*/
+
+static struct usb_if_descriptor iface = {
+    .bLength            = sizeof(struct usb_if_descriptor),
+    .bDescriptorType    = USB_DESC_INTERFACE,        /* 0x04             */
+    .bInterfaceNumber   = 0,                         /* written by stack */
+    .bAlternateSetting  = 0,
+    .bNumEndpoints      = 2,                         /* CHANGED vs usb_01 */
+    .bInterfaceClass    = USB_BCC_VENDOR,            /* 0xFF             */
+    .bInterfaceSubClass = 0xFF,
+    .bInterfaceProtocol = 0xFF,
+    .iInterface         = 0,                         /* no string        */
+};
+
+/*
+ * Endpoint addresses follow the convention IN and OUT share the same EP
+ * number, only the direction bit differs. EP1 OUT = 0x01, EP1 IN = 0x81.
+ * (G10 defense — pair on the same EP number to conserve UDC resources.)
+ *
+ * bInterval = 0 is mandatory for bulk per USB 2.0 §9.6.6 Table 9-13. (G9)
+ *
+ * wMaxPacketSize wrapped in sys_cpu_to_le16() to be byte-order-correct on
+ * any architecture. (G8) On RP2350 (little-endian) this is a no-op, but
+ * documents intent and matches Zephyr's loopback.c reference pattern.
+ */
+
+static struct usb_ep_descriptor ep_out = {
+    .bLength          = sizeof(struct usb_ep_descriptor),
+    .bDescriptorType  = USB_DESC_ENDPOINT,           /* 0x05             */
+    .bEndpointAddress = USB_EP_DIR_OUT | 0x01,       /* 0x01 — bulk OUT  */
+    .bmAttributes     = USB_EP_TYPE_BULK,            /* 0x02             */
+    .wMaxPacketSize   = sys_cpu_to_le16(64U),        /* FS bulk max      */
+    .bInterval        = 0,
+};
+
+static struct usb_ep_descriptor ep_in = {
+    .bLength          = sizeof(struct usb_ep_descriptor),
+    .bDescriptorType  = USB_DESC_ENDPOINT,
+    .bEndpointAddress = USB_EP_DIR_IN  | 0x01,       /* 0x81 — bulk IN   */
+    .bmAttributes     = USB_EP_TYPE_BULK,
+    .wMaxPacketSize   = sys_cpu_to_le16(64U),
+    .bInterval        = 0,
+};
+
+/* ===========================================================================
+ * The NULL-terminated descriptor pointer array. (G1 defense.)
+ *
+ * Order on the wire mirrors order in this array, AFTER the configuration
+ * descriptor that the stack prepends:
+ *
+ *     [ cfg ]  [ iface ]  [ ep_out ]  [ ep_in ]
+ *      9         9          7           7        =  32 bytes (wTotalLength)
+ *
+ * Each entry is cast to the base header type so the core can walk them
+ * uniformly via bLength.
+ * =========================================================================*/
+
+static struct usb_desc_header *fs_desc[] = {
+    (struct usb_desc_header *) &amp;iface,
+    (struct usb_desc_header *) &amp;ep_out,
+    (struct usb_desc_header *) &amp;ep_in,
+    NULL,                                            /* terminator */
+};
+
+/* ===========================================================================
+ * Class API callbacks — only the four we need; the rest stay NULL and the
+ * core checks for NULL before calling. (G4 defense: we add no half-stubs.)
+ * =========================================================================*/
+
+static int demo_init(struct usbd_class_data *const c_data)
+{
+    LOG_DBG("descriptors_demo: init");
+    return 0;
+}
+
+static void demo_enable(struct usbd_class_data *const c_data)
+{
+    /* Fired on SET_CONFIGURATION(1). Host considers us "configured" now. */
+    LOG_INF("descriptors_demo: configured (enabled)");
+}
+
+static void demo_disable(struct usbd_class_data *const c_data)
+{
+    /* SET_CONFIGURATION(0) or unplug. */
+    LOG_INF("descriptors_demo: deconfigured (disabled)");
+}
+
+static void *demo_get_desc(struct usbd_class_data *const c_data,
+                           const enum usbd_speed speed)
+{
+    if (speed == USBD_SPEED_FS) {
+        return fs_desc;
+    }
+    /* HS / SS not supported on RP2350. Returning NULL is correct. */
+    return NULL;
+}
+
+/* ===========================================================================
+ * Vtable. Optional callbacks deliberately left as NULL:
+ *   feature_halt, update, control_to_dev, control_to_host, request,
+ *   suspended, resumed, sof, shutdown
+ * The core treats NULL as "not implemented" and STALLs / no-ops as
+ * appropriate — which is what we want for a descriptor-only sample.
+ * =========================================================================*/
+static const struct usbd_class_api demo_api = {
+    .init     = demo_init,
+    .enable   = demo_enable,
+    .disable  = demo_disable,
+    .get_desc = demo_get_desc,
+};
+
+/* G3 defense: literal string MUST match DESC_CLASS_NAME in main.c. */
+USBD_DEFINE_CLASS(descriptors_demo, &amp;demo_api, NULL, NULL);
+</code></pre>
+
+<h2 id="code-rest">9. Code: <code>prj.conf</code> · <code>CMakeLists.txt</code> · <code>boards/*.overlay</code></h2>
+
+<p>All three carry over verbatim from usb_01 except for the project name in <code>CMakeLists.txt</code> and the new source filename.</p>
+
+<div class="file-label">firmware/samples/usb/usb_02/prj.conf</div>
+<pre><code>CONFIG_USB_DEVICE_STACK_NEXT=y      # G5 — mandatory for USBD_* macros
+
+CONFIG_LOG=y
+CONFIG_USE_SEGGER_RTT=y
+CONFIG_RTT_CONSOLE=y
+CONFIG_UART_CONSOLE=n
+
+CONFIG_USBD_LOG_LEVEL_INF=y
+
+CONFIG_HEAP_MEM_POOL_SIZE=2048
+
+CONFIG_THREAD_NAME=y
+CONFIG_BOOT_BANNER=y
+</code></pre>
+
+<div class="file-label">firmware/samples/usb/usb_02/CMakeLists.txt</div>
+<pre><code>cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(usb_02)
+
+target_sources(app PRIVATE
+    src/main.c
+    src/descriptors_demo.c
+)
+</code></pre>
+
+<div class="file-label">firmware/samples/usb/usb_02/boards/rpi_pico2_rp2350a_m33.overlay</div>
+<pre><code>/* G6 defense: the RP2350 board exposes the UDC node as &amp;usbd. */
+&amp;usbd {
+    status = "okay";
+};
+</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">No <code>chosen</code> remap this time</div>
+  <p>usb_01's overlay had <code>chosen { zephyr,uart-mcumgr = &amp;usbd; };</code> — that was a leftover from an earlier mcumgr-shaped sample. usb_02 has no UART/mcumgr role on USB, so the <code>chosen</code> block is omitted. Cleaner overlay, identical USB enumeration.</p>
+</div>
+
+<!-- ─────────────────────────── 10. BUILD ─────────────────────────── -->
+
+<h2 id="build">10. Build, flash, RTT</h2>
+
+<pre><code># from edevkit/firmware/samples/usb/usb_02/ — needs the (edev) venv active
+edev_build       # sysbuild: writes build-rpi_pico2_rp2350a_m33/usb_02/zephyr/zephyr.signed.bin
+
+# flash via Pi Debug Probe (SWD) and stream RTT in one shot
+edev_run         # = edev_flash + probe-rs attach. Ctrl-C to detach.
+
+# Or, if you only want to flash without watching RTT:
+#   edev_flash
+# Or attach to an already-running target without re-flashing:
+#   edev_rtt_monit
+</code></pre>
+
+<p>If <code>edev_flash</code> / <code>edev_run</code> succeeds but the firmware doesn't appear to run, do a cold-boot (USB unplug/replug, or pulse the RP2350 RUN pin to GND) — see the <a href="/docs/shell_helpers.html">shell helpers doc</a> on the RP2350 SYSRESETREQ quirk.</p>
+
+<p>Expected RTT output on a clean boot:</p>
+
+<pre><code>*** Booting Zephyr OS build v4.4.0-1126-... ***
+[00:00:00.012,000] &lt;inf&gt; descriptors_demo: configured (enabled)
+[00:00:00.012,000] &lt;inf&gt; usb_02: usb_02 descriptors_demo: enabled, idle on EP0
+</code></pre>
+
+<p>The "configured (enabled)" line fires the moment the host completes <code>SET_CONFIGURATION(1)</code> — i.e. enumeration succeeded end-to-end.</p>
+
+<!-- ─────────────────────────── 11. VERIFY ─────────────────────────── -->
+
+<h2 id="verify">11. Verify on the host</h2>
+
+<h3>Linux</h3>
+<pre><code>$ lsusb -d 1209:ede2
+Bus 003 Device 045: ID 1209:ede2 Generic usb_02
+
+$ lsusb -v -d 1209:ede2 | head -40
+Bus 003 Device 045: ID 1209:ede2 Generic usb_02
+Device Descriptor:
+  bLength                18
+  bDescriptorType         1
+  bcdUSB               2.00
+  bDeviceClass            0
+  bDeviceSubClass         0
+  bDeviceProtocol         0
+  bMaxPacketSize0        64
+  idVendor           0x1209
+  idProduct          0xede2
+  bcdDevice            1.00
+  iManufacturer           1 edevkit
+  iProduct                2 usb_02
+  iSerial                 3 EDV-XXXX-YYYY-ZZZZ
+  bNumConfigurations      1
+  Configuration Descriptor:
+    bLength                 9
+    bDescriptorType         2
+    wTotalLength       0x0020   ← 32 bytes — was 0x0012 (18) on usb_01
+    bNumInterfaces          1
+    bConfigurationValue     1
+    iConfiguration          0
+    bmAttributes         0xa0
+      (Bus Powered)
+      Remote Wakeup
+    MaxPower              100mA
+    Interface Descriptor:
+      bLength               9
+      bInterfaceNumber      0
+      bAlternateSetting     0
+      bNumEndpoints         2   ← was 0 on usb_01
+      bInterfaceClass     255 Vendor Specific
+      ...
+      Endpoint Descriptor:
+        bEndpointAddress  0x01  EP 1 OUT
+        bmAttributes        2   Transfer Type: Bulk
+        wMaxPacketSize 0x0040   1x 64 bytes
+        bInterval           0
+      Endpoint Descriptor:
+        bEndpointAddress  0x81  EP 1 IN
+        bmAttributes        2   Transfer Type: Bulk
+        wMaxPacketSize 0x0040   1x 64 bytes
+        bInterval           0
+</code></pre>
+
+<h3>macOS</h3>
+<pre><code># ioreg is preferred over system_profiler — system_profiler caches USB
+# tree results aggressively and lags 10-30s behind reality.
+$ ioreg -p IOUSB -l -w 0 | grep -A 30 'usb_02'
+  | +-o usb_02@01100000  &lt;class IOUSBHostDevice, ...
+  | |   "USB Product Name" = "usb_02"
+  | |   "USB Vendor Name" = "edevkit"
+  | |   "idVendor" = 4617          ← 0x1209
+  | |   "idProduct" = 60898        ← 0xede2
+  | |   "USB Serial Number" = "EDV-XXXX-YYYY-ZZZZ"
+  | |   "bcdDevice" = 256          ← 0x0100
+  | |   "bNumConfigurations" = 1
+  | |     "Endpoint" = 0x81 (Bulk IN, 64 bytes/packet)
+  | |     "Endpoint" = 0x01 (Bulk OUT, 64 bytes/packet)
+</code></pre>
+
+<h3>Windows (PowerShell)</h3>
+<pre><code>PS&gt; Get-PnpDevice -PresentOnly | Where-Object { $_.HardwareID -like '*VID_1209*PID_EDE2*' }
+
+Status     Class           FriendlyName
+------     -----           ------------
+OK         USB             usb_02
+
+# Detailed descriptor dump requires Zadig (https://zadig.akeo.ie/) or
+# USBDeview (NirSoft). Both show wTotalLength=32 and the two bulk EPs.
+</code></pre>
+
+<div class="callout good">
+  <div class="callout-title">Acceptance — usb_02 is "done" when</div>
+  <p><strong>(a)</strong> All three OS verification commands above show the device with VID:PID <code>1209:ede2</code>, <strong>(b)</strong> <code>lsusb -v</code> reports <code>wTotalLength=0x0020</code> and lists both endpoint descriptors with addresses <code>0x01</code> and <code>0x81</code>, and <strong>(c)</strong> RTT shows the "configured (enabled)" line within ~50 ms of plug-in. Bulk reads/writes on the host side timing out is expected and correct — that's usb_04's problem.</p>
+</div>
+
+<!-- ─────────────────────────── 12. PITFALLS ─────────────────────────── -->
+
+<h2 id="pitfalls">12. Anticipated pitfalls</h2>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Device enumerates as VID 1209 PID ede2 but configuration descriptor still shows wTotalLength=18."</strong> Stale cached descriptor in the OS — bump <code>bcdDevice</code> from <code>0x0100</code> to <code>0x0101</code>, rebuild, replug. macOS in particular caches descriptors keyed on <code>{VID, PID, bcdDevice}</code>; bumping the version forces a re-read.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"<code>usbd_init: -22</code> (-EINVAL) at boot."</strong> One of the descriptors failed validation. Most likely cause: <code>bNumEndpoints</code> in the interface descriptor doesn't match the count of <code>USB_DESC_ENDPOINT</code> entries the stack found in <code>fs_desc[]</code>. We have <code>bNumEndpoints = 2</code> and 2 endpoint structs in the array — counts must match exactly.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Hard-fault at boot, BFAR points into Flash."</strong> An endpoint or interface descriptor was inadvertently <code>const</code> (G2) and the stack's write-back to <code>bEndpointAddress</code> hit read-only memory. Check that none of <code>iface</code>, <code>ep_out</code>, <code>ep_in</code> are declared <code>const</code>.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"<code>usbd_register_class: -2</code> (-ENOENT)."</strong> Class-name string mismatch (G3). Compare the literal in <code>USBD_DEFINE_CLASS(descriptors_demo, ...)</code> against <code>DESC_CLASS_NAME</code> in <code>main.c</code> — they must be byte-identical.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Host shows the interface but bulk reads time out (expected)."</strong> Not a bug — see §1. usb_02 declares the bulk endpoints in descriptors but never submits net_bufs to back them. Use libusb / pyusb / Wireshark to confirm the host is issuing IN tokens and seeing NAKs.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"<code>usbd_init: -12</code> (-ENOMEM) on a board that worked for usb_01."</strong> The UDC ran out of internal DPRAM allocating the new bulk endpoints. RP2350's UDC has a fixed DPRAM budget; usb_01 used only EP0 (64 B IN + 64 B OUT). usb_02 adds 64 + 64 for the bulk endpoints. If the build ever grows past four bulk endpoints, watch for this.</p>
+</div>
+
+<!-- ─────────────────────────── 13. CREDITS ─────────────────────────── -->
+
+<h2 id="credits-section">13. Attribution</h2>
+
+<aside class="credits">
+  <p><strong>Pattern source.</strong> The endpoint-descriptor layout (<code>USB_EP_DIR_*</code> bit conventions, <code>sys_cpu_to_le16()</code> on <code>wMaxPacketSize</code>, <code>USB_EP_TYPE_BULK</code> attribute byte, <code>bInterval = 0</code>) is taken directly from Zephyr's own reference vendor class:</p>
+  <p><code>$ZEPHYR_BASE/subsys/usb/device_next/class/loopback.c</code> — © 2024 Nordic Semiconductor ASA, licensed Apache-2.0. Source: <a href="https://github.com/zephyrproject-rtos/zephyr/blob/main/subsys/usb/device_next/class/loopback.c">zephyrproject-rtos/zephyr · loopback.c</a>.</p>
+  <p>The Zephyr USB-Device-Next API gotchas catalogued in §4 were captured in <a href="/docs/firmware_zephyr_usbd.html">firmware_zephyr_usbd.html</a> during <code>usb_01</code> bring-up; that doc is the upstream reference for any new sample in the series.</p>
+  <p><strong>Spec citations</strong> in the byte-level breakdowns are to Universal Serial Bus Specification, Revision 2.0 (USB Implementers Forum, April 2000) — sections 9.5 (descriptor types) and 9.6 (standard descriptors). Spec available at <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a>.</p>
+</aside>
+
+</div>
+
+</body>
+</html>

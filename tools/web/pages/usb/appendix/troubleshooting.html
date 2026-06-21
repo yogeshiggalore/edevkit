@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Symptom-to-fix index for USB issues, distilled from chapter pitfalls.">
+  <title>edevkit USB Book — Troubleshooting</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Troubleshooting</span>
+      <span class="grow"></span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · appendix</div>
+    <h1>Troubleshooting</h1>
+    <p class="lede">Symptom → cause → fix, distilled.</p>
+  </header>
+
+<div class="callout info">
+      <div class="callout-title">Status</div>
+      <p>This page is auto-curated from every chapter's "Common pitfalls" section. As pitfalls are added across the book, they're aggregated here. Until Part II lands the index is sparse — read each chapter's pitfalls inline for now.</p>
+    </div>
+
+    <section class="issue" id="cascaded-hubs">
+      <h2>CMSIS-DAP bulk transfers fail through cascaded USB hubs on macOS</h2>
+      <p><strong>Symptom:</strong> A CMSIS-DAP v2 debug probe (e.g., Raspberry Pi Debug Probe) enumerates correctly with <code>probe-rs list</code>, but the first bulk transfer (e.g., <code>probe-rs download</code> or <code>probe-rs info</code>) fails:</p>
+      <pre><code>Error: Failed to open probe: Failed to open the debug probe.
+Caused by:
+    0: An error which is specific to the debug probe in use occurred.
+    1: Error handling CMSIS-DAP command Info.
+    2: Error in the USB access.</code></pre>
+      <p>The probe works fine if plugged directly into the Mac's USB port or a single hub, but fails behind two or more cascaded hubs.</p>
+
+      <p><strong>Root causes (three independent, additive factors):</strong></p>
+      <ol>
+        <li><strong>USB 2.0 Transaction Translator (TT) jitter cascading.</strong> A CMSIS-DAP v2 device runs full-speed (12 Mbps). The Mac's USB port is high-speed (480 Mbps). Each hub between them runs a TT to bridge the speed gap. Each TT adds approximately 1–2 ms of jitter to packet scheduling. CMSIS-DAP v2's command/response loop expects sub-millisecond turnaround time. With two cascaded TTs, jitter can exceed the probe firmware's timeout on the very first <code>Info</code> command. (Note: <code>probe-rs list</code> works because it uses descriptor reads cached by the kernel, not bulk transfers.)</li>
+
+        <li><strong>macOS <code>IOUSB</code> interface-binding race.</strong> When a device is 2+ hub tiers deep, the macOS <code>IOUSB</code> driver hands <code>libusb</code> a device handle (allowing enumeration), but <code>claim_interface()</code> on the bulk interface fails because the interface binds to a different device-tree node than the one <code>libusb</code> originally resolved. <code>probe-rs</code> surfaces this as "Error in the USB access."</li>
+
+        <li><strong>V_BUS droop through passive hubs.</strong> Cheap passive USB-C hubs deliver 4.6–4.8 V (below the 5.0 V nominal). Each downstream passive hub drops a further 100–200 mV at its passthrough switch. At the second hub, V_BUS can sag below 4.5 V. The RP2040 inside the CMSIS-DAP probe (which runs the probe firmware) misses USB packets when V_BUS sags during bulk-transfer current spikes, compounding the timeout from cause #1.</li>
+      </ol>
+
+      <p><strong>Fix (in priority order):</strong></p>
+      <ol>
+        <li>Plug the probe <strong>directly into the Mac's USB port</strong> if possible (eliminates all three causes).</li>
+        <li>If a hub is required, plug the probe into a <strong>single active USB hub</strong> (one with its own power supply). Active hubs have buffered TTs with predictable latency and clean 5.0 V output.</li>
+        <li>Avoid cascading hubs (Mac → hub 1 → hub 2 → probe). If unavoidable, ensure each hub is <strong>powered</strong> (not passive) and has dedicated 5 V supply.</li>
+        <li>On macOS, if the above doesn't help, try a different USB host controller. Some Macs have multiple controllers; switching physical ports can help (e.g., move from a Thunderbolt 3 dock's USB 3.1 hub to a native USB-A port if available).</li>
+      </ol>
+    </section>
+
+    <section class="issue" id="rp2350-e12">
+      <h2>RP2350-E12 — DPRAM corruption when clk_sys ≤ 48 MHz</h2>
+      <p><strong>Symptom:</strong> An RP2350-based device appears to enumerate cleanly but transfers corrupt mid-stream, or the device randomly drops off the bus during sustained traffic. RTT may show <code>BUFF_STATUS</code> events on endpoints with stale or partial data. Affects only RP2350 silicon — RP2040 doesn't have this errata.</p>
+
+      <p><strong>Root cause:</strong> The RP2350 USB block's DPRAM at <code>0x50100000</code> is dual-ported between <code>clk_sys</code> (CPU side) and <code>clk_usb</code> (controller side, fixed 48 MHz). The dual-port arbitration logic assumes <code>clk_sys &gt; clk_usb</code>. If <code>clk_sys</code> is at or below 48 MHz while the USB controller is enabled, DPRAM accesses can return stale data or silently drop writes — producing apparently-random transfer corruption. RP2350 datasheet §12.7.3.1, p. 1144.</p>
+
+      <p><strong>Fix:</strong> Keep <code>clk_sys ≥ 50 MHz</code> any time <code>MAIN_CTRL.CONTROLLER_EN = 1</code>. Zephyr's default RP2350 board init runs <code>clk_sys</code> at 150 MHz, so this is a paper concern unless you've intentionally under-clocked the system. If you need to drop <code>clk_sys</code> below 50 MHz for power, disable USB first (<code>MAIN_CTRL.CONTROLLER_EN = 0</code> or <code>MAIN_CTRL.PHY_ISO = 1</code>), then drop the clock; reverse on resume.</p>
+
+      <p>See <a href="../partIII/14_rp2350_usb.html#errata">Ch 14 §7 — Errata</a> for the full datasheet quote and context.</p>
+    </section>
+
+    <section class="issue" id="phy-iso-not-cleared">
+      <h2>RP2350 USB never enumerates after porting RP2040 driver code</h2>
+      <p><strong>Symptom:</strong> A USB driver that worked on RP2040 produces no enumeration on RP2350 — host sees no device at all, no IRQs fire, no line-state events. Port that works on every other MCU family fails specifically on RP2350.</p>
+
+      <p><strong>Root cause:</strong> RP2350 added a new <code>MAIN_CTRL.PHY_ISO</code> bit (bit 2) at register offset <code>USBCTRL_REGS_BASE + 0x040</code> that doesn't exist on RP2040. The reset value is <code>1</code> (PHY isolated from the digital core). RP2040 driver code never touched this bit because it didn't exist; if you copy that driver verbatim to RP2350, the PHY stays isolated and nothing works. RP2350 datasheet §12.7.2 calls this out as the one breaking change from RP2040: <em>"You must clear the MAIN_CTRL.PHY_ISO bit at startup and after power down events."</em></p>
+
+      <p><strong>Fix:</strong> In your driver init path, before any other USB activity, write 0 to bit 2 of <code>MAIN_CTRL</code>:</p>
+      <pre><code>// Clear PHY_ISO before enabling controller. RP2350 only.
+hw_clear_bits(&amp;usb_hw->main_ctrl, USB_MAIN_CTRL_PHY_ISO_BITS);</code></pre>
+
+      <p>Zephyr's <code>udc_rpi_pico.c</code> already does this; you'd only hit this when porting a non-Zephyr stack. See <a href="../partIII/14_rp2350_usb.html#vs-rp2040">Ch 14 §6</a> for the full RP2350-vs-RP2040 delta.</p>
+    </section>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

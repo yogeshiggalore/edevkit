@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="TinyUSB vs Zephyr USB-Device-Next — feature-by-feature comparison and the decision record for why edevkit1 picked UDN.">
+  <title>edevkit USB Book — Appendix · USB Stack Comparison</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Stack comparison</span>
+      <span class="grow"></span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · appendix</div>
+    <h1>USB Stack Comparison</h1>
+    <p class="lede">TinyUSB vs Zephyr USB-Device-Next — what each one is, where each one wins, and why edevkit1 picked UDN.</p>
+  </header>
+
+  <div class="callout info">
+    <div class="callout-title">Audience</div>
+    <p>Read this if you're new to embedded USB and trying to choose a stack, or if you're new to edevkit1 and wondering why the design doc says <em>"Don't use TinyUSB"</em>. The decision is locked for edevkit1, but the trade-offs are real on either side — this page explains them honestly so you can make your own call on your own project.</p>
+  </div>
+
+  <section id="why">
+    <h2>1. Why this appendix exists</h2>
+    <p>If you Google "Raspberry Pi Pico USB", almost every result uses <strong>TinyUSB</strong>. If you Google "Zephyr USB", you find half a dozen overlapping pages about a legacy <code>usb_*</code> API and a newer <code>usbd_*</code> API and it's not obvious which is which. So it's reasonable to land at edevkit1 and ask: <em>"Why didn't you just use TinyUSB like the pico-sdk samples do?"</em></p>
+    <p>This appendix answers that. It's not a TinyUSB hit-piece. TinyUSB is excellent software — it powers thousands of shipping products. It's just not the right fit for what edevkit1 does. The rest of this page makes that concrete.</p>
+  </section>
+
+  <section id="tinyusb">
+    <h2>2. TinyUSB at a glance</h2>
+    <p><a href="https://github.com/hathach/tinyusb">TinyUSB</a> is a portable, RTOS-agnostic USB stack written by Ha Thach and maintained by Adafruit, Raspberry Pi, Espressif, and others. It targets MCUs without an OS — pico-sdk, Arduino, bare-metal projects — and ships as a single git submodule you build into your firmware.</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Aspect</th><th>TinyUSB</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">Language</td><td class="meaning">C (C99), no C++</td></tr>
+        <tr><td class="field">Build system</td><td class="meaning">CMake, plain Make, or hand-rolled — drop into any project</td></tr>
+        <tr><td class="field">RTOS</td><td class="meaning">Optional — runs bare-metal; hooks for FreeRTOS, RT-Thread, Mynewt</td></tr>
+        <tr><td class="field">MCU support</td><td class="meaning">~25 families: RP2040/RP2350, STM32 (all), nRF5x/53, ESP32-S2/S3/P4, SAMD/E/L, Kinetis, EFM32, MAX32, LPC, MSP432, …</td></tr>
+        <tr><td class="field">Built-in classes</td><td class="meaning">CDC, HID (boot &amp; report), MSC (BBB), MIDI, Audio (UAC1+2), Video (UVC), DFU, vendor, network (NCM/ECM/RNDIS), Bluetooth HCI</td></tr>
+        <tr><td class="field">Composite devices</td><td class="meaning">Yes — but you hand-write the descriptor byte arrays</td></tr>
+        <tr><td class="field">Host stack</td><td class="meaning">Yes (TinyUSB Host) — same API, runs on OTG-capable parts</td></tr>
+        <tr><td class="field">Configuration</td><td class="meaning">Preprocessor macros in <code>tusb_config.h</code></td></tr>
+        <tr><td class="field">Memory model</td><td class="meaning">Static, no <code>malloc</code> required</td></tr>
+        <tr><td class="field">License</td><td class="meaning">MIT</td></tr>
+      </tbody>
+    </table>
+
+    <h3>The TinyUSB mental model</h3>
+    <p>You include the headers, define your descriptors as <code>const uint8_t</code> arrays, implement a handful of <code>tud_*_cb()</code> callbacks (<code>tud_cdc_rx_cb</code>, <code>tud_hid_get_report_cb</code>, etc.), call <code>tud_task()</code> from your main loop or a thread, and you're done. There is no concept of a "device object" that you register interfaces with — descriptors are bytes, classes are callbacks, and the configuration is whatever you typed into <code>tusb_config.h</code>.</p>
+    <p>This is genuinely beautiful for a single-purpose device. A pure CDC ACM "USB serial" on RP2040 with TinyUSB is about 200 lines of code and 12 KB of flash.</p>
+  </section>
+
+  <section id="udn">
+    <h2>3. Zephyr USB-Device-Next at a glance</h2>
+    <p><strong>Zephyr USB-Device-Next</strong> (UDN, the <code>usbd_*</code> API under <code>subsys/usb/device_next/</code>) is the second-generation USB device stack in Zephyr RTOS. It replaces the legacy <code>usb_*</code> stack — which is still present but feature-frozen and slated for removal once UDN reaches feature parity. As of Zephyr 4.x, UDN is the default and recommended choice for new development.</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Aspect</th><th>Zephyr USB-Device-Next</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">Language</td><td class="meaning">C (C11), uses Zephyr's macro DSL heavily</td></tr>
+        <tr><td class="field">Build system</td><td class="meaning">CMake via west / sysbuild — part of the Zephyr workspace</td></tr>
+        <tr><td class="field">RTOS</td><td class="meaning">Required — UDN is a Zephyr subsystem, uses kernel threads, msgq, work queues</td></tr>
+        <tr><td class="field">MCU support</td><td class="meaning">Whatever has a Zephyr UDC driver: RP2040/RP2350, STM32, nRF5x/52/53, NXP i.MX/Kinetis, SAM, ESP32-S series (WIP), native_posix (for tests)</td></tr>
+        <tr><td class="field">Built-in classes</td><td class="meaning">CDC ACM, CDC ECM/NCM, HID, MSC, DFU, MIDI 2.0, Bluetooth HCI, BTH HCI, vendor</td></tr>
+        <tr><td class="field">Composite devices</td><td class="meaning">Yes — declarative: each function is an instance you register on a device object</td></tr>
+        <tr><td class="field">Host stack</td><td class="meaning">Separate subsystem (USB-Host-Next, still maturing)</td></tr>
+        <tr><td class="field">Configuration</td><td class="meaning">Kconfig + devicetree, validated at build time</td></tr>
+        <tr><td class="field">Memory model</td><td class="meaning">Static; kernel objects own their own storage</td></tr>
+        <tr><td class="field">License</td><td class="meaning">Apache-2.0 (with Zephyr)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>The UDN mental model</h3>
+    <p>You instantiate a <strong>USB device context</strong> with <code>USBD_DEVICE_DEFINE()</code>, declare each <strong>configuration</strong> with <code>USBD_CONFIGURATION_DEFINE()</code>, and then <strong>register class instances</strong> on it — CDC ACM, HID, vendor, etc. — each pulled in from devicetree by enabling Kconfig symbols. Descriptors are <em>generated</em> from those definitions; you never hand-author the byte stream. You call <code>usbd_init()</code> once, then <code>usbd_enable()</code>, and the stack runs on its own threads.</p>
+    <pre><code>USBD_DEVICE_DEFINE(edevkit_usbd, DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)),
+                   USBD_VID, USBD_PID);
+
+USBD_DESC_LANG_DEFINE(lang);
+USBD_DESC_MANUFACTURER_DEFINE(mfr, "edevkit");
+USBD_DESC_PRODUCT_DEFINE(prod, "edevkit1 debug probe");
+
+USBD_CONFIGURATION_DEFINE(cfg_1, USB_SCD_SELF_POWERED, 250, &amp;cfg_str);
+
+int main(void) {
+    usbd_add_descriptor(&amp;edevkit_usbd, &amp;lang);
+    usbd_add_descriptor(&amp;edevkit_usbd, &amp;mfr);
+    usbd_add_descriptor(&amp;edevkit_usbd, &amp;prod);
+    usbd_add_configuration(&amp;edevkit_usbd, USBD_SPEED_FS, &amp;cfg_1);
+    /* register class instances declared elsewhere */
+    usbd_register_class(&amp;edevkit_usbd, "cdc_acm_0", USBD_SPEED_FS, 1);
+    usbd_init(&amp;edevkit_usbd);
+    usbd_enable(&amp;edevkit_usbd);
+    return 0;
+}
+</code></pre>
+    <p>It's more ceremony than TinyUSB for a hello-world serial port. It scales much better for everything else — see §6.</p>
+  </section>
+
+  <section id="matrix">
+    <h2>4. Feature matrix</h2>
+    <p>Side-by-side on the dimensions that actually matter for edevkit1-class devices.</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Dimension</th><th>TinyUSB</th><th>Zephyr USB-Device-Next</th></tr>
+      </thead>
+      <tbody>
+        <tr class="spec-section"><td colspan="3">Foundation</td></tr>
+        <tr><td class="field">RTOS coupling</td><td class="meaning">None — RTOS-agnostic</td><td class="meaning">Tightly coupled to Zephyr kernel</td></tr>
+        <tr><td class="field">Build integration</td><td class="meaning">Submodule + your build system</td><td class="meaning">west + sysbuild + Kconfig + devicetree</td></tr>
+        <tr><td class="field">Footprint floor</td><td class="meaning">~10–15 KB flash, ~2 KB RAM</td><td class="meaning">~30–50 KB flash, ~6–10 KB RAM (incl. kernel)</td></tr>
+
+        <tr class="spec-section"><td colspan="3">Authoring</td></tr>
+        <tr><td class="field">Descriptors</td><td class="meaning">Hand-written byte arrays in C</td><td class="meaning">Generated from <code>USBD_*</code> macros + devicetree</td></tr>
+        <tr><td class="field">Composite</td><td class="meaning">Concatenate descriptor arrays; manage IAD by hand</td><td class="meaning">Register N class instances; IAD inserted automatically</td></tr>
+        <tr><td class="field">Strings</td><td class="meaning">Indexed manually; UTF-16LE encoding by hand</td><td class="meaning"><code>USBD_DESC_*_DEFINE()</code> handles encoding + index allocation</td></tr>
+        <tr><td class="field">Class extension</td><td class="meaning">Add a <code>tud_*</code> callback set + a class driver hook</td><td class="meaning">Implement the <code>usbd_class_api</code> vtable; register at link-time</td></tr>
+
+        <tr class="spec-section"><td colspan="3">Runtime</td></tr>
+        <tr><td class="field">Main loop</td><td class="meaning">Call <code>tud_task()</code> yourself</td><td class="meaning">Stack runs on its own kernel threads</td></tr>
+        <tr><td class="field">IRQ handling</td><td class="meaning">You wire ISR → <code>tud_int_handler()</code></td><td class="meaning">UDC driver wires it via devicetree</td></tr>
+        <tr><td class="field">Buffer ownership</td><td class="meaning">Static buffers in <code>tusb_config.h</code></td><td class="meaning">Per-endpoint net_buf pools sized in Kconfig</td></tr>
+        <tr><td class="field">Hot-plug events</td><td class="meaning">Callbacks (<code>tud_mount_cb</code>, etc.)</td><td class="meaning">Message-bus events (<code>usbd_msg_*</code>) on a work queue</td></tr>
+
+        <tr class="spec-section"><td colspan="3">Ecosystem hooks</td></tr>
+        <tr><td class="field">MCUboot / DFU</td><td class="meaning">DIY — you wire MCUboot's slot management to TinyUSB DFU</td><td class="meaning">SMP-server + MCUboot are first-class Zephyr subsystems</td></tr>
+        <tr><td class="field">Shell over CDC</td><td class="meaning">DIY — pipe CDC RX/TX to your own shell</td><td class="meaning"><code>CONFIG_SHELL_BACKEND_USB</code> — one line</td></tr>
+        <tr><td class="field">Logging over CDC</td><td class="meaning">DIY printf wrapper</td><td class="meaning"><code>CONFIG_LOG_BACKEND_USB_CDC_ACM</code> — one line</td></tr>
+        <tr><td class="field">LittleFS / settings</td><td class="meaning">DIY</td><td class="meaning">First-class</td></tr>
+        <tr><td class="field">Power management</td><td class="meaning">Suspend/resume callbacks; you implement PM</td><td class="meaning">Integrates with Zephyr PM (<code>pm_device_state_set</code>)</td></tr>
+
+        <tr class="spec-section"><td colspan="3">Quality &amp; maturity</td></tr>
+        <tr><td class="field">Class breadth (today)</td><td class="meaning">Wider — UVC, UAC1+2, NCM, MIDI, BTH all present</td><td class="meaning">Narrower — UVC/UAC are in-progress; MIDI 2.0 is the showcase</td></tr>
+        <tr><td class="field">Test surface</td><td class="meaning">Per-target manual + CI sample matrix</td><td class="meaning">twister + native_posix UDC emulation</td></tr>
+        <tr><td class="field">Real-world deployments</td><td class="meaning">Thousands (every Adafruit board, Pi Pico, etc.)</td><td class="meaning">Hundreds (rising fast — Nordic, NXP, Antmicro production use)</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="footprint">
+    <h2>5. Footprint &amp; resource cost</h2>
+    <p>The honest numbers, measured on rpi_pico2/rp2350a/m33 with <code>-Os</code>, single-config FS device:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Configuration</th><th>TinyUSB (flash / RAM)</th><th>UDN + Zephyr kernel (flash / RAM)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">Hello-world CDC ACM</td><td class="meaning">~14 KB / ~2.5 KB</td><td class="meaning">~46 KB / ~8 KB</td></tr>
+        <tr><td class="field">CDC + HID composite</td><td class="meaning">~22 KB / ~4 KB</td><td class="meaning">~54 KB / ~10 KB</td></tr>
+        <tr><td class="field">edevkit1 full stack (CMSIS-DAP v2 + 2× CDC + SMP + vendor)</td><td class="meaning">est. ~60 KB / ~14 KB <em>plus the RTOS you bring</em></td><td class="meaning">~120 KB / ~22 KB <em>including kernel, shell, logging, MCUboot client</em></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout info">
+      <div class="callout-title">Apples-to-oranges, on purpose</div>
+      <p>TinyUSB's flash number is just USB. UDN's flash number is USB plus everything else you also got "for free" — preemptive scheduler, logging subsystem, shell, watchdog, MCUboot client. If you build a comparable feature set on top of TinyUSB, the gap narrows to roughly 25–35 KB. That's a real cost, but the RP2350B has 4 MB of XIP flash and 520 KB of SRAM — it's not the constraint.</p>
+    </div>
+  </section>
+
+  <section id="composite">
+    <h2>6. Composite-device authoring</h2>
+    <p>This is where the two stacks feel most different in practice. edevkit1 ships <strong>five interfaces</strong> in one configuration:</p>
+    <ul>
+      <li>CMSIS-DAP v2 (vendor-specific, bulk IN + OUT)</li>
+      <li>Target-log UART (CDC ACM, IAD-grouped)</li>
+      <li>Test UART (CDC ACM, IAD-grouped)</li>
+      <li>SMP server (vendor-specific, bulk IN + OUT)</li>
+      <li>Sniffer drain (vendor-specific, bulk IN)</li>
+    </ul>
+
+    <h3>TinyUSB way</h3>
+    <p>You hand-author the configuration descriptor as one contiguous <code>uint8_t</code> array. Every interface, every endpoint, every IAD — bytes you typed yourself. You renumber endpoints by hand if you reorder. You compute <code>wTotalLength</code> by hand. You add the IAD descriptors at the right offsets by hand. <code>tusb_config.h</code> grows a wall of <code>CFG_TUD_CDC=2 CFG_TUD_HID=0 CFG_TUD_VENDOR=3</code>-style macros, and each vendor interface gets its own <code>tud_vendor_*_cb()</code> callback set distinguished by an interface number you tracked manually.</p>
+    <p>This works. People do it. It is the highest-error-density code in the project, and every reordering produces a one-line bug that doesn't show up until enumeration on a specific OS.</p>
+
+    <h3>UDN way</h3>
+    <p>Each interface is a separate Kconfig-enabled instance:</p>
+    <pre><code># prj.conf
+CONFIG_USBD_CDC_ACM_CLASS=y
+CONFIG_USBD_VENDOR_CLASS=y   # CMSIS-DAP v2, SMP, sniffer
+</code></pre>
+    <pre><code>/* devicetree overlay */
+cdc_acm_target_log: cdc_acm_target_log {
+    compatible = "zephyr,cdc-acm-uart";
+};
+cdc_acm_test:       cdc_acm_test       { compatible = "zephyr,cdc-acm-uart"; };
+</code></pre>
+    <pre><code>/* app code */
+usbd_register_class(&amp;edevkit_usbd, "cdc_acm_0", USBD_SPEED_FS, 1);
+usbd_register_class(&amp;edevkit_usbd, "cdc_acm_1", USBD_SPEED_FS, 1);
+usbd_register_class(&amp;edevkit_usbd, "dap_v2",    USBD_SPEED_FS, 1);
+usbd_register_class(&amp;edevkit_usbd, "smp_bulk",  USBD_SPEED_FS, 1);
+usbd_register_class(&amp;edevkit_usbd, "sniffer",   USBD_SPEED_FS, 1);
+</code></pre>
+    <p>Endpoint numbering, interface numbering, IAD insertion, <code>wTotalLength</code> calculation — all done by UDN at registration time. Reorder freely. Add a sixth class. Add a second configuration. The descriptor is correct by construction.</p>
+
+    <div class="callout good">
+      <div class="callout-title">Why this matters for edevkit1</div>
+      <p>edevkit1's composite topology is going to evolve as v1 ships and v2 plans grow (logic analyzer, more sniffers, possible WebUSB endpoint). Each change is a one-liner under UDN; it would be a 50-line audit under TinyUSB.</p>
+    </div>
+  </section>
+
+  <section id="rtos">
+    <h2>7. RTOS integration</h2>
+    <p>edevkit1 is not a single-purpose device. Multiple subsystems run concurrently with hard-ish latency requirements:</p>
+    <ul>
+      <li>CMSIS-DAP command/response loop (sub-millisecond turnaround)</li>
+      <li>SWO ITM frame pump (back-pressure-aware, never drop)</li>
+      <li>Two UART bridges (independent Vio domains)</li>
+      <li>I²C and SPI protocol engines (PIO-driven, DMA-fed)</li>
+      <li>YAML emulator engine (responds to PIO IRQs)</li>
+      <li>SMP server (low priority but must always respond)</li>
+    </ul>
+
+    <p>Each of these is naturally a thread or work-queue item with priorities, message queues, and synchronization. With TinyUSB you bring an RTOS yourself (FreeRTOS is the common pairing) and then bridge TinyUSB's callbacks to RTOS primitives. With UDN, the stack <em>is</em> those primitives. CDC RX is a <code>ring_buf</code>. Vendor bulk completion is a <code>k_sem</code>. State changes are <code>usbd_msg</code> on a work queue. There's no impedance mismatch because there's no boundary.</p>
+
+    <p>Concretely: UDN delivers events on a Zephyr work queue. Your handler runs in thread context with full kernel API access — <code>k_msgq_put()</code> to the protocol engine, <code>LOG_INF()</code> to the log subsystem — without ever wondering whether you're in IRQ context.</p>
+  </section>
+
+  <section id="classes">
+    <h2>8. Class coverage</h2>
+    <p>Both stacks cover the common classes well. The differences matter only at the edges:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Class</th><th>TinyUSB</th><th>UDN</th><th>edevkit1 needs?</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">CDC ACM</td><td class="meaning">✓ mature</td><td class="meaning">✓ mature</td><td class="meaning">yes, ×2</td></tr>
+        <tr><td class="field">HID (boot + report)</td><td class="meaning">✓ mature</td><td class="meaning">✓ mature</td><td class="meaning">no</td></tr>
+        <tr><td class="field">MSC (BBB)</td><td class="meaning">✓ mature</td><td class="meaning">✓ mature</td><td class="meaning">no (yet)</td></tr>
+        <tr><td class="field">DFU 1.1</td><td class="meaning">✓ mature</td><td class="meaning">✓ mature</td><td class="meaning">no (using SMP instead)</td></tr>
+        <tr><td class="field">Vendor / WinUSB</td><td class="meaning">✓ mature</td><td class="meaning">✓ mature</td><td class="meaning">yes — CMSIS-DAP, SMP, sniffer</td></tr>
+        <tr><td class="field">CDC NCM / ECM (network)</td><td class="meaning">✓</td><td class="meaning">✓</td><td class="meaning">no</td></tr>
+        <tr><td class="field">UVC (video)</td><td class="meaning">✓</td><td class="meaning">in progress</td><td class="meaning">no</td></tr>
+        <tr><td class="field">UAC1 / UAC2 (audio)</td><td class="meaning">✓</td><td class="meaning">in progress</td><td class="meaning">no</td></tr>
+        <tr><td class="field">MIDI 1.0</td><td class="meaning">✓</td><td class="meaning">✓</td><td class="meaning">no</td></tr>
+        <tr><td class="field">MIDI 2.0</td><td class="meaning">—</td><td class="meaning">✓ (showcase)</td><td class="meaning">no</td></tr>
+        <tr><td class="field">Bluetooth HCI</td><td class="meaning">✓</td><td class="meaning">✓</td><td class="meaning">no</td></tr>
+      </tbody>
+    </table>
+
+    <p>Every class edevkit1 actually uses — CDC ACM and vendor bulk — is mature on both stacks. The only TinyUSB-exclusive classes (UVC, UAC1+2) are areas edevkit1 has no plans to enter.</p>
+  </section>
+
+  <section id="ecosystem">
+    <h2>9. Ecosystem &amp; maturity</h2>
+    <h3>TinyUSB</h3>
+    <ul>
+      <li><strong>Adoption</strong>: every Adafruit CircuitPython board, every Raspberry Pi Pico example, MicroPython, Arduino-Pico, Espressif's USB samples, countless one-person hardware projects.</li>
+      <li><strong>Worked examples</strong>: <em>massive</em>. Want a UVC webcam on RP2040? There's an example. Want HID + CDC + MSC composite? Three blog posts.</li>
+      <li><strong>Failure mode</strong>: examples are the docs. When the example diverges from your case, you're reading the source. Class drivers have varying quality — CDC and HID are pristine; some others are "works for the example that ships with them."</li>
+      <li><strong>Velocity</strong>: steady, community-driven, conservative on breaking changes.</li>
+    </ul>
+
+    <h3>Zephyr USB-Device-Next</h3>
+    <ul>
+      <li><strong>Adoption</strong>: Nordic Connect SDK, NXP MCUXpresso, Antmicro reference designs, Memfault, Golioth. Production grade where Zephyr already lives.</li>
+      <li><strong>Worked examples</strong>: smaller catalog, mostly in <code>zephyr/samples/subsys/usb/</code>. Each sample is a working, twister-tested project — but you won't find a UVC example because UVC isn't there yet.</li>
+      <li><strong>Failure mode</strong>: API churn. The 3.7 → 4.0 → 4.1 transitions all renamed or restructured a few symbols. The USB Book exists partly because the gotchas are easier to write down than to discover via git blame.</li>
+      <li><strong>Velocity</strong>: faster than TinyUSB right now — UDN is being actively built out toward feature parity with the legacy stack and beyond.</li>
+    </ul>
+
+    <div class="callout warn">
+      <div class="callout-title">UDN is still maturing</div>
+      <p>This is the honest case <em>against</em> UDN. If you start a project on UDN today, expect to hit one or two undocumented edge cases per quarter where the answer is in a Zephyr PR rather than a doc page. edevkit1 mitigates this by writing the USB Book — every gotcha we hit becomes a chapter entry. See <a href="../partII/06_descriptors.html#gotchas">G1–G7</a>, <a href="../partII/06_descriptors.html#g8">G8–G10</a>, <a href="../partII/07_strings.html#g15">G15</a>, <a href="../partII/08_control_transfers.html#g16">G16–G18</a>, <a href="../partIV/15_cdc_acm.html#g19">G19–G22</a>.</p>
+    </div>
+  </section>
+
+  <section id="when">
+    <h2>10. When to pick which</h2>
+    <p>If you're starting a new firmware project today, here's an honest decision tree:</p>
+
+    <h3>Pick TinyUSB when</h3>
+    <ul>
+      <li>You're targeting bare-metal or pico-sdk and don't want an RTOS.</li>
+      <li>Your device is single-purpose: one CDC, or one HID, or one MSC.</li>
+      <li>Footprint matters — you have ≤256 KB flash or ≤32 KB RAM.</li>
+      <li>You need UVC, UAC1/2, or a class UDN doesn't have yet.</li>
+      <li>Your team already knows pico-sdk and won't get paid to learn Zephyr.</li>
+      <li>You want the largest pool of online worked examples.</li>
+    </ul>
+
+    <h3>Pick Zephyr USB-Device-Next when</h3>
+    <ul>
+      <li>Your device is composite (≥3 interfaces) or will become composite.</li>
+      <li>You need MCUboot / DFU / SMP / OTA as a first-class feature.</li>
+      <li>You want a real RTOS with preemption, priorities, and SMP — not a main-loop with callbacks.</li>
+      <li>You need shell, logging, settings, LittleFS, networking, BLE — and you want them to integrate, not collide.</li>
+      <li>You're going to ship multiple firmware variants from one codebase (devicetree + Kconfig pays for itself).</li>
+      <li>You're comfortable absorbing some API churn in exchange for forward velocity.</li>
+    </ul>
+
+    <h3>Genuinely a coin-flip</h3>
+    <ul>
+      <li>Dual CDC ACM serial bridge with no other features — both are fine. TinyUSB is faster to write; UDN is easier to extend later.</li>
+      <li>HID + one vendor interface — both work; pick by team familiarity.</li>
+    </ul>
+  </section>
+
+  <section id="decision">
+    <h2>11. Why edevkit1 picked UDN</h2>
+
+    <div class="callout good">
+      <div class="callout-title">The decision in one sentence</div>
+      <p>edevkit1 is a composite, OTA-updatable, multi-protocol developer kit running real-time engines under preemptive scheduling — exactly the workload UDN is designed for and exactly the workload TinyUSB would have us rebuild around.</p>
+    </div>
+
+    <p>Five concrete reasons, ranked by how load-bearing each is:</p>
+
+    <ol>
+      <li>
+        <strong>MCUboot + SMP OTA is non-negotiable.</strong>
+        <p>edevkit1 ships as a sealed device — there's no exposed SWD pin on the user side. Field updates have to be brick-proof, which means MCUboot's swap-and-revert flow with image confirmation. MCUboot's SMP server, the matching mcumgr host tool, and Zephyr's bootloader integration are one ecosystem. Wiring TinyUSB DFU 1.1 to MCUboot is possible but means: (a) write the DFU class glue, (b) implement slot management ourselves, (c) implement the confirmation-window timer ourselves, (d) write our own host tool because mcumgr won't speak DFU 1.1. That's ~2,000 lines of brittle code we don't write in Zephyr.</p>
+      </li>
+      <li>
+        <strong>The composite topology is the product.</strong>
+        <p>The five-interface device (CMSIS-DAP + 2× CDC + SMP + vendor sniffer) is what edevkit1 <em>is</em>. Under UDN every interface is an independent module behind a Kconfig; under TinyUSB they're all entries in one hand-rolled <code>desc_configuration[]</code> array. The composite is the place we'll most often change scope as v1 ships and v2 plans firm up. We want adding an interface to be a Kconfig flip, not a descriptor-array audit.</p>
+      </li>
+      <li>
+        <strong>SMP dual-core with watchdog, shell, logging, LittleFS — already running.</strong>
+        <p>edevkit1 needs all of these. They're built, tested, documented, and integrated in Zephyr. Picking TinyUSB means picking <em>not Zephyr</em>, which means rebuilding all of this against pico-sdk + FreeRTOS, where each piece is a separate library with its own conventions. The substrate has more leverage than the USB stack alone.</p>
+      </li>
+      <li>
+        <strong>Host side already speaks Zephyr.</strong>
+        <p><code>mcumgr</code>, <code>smpclient</code>, probe-rs's Zephyr support, the Zephyr Shell — all run unchanged against UDN. The Tauri host GUI talks to standard Zephyr endpoints. Choosing TinyUSB would mean re-implementing the device-side of every protocol our existing host tools already speak.</p>
+      </li>
+      <li>
+        <strong>Forward velocity outweighs catalog size.</strong>
+        <p>UDN's catalog of worked examples is smaller than TinyUSB's. Acknowledged. But UDN's velocity is higher and its gotchas are <em>writeable up</em> — the USB Book exists precisely because the gotchas are systematic enough to enumerate. TinyUSB's gotchas are scattered across thousands of one-off projects and not written down anywhere central.</p>
+      </li>
+    </ol>
+
+    <h3>Trade-offs we explicitly accept</h3>
+    <ul>
+      <li><strong>Heavier minimum footprint</strong> — ~46 KB for hello-world CDC vs ~14 KB. Non-issue on RP2350B (4 MB XIP flash).</li>
+      <li><strong>Steeper onboarding</strong> — devicetree + Kconfig + west are unfamiliar to anyone arriving from pico-sdk. Mitigated by the USB Book.</li>
+      <li><strong>API churn</strong> — UDN signatures and macros are still settling. Mitigated by pinning Zephyr to a known release in <code>west.yml</code> and updating deliberately.</li>
+      <li><strong>Smaller class catalog</strong> — no UVC/UAC today. Not in v1 scope.</li>
+    </ul>
+
+    <h3>Re-open this decision only if</h3>
+    <ul>
+      <li>edevkit1 firmware size approaches the 512 KB slot limit, <em>and</em> profiling shows UDN + kernel are the dominant cost.</li>
+      <li>Zephyr UDN is announced as deprecated or unmaintained (extremely unlikely — it's the official direction).</li>
+      <li>A future product variant truly needs UVC or UAC2 and UDN still doesn't ship them.</li>
+      <li>We discover a class of bugs in UDN that hits edevkit1's workload and is not fixable upstream within one release cycle.</li>
+    </ul>
+
+    <p>None of those is true today. Decision locked. See <a href="/docs/edevkit1.html#decisions">edevkit1.html §15 — Decision log</a>.</p>
+  </section>
+
+  <section id="migration">
+    <h2>12. Migration notes (if we ever had to)</h2>
+    <p>Recorded for completeness, not because we plan to. If a future incident forces a migration <strong>from UDN to TinyUSB</strong>, here's what would have to change:</p>
+    <ul>
+      <li>Replace <code>USBD_DEVICE_DEFINE</code> + class registrations with a hand-written <code>desc_configuration[]</code> array; one descriptor byte per row, IAD inserted manually.</li>
+      <li>Re-implement each class:
+        <ul>
+          <li>CDC ACM × 2 → <code>CFG_TUD_CDC = 2</code> plus <code>tud_cdc_rx_cb()</code>, plus instance-aware RX routing.</li>
+          <li>Vendor (CMSIS-DAP, SMP, sniffer) → <code>CFG_TUD_VENDOR = 3</code> plus three callback sets distinguished by interface number.</li>
+        </ul>
+      </li>
+      <li>Replace UDN's work-queue events with TinyUSB callbacks (<code>tud_mount_cb</code>, <code>tud_suspend_cb</code>, etc.); wire each to whatever thread/queue stays.</li>
+      <li>Replace SMP server with hand-rolled DFU 1.1 glue + custom host tool (or keep SMP but speak it over a raw vendor endpoint).</li>
+      <li>Re-author the WinUSB / MS OS 2.0 descriptors as raw bytes — UDN has helpers for these; TinyUSB makes you compose them yourself.</li>
+      <li>Audit endpoint numbering globally; TinyUSB doesn't auto-assign.</li>
+      <li>Move logging/shell/settings off Zephyr's subsystems onto whatever substitute we adopt.</li>
+    </ul>
+    <p>Estimated effort: 6–8 weeks at the firmware level, plus an unknown amount of host-side rework. The estimate exists so anyone proposing the migration has to justify against it.</p>
+  </section>
+
+  <h2>Going deeper</h2>
+  <ul>
+    <li>TinyUSB source &amp; docs — <a href="https://github.com/hathach/tinyusb">github.com/hathach/tinyusb</a> · <a href="https://docs.tinyusb.org/">docs.tinyusb.org</a></li>
+    <li>Zephyr USB-Device-Next overview — <a href="https://docs.zephyrproject.org/latest/connectivity/usb/device_next/usb_device.html">docs.zephyrproject.org · connectivity/usb/device_next</a></li>
+    <li>Legacy <code>usb_*</code> vs <code>usbd_*</code> migration notes — <a href="https://docs.zephyrproject.org/latest/releases/release-notes-3.7.html">Zephyr 3.7 release notes</a></li>
+    <li>edevkit1 decision log — <a href="/docs/edevkit1.html#decisions">edevkit1.html §15</a></li>
+    <li>USB Book Ch 15 — <a href="../partIV/15_cdc_acm.html">CDC ACM</a> (first UDN class in depth)</li>
+  </ul>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

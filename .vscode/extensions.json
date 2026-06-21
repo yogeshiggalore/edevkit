@@ -1,0 +1,10 @@
+{
+    "recommendations": [
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-vscode.cmake-tools",
+        "plorefice.devicetree"
+    ],
+    "unwantedRecommendations": [
+        "ms-vscode.cpptools"
+    ]
+}

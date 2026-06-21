@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Byte-by-byte walkthrough of the USB enumeration sequence — the moment a device first announces itself to the host.">
+  <title>edevkit USB Book — Part I · Ch 05: Enumeration walkthrough</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Part I · Ch 05</span>
+      <span class="grow"></span>
+      <span class="last-verified">Theory · 2026-05-06</span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · part I · ch 05</div>
+    <h1>Enumeration walkthrough</h1>
+    <p class="lede">From "user plugs in cable" to "operating system loaded a driver" — every packet, every byte, every reason it has to be that order.</p>
+  </header>
+
+<section class="chapter-meta" aria-label="Chapter metadata">
+      <div class="meta-row">
+        <div class="meta-label">You'll learn</div>
+        <div>
+          <ul>
+            <li>The exact sequence of standard requests the host makes during enumeration.</li>
+            <li>Why <code>GET_DESCRIPTOR(device)</code> happens twice — once partial, once full — and what changed in between.</li>
+            <li>What <code>SET_ADDRESS</code> does to the device's behavior on the next packet.</li>
+            <li>The byte layout of the device descriptor, dissected field-by-field with the values you'll see for <code>usb_01_hello_enum</code>.</li>
+            <li>How to capture and replay an enumeration with <code>usbmon</code> / <code>USBPcap</code> on your own machine.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Prereqs</div>
+        <div>Chapters 01–04. You know the host is in charge, what's on the wire, and what control transfers look like.</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Sample</div>
+        <div><code class="sample-link">firmware/samples/usb/usb_01_hello_enum/</code> — the smallest possible Zephyr USB-Device-Next device. After reading this chapter, build it, plug it in, and capture an enumeration to walk through against this text.</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Verified</div>
+        <div>2026-05-06 · USB 2.0 spec §9 (Device Framework), Zephyr 4.0 USB-Device-Next.</div>
+      </div>
+    </section>
+
+    <h2>The full picture</h2>
+
+    <p>From the user's perspective, plugging a USB device in is instantaneous. From the wire's perspective it's about <strong>20 packets</strong> and ~50 ms of activity, in this order:</p>
+
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+  participant U as User
+  participant H as Host
+  participant D as Device
+
+  U->>D: Plugs in cable
+  D->>H: Pulls D+ high (FS speed signaling)
+  H->>D: Bus reset (SE0 ≥ 10 ms)
+
+  Note over H,D: Phase 1 — discover EP0 packet size
+  H->>D: GET_DESCRIPTOR(device, 8 bytes) on addr=0
+  D-->>H: First 8 bytes of device descriptor
+
+  H->>D: Bus reset (some hosts)
+
+  Note over H,D: Phase 2 — assign address
+  H->>D: SET_ADDRESS(N)
+  D-->>H: ACK (still on addr=0)
+  Note over D: Switch to addr=N for next request
+
+  Note over H,D: Phase 3 — read full descriptor tree
+  H->>D: GET_DESCRIPTOR(device, full 18 bytes) on addr=N
+  D-->>H: Full device descriptor
+  H->>D: GET_DESCRIPTOR(config, 9 bytes)
+  D-->>H: Config descriptor header (gets wTotalLength)
+  H->>D: GET_DESCRIPTOR(config, wTotalLength)
+  D-->>H: Full config tree (config + interfaces + endpoints)
+  H->>D: GET_DESCRIPTOR(string, 0)
+  D-->>H: Supported language IDs
+  H->>D: GET_DESCRIPTOR(string, iManufacturer/iProduct/iSerial)
+  D-->>H: UTF-16LE strings
+
+  Note over H,D: Phase 4 — activate
+  H->>D: SET_CONFIGURATION(1)
+  D-->>H: ACK
+
+  Note over H,D: Class drivers take over from here
+      </pre>
+    </div>
+
+    <p>Four phases: <strong>discover EP0, assign address, read descriptors, activate configuration</strong>. We walk each in sequence.</p>
+
+    <h2>Six device states (the lifecycle behind enumeration)</h2>
+    <p>USB 2.0 §9.1.1 defines six visible device states. Enumeration is the journey through the first five; suspended is orthogonal and reachable from any of them.</p>
+    <table class="byte-table">
+      <thead>
+        <tr><th>State</th><th>Triggered by</th><th>Device behavior</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">Attached</td><td class="meaning">Cable plugged in, no V<sub>BUS</sub></td><td class="meaning">Pull-up not yet asserted</td></tr>
+        <tr><td class="field">Powered</td><td class="meaning">V<sub>BUS</sub> applied</td><td class="meaning">Device asserts speed pull-up; host detects attachment</td></tr>
+        <tr><td class="field">Default</td><td class="meaning">Bus reset complete</td><td class="meaning">Device responds on EP0 at <strong>address 0</strong></td></tr>
+        <tr><td class="field">Address</td><td class="meaning"><code>SET_ADDRESS</code> status stage ACK'd</td><td class="meaning">Device responds only at its new address; not yet configured</td></tr>
+        <tr><td class="field">Configured</td><td class="meaning"><code>SET_CONFIGURATION(n≥1)</code></td><td class="meaning">Endpoints active; class drivers can talk to the device</td></tr>
+        <tr><td class="field">Suspended</td><td class="meaning">Bus idle &gt; 3 ms (orthogonal)</td><td class="meaning">Drop to suspend current; resume signal returns to prior state</td></tr>
+      </tbody>
+    </table>
+    <p>The four phases below correspond to the transitions Powered → Default → Address → Configured. <code>SET_CONFIGURATION(0)</code> deconfigures, sending the device back to Address state without losing its address.</p>
+
+    <h2>Phase 0 — speed signaling and bus reset</h2>
+
+    <p>Before any USB packet is exchanged, the device announces its speed by which D wire it pulls up (Chapter 02 recap):</p>
+    <ul>
+      <li>D+ pulled to 3.3 V via 1.5 kΩ → device is full-speed.</li>
+      <li>D- pulled to 3.3 V via 1.5 kΩ → device is low-speed.</li>
+      <li>D+ pulled, then chirp during reset → device is high-speed.</li>
+    </ul>
+
+    <p>The host sees the appropriate D-line rise and starts a <strong>bus reset</strong>: drive SE0 (both lines low) for ≥ 10 ms. During this time:</p>
+    <ul>
+      <li>The device's USB controller resets itself.</li>
+      <li>Any previous device address is forgotten — the device returns to address 0.</li>
+      <li>Any previous configuration is forgotten — the device is "addressed but not configured" once reset clears.</li>
+      <li>Endpoint 0 is now the only active endpoint, MPS unknown to the host yet.</li>
+    </ul>
+
+    <p>When SE0 ends, the device must be ready to respond to control requests on EP0 within 100 ms.</p>
+
+    <h2>Phase 1 — discover EP0's packet size</h2>
+
+    <p>The host's first move is a control read of the device descriptor — but with a surprising twist: it reads only the <strong>first 8 bytes</strong> on the first try, even though the full descriptor is 18.</p>
+
+    <p>Why? Because the host doesn't yet know the device's <code>bMaxPacketSize0</code> (the EP0 maximum packet size). This field lives at offset 7 of the device descriptor. The host needs that value to know how big subsequent control transactions can be — but to read it, it has to make a control request, which itself needs a packet size assumption. The protocol resolves this circular dependency by mandating that <strong>every device must respond to a partial descriptor read of at least 8 bytes</strong>. After receiving those 8 bytes, the host knows the actual MPS and can do larger reads.</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>SETUP byte</th><th>Hex</th><th>Field</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="offset">0</td><td class="hex">80</td><td class="field">bmRequestType</td><td class="meaning">D2H (bit 7 = 1), Standard, Device</td></tr>
+        <tr><td class="offset">1</td><td class="hex">06</td><td class="field">bRequest</td><td class="meaning">GET_DESCRIPTOR</td></tr>
+        <tr><td class="offset">2</td><td class="hex">00</td><td class="field">wValueLo</td><td class="meaning">descriptor index 0</td></tr>
+        <tr><td class="offset">3</td><td class="hex">01</td><td class="field">wValueHi</td><td class="meaning">descriptor type 0x01 = DEVICE</td></tr>
+        <tr><td class="offset">4</td><td class="hex">00</td><td class="field">wIndexLo</td><td class="meaning">language ID (n/a for device descriptor)</td></tr>
+        <tr><td class="offset">5</td><td class="hex">00</td><td class="field">wIndexHi</td><td class="meaning">—</td></tr>
+        <tr><td class="offset">6</td><td class="hex">08</td><td class="field">wLengthLo</td><td class="meaning">8 bytes requested</td></tr>
+        <tr><td class="offset">7</td><td class="hex">00</td><td class="field">wLengthHi</td><td class="meaning">—</td></tr>
+      </tbody>
+    </table>
+
+    <p>The device's response is the first 8 bytes of its device descriptor. For <code>usb_01_hello_enum</code>:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Offset</th><th>Hex</th><th>Field</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="offset">0</td><td class="hex">12</td><td class="field">bLength</td><td class="meaning">18 — total device descriptor length</td></tr>
+        <tr><td class="offset">1</td><td class="hex">01</td><td class="field">bDescriptorType</td><td class="meaning">DEVICE (0x01)</td></tr>
+        <tr><td class="offset">2-3</td><td class="hex">00 02</td><td class="field">bcdUSB</td><td class="meaning">USB 2.00 (little-endian)</td></tr>
+        <tr><td class="offset">4</td><td class="hex">00</td><td class="field">bDeviceClass</td><td class="meaning">0 = "see interface descriptors"</td></tr>
+        <tr><td class="offset">5</td><td class="hex">00</td><td class="field">bDeviceSubClass</td><td class="meaning">—</td></tr>
+        <tr><td class="offset">6</td><td class="hex">00</td><td class="field">bDeviceProtocol</td><td class="meaning">—</td></tr>
+        <tr><td class="offset">7</td><td class="hex">40</td><td class="field">bMaxPacketSize0</td><td class="meaning"><strong>64 bytes</strong> — the answer the host needed</td></tr>
+      </tbody>
+    </table>
+
+    <p>The host now knows EP0 is 64-byte. It also knows the full descriptor is 18 bytes (<code>bLength</code> = 0x12). Most hosts at this point issue a <strong>second bus reset</strong> — Linux usbcore in particular does this almost always. The spec doesn't strictly require it, but it's universal in practice.</p>
+
+    <h2>Phase 2 — assign address</h2>
+
+    <p>The device is still at address 0. The host issues <code>SET_ADDRESS</code> with the new address it picked from its pool:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>SETUP byte</th><th>Hex</th><th>Field</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="offset">0</td><td class="hex">00</td><td class="field">bmRequestType</td><td class="meaning">H2D, Standard, Device</td></tr>
+        <tr><td class="offset">1</td><td class="hex">05</td><td class="field">bRequest</td><td class="meaning">SET_ADDRESS</td></tr>
+        <tr><td class="offset">2-3</td><td class="hex">07 00</td><td class="field">wValue</td><td class="meaning">new address = 7 (varies)</td></tr>
+        <tr><td class="offset">4-5</td><td class="hex">00 00</td><td class="field">wIndex</td><td class="meaning">—</td></tr>
+        <tr><td class="offset">6-7</td><td class="hex">00 00</td><td class="field">wLength</td><td class="meaning">no data stage</td></tr>
+      </tbody>
+    </table>
+
+    <p>This is a control transfer with <strong>no data stage</strong> — straight from setup to status. The device must answer the status stage on its <em>old</em> address (0), then switch to the new one for any subsequent transaction. Get this wrong and the device disappears from the host's view immediately after assignment.</p>
+
+    <p>In Zephyr USB-Device-Next, this is handled by the stack — your application code never sees <code>SET_ADDRESS</code>. But knowing it's there helps you debug a particular failure mode: if your USB controller doesn't switch addresses at the right moment (a hardware bug or driver bug), enumeration dies right here. Wireshark will show the host then trying to talk to address N and the device not responding.</p>
+
+    <div class="callout info">
+      <div class="callout-title">On RP2350 specifically</div>
+      <p>The RP2350 USB controller does <strong>not</strong> auto-parse <code>SET_ADDRESS</code> — firmware (Zephyr's <code>udc_rpi_pico.c</code>) reads the SETUP packet from DPRAM at <code>0x50100000 + 0x00</code>, extracts the new address from byte 2 of the SETUP, and writes it to the <code>ADDR_ENDP</code> register at <code>USBCTRL_REGS_BASE + 0x000</code> after the status stage completes. Datasheet §12.7.3.8.1. The "controller driver bug" failure mode is concretely: the driver reads the wrong byte, masks bits 6:0 incorrectly, or writes <code>ADDR_ENDP</code> too early. See <a href="../partIII/14_rp2350_usb.html#channel-dma">Ch 14 §4d</a>.</p>
+    </div>
+
+    <p>Three timing rules the spec pins down (USB 2.0 §9.2.6):</p>
+    <ul>
+      <li><strong>Status stage of SET_ADDRESS must complete within 50 ms</strong> of receiving the request.</li>
+      <li><strong>The address change must be in effect within 2 ms after the status stage.</strong> Earlier or later breaks enumeration.</li>
+      <li>After a bus reset ends, the host gives the device a <strong>≥ 10 ms recovery interval</strong> before sending the next request — your firmware doesn't have to be ready instantly, but it does have to be ready by then.</li>
+    </ul>
+
+    <h2>Phase 3 — read the full descriptor tree</h2>
+
+    <h3>Full device descriptor</h3>
+
+    <p>Same SETUP as Phase 1 but now <code>wLength = 18</code> (or sometimes 64 — many hosts ask for more than they need). The device replies with all 18 bytes:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Offset</th><th>Hex</th><th>Field</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="offset">0</td><td class="hex">12</td><td class="field">bLength</td><td class="meaning">18</td></tr>
+        <tr><td class="offset">1</td><td class="hex">01</td><td class="field">bDescriptorType</td><td class="meaning">DEVICE</td></tr>
+        <tr><td class="offset">2-3</td><td class="hex">00 02</td><td class="field">bcdUSB</td><td class="meaning">2.00</td></tr>
+        <tr><td class="offset">4</td><td class="hex">00</td><td class="field">bDeviceClass</td><td class="meaning">defer to interfaces</td></tr>
+        <tr><td class="offset">5</td><td class="hex">00</td><td class="field">bDeviceSubClass</td><td class="meaning">—</td></tr>
+        <tr><td class="offset">6</td><td class="hex">00</td><td class="field">bDeviceProtocol</td><td class="meaning">—</td></tr>
+        <tr><td class="offset">7</td><td class="hex">40</td><td class="field">bMaxPacketSize0</td><td class="meaning">64</td></tr>
+        <tr><td class="offset">8-9</td><td class="hex">09 12</td><td class="field">idVendor</td><td class="meaning">0x1209 — pid.codes free pool</td></tr>
+        <tr><td class="offset">10-11</td><td class="hex">e7 ed</td><td class="field">idProduct</td><td class="meaning">0xede7 — placeholder, edevkit dev</td></tr>
+        <tr><td class="offset">12-13</td><td class="hex">01 00</td><td class="field">bcdDevice</td><td class="meaning">device version 1.00</td></tr>
+        <tr><td class="offset">14</td><td class="hex">01</td><td class="field">iManufacturer</td><td class="meaning">string index 1</td></tr>
+        <tr><td class="offset">15</td><td class="hex">02</td><td class="field">iProduct</td><td class="meaning">string index 2</td></tr>
+        <tr><td class="offset">16</td><td class="hex">03</td><td class="field">iSerialNumber</td><td class="meaning">string index 3</td></tr>
+        <tr><td class="offset">17</td><td class="hex">01</td><td class="field">bNumConfigurations</td><td class="meaning">one configuration</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout info">
+      <div class="callout-title">VID/PID note</div>
+      <p>0x1209 is the <a href="https://pid.codes">pid.codes</a> umbrella VID for open-source / hobbyist projects, and 0xede7 is a placeholder we'll replace before release. Chapters in Part II go deeper on VID/PID assignment for open-hardware projects.</p>
+    </div>
+
+    <h3>Configuration descriptor — partial then full</h3>
+
+    <p>Just like the device descriptor, the config descriptor is read in two passes. The first pass asks for 9 bytes (the size of the config descriptor header). That header contains <code>wTotalLength</code>, the size of the entire config tree (config + interfaces + endpoints + class-specific descriptors). The host then issues a second read for that exact length.</p>
+
+    <p>The reason for the two-pass dance: descriptor trees can vary from a few dozen bytes (a simple HID device) to several hundred (a complex composite). The host doesn't want to over-read or under-read.</p>
+
+    <p>For <code>usb_01_hello_enum</code> the config tree is minimal:</p>
+    <ul>
+      <li>1 × Configuration descriptor (9 bytes)</li>
+      <li>1 × Interface descriptor (9 bytes)</li>
+      <li>0 endpoints (the device declares an interface but doesn't use any data endpoints — it's just for visibility)</li>
+    </ul>
+
+    <p>So <code>wTotalLength = 18</code>. We dissect every byte of the config tree in <strong>Chapter 06</strong>.</p>
+
+    <h3>String descriptors</h3>
+
+    <p>The host then reads three string descriptors (or four — many hosts ask for index 0 first to learn supported language IDs). UTF-16LE encoded, prefixed with a 2-byte header (length + type). For our sample:</p>
+
+    <ul>
+      <li><strong>Index 0</strong> (language IDs) — typically <code>04 03 09 04</code> = 4-byte descriptor, type STRING, language 0x0409 (US English).</li>
+      <li><strong>Index 1</strong> (manufacturer) — "edevkit" → 18 bytes (2 header + 14 UTF-16LE chars).</li>
+      <li><strong>Index 2</strong> (product) — "usb_01 hello-enum" → varies.</li>
+      <li><strong>Index 3</strong> (serial) — derived from RP2350 chip ID, e.g. "EDV-1A2B-3C4D-5E6F".</li>
+    </ul>
+
+    <p>Strings are optional. If a descriptor's <code>iManufacturer</code> / <code>iProduct</code> / <code>iSerialNumber</code> field is 0, that string is "not provided" and the host doesn't ask. <code>usb_01</code> provides all three because <code>system_profiler</code> on macOS surfaces them in the GUI and seeing your text appear there is a satisfying first-victory milestone.</p>
+
+    <h2>Phase 4 — activate the configuration</h2>
+
+    <p>The final step is <code>SET_CONFIGURATION</code>:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>SETUP byte</th><th>Hex</th><th>Field</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="offset">0</td><td class="hex">00</td><td class="field">bmRequestType</td><td class="meaning">H2D, Standard, Device</td></tr>
+        <tr><td class="offset">1</td><td class="hex">09</td><td class="field">bRequest</td><td class="meaning">SET_CONFIGURATION</td></tr>
+        <tr><td class="offset">2-3</td><td class="hex">01 00</td><td class="field">wValue</td><td class="meaning">configuration index 1</td></tr>
+        <tr><td class="offset">4-7</td><td class="hex">00 00 00 00</td><td class="field">wIndex/wLength</td><td class="meaning">—</td></tr>
+      </tbody>
+    </table>
+
+    <p>This is the moment the device transitions from <em>addressed</em> to <em>configured</em>. Endpoints declared in the configuration become active. Class drivers on the host side begin probing them. From the device firmware's perspective, this is when you start seeing class-specific traffic on EP1, EP2, etc.</p>
+
+    <p>For the trivial <code>usb_01</code> sample, nothing class-specific happens after this — the device is simply visible in the OS's USB tree. Subsequent samples (CDC, HID, MSC, vendor) hook into this moment with their respective class drivers.</p>
+
+    <h2>The eleven standard device requests</h2>
+    <p>Enumeration uses just three: <code>GET_DESCRIPTOR</code>, <code>SET_ADDRESS</code>, <code>SET_CONFIGURATION</code>. The full set defined by USB 2.0 §9.4 is eleven, summarized here so you know what else might appear in a Wireshark capture once class drivers attach. Every device must implement these (or STALL them with a clear "I don't support that").</p>
+    <table class="byte-table">
+      <thead>
+        <tr><th>bRequest</th><th>Name</th><th>Direction</th><th>What it does</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="hex">0x00</td><td class="field">GET_STATUS</td><td class="meaning">D2H</td><td class="meaning">2-byte status of device, interface, or endpoint (e.g., halt bit, remote-wakeup bit)</td></tr>
+        <tr><td class="hex">0x01</td><td class="field">CLEAR_FEATURE</td><td class="meaning">H2D</td><td class="meaning">Clears a feature flag (typically ENDPOINT_HALT to recover from STALL, or DEVICE_REMOTE_WAKEUP)</td></tr>
+        <tr><td class="hex">0x03</td><td class="field">SET_FEATURE</td><td class="meaning">H2D</td><td class="meaning">Sets a feature flag (e.g., enable remote wakeup, force endpoint halt)</td></tr>
+        <tr><td class="hex">0x05</td><td class="field">SET_ADDRESS</td><td class="meaning">H2D</td><td class="meaning">Assigns the bus address (Phase 2)</td></tr>
+        <tr><td class="hex">0x06</td><td class="field">GET_DESCRIPTOR</td><td class="meaning">D2H</td><td class="meaning">Reads a descriptor; high byte of <code>wValue</code> = type, low byte = index</td></tr>
+        <tr><td class="hex">0x07</td><td class="field">SET_DESCRIPTOR</td><td class="meaning">H2D</td><td class="meaning">Optional; lets host overwrite a descriptor. Most devices STALL this.</td></tr>
+        <tr><td class="hex">0x08</td><td class="field">GET_CONFIGURATION</td><td class="meaning">D2H</td><td class="meaning">Returns current <code>bConfigurationValue</code> (0 = unconfigured)</td></tr>
+        <tr><td class="hex">0x09</td><td class="field">SET_CONFIGURATION</td><td class="meaning">H2D</td><td class="meaning">Activates a configuration (Phase 4); 0 deconfigures</td></tr>
+        <tr><td class="hex">0x0A</td><td class="field">GET_INTERFACE</td><td class="meaning">D2H</td><td class="meaning">Returns the active alt-setting for an interface</td></tr>
+        <tr><td class="hex">0x0B</td><td class="field">SET_INTERFACE</td><td class="meaning">H2D</td><td class="meaning">Switches an interface to a different alt-setting (covered in Ch 25)</td></tr>
+        <tr><td class="hex">0x0C</td><td class="field">SYNCH_FRAME</td><td class="meaning">D2H</td><td class="meaning">Iso-only; reports frame number for clock alignment</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Speed-dependent descriptors (HS only)</h2>
+    <p>High-speed-capable devices must additionally support two descriptors that low- and full-speed devices don't have: <code>DEVICE_QUALIFIER</code> (0x06) and <code>OTHER_SPEED_CONFIGURATION</code> (0x07). They tell the host "if I were running at the other speed, here's what I'd look like." A full-speed-only device — like edevkit1 — must <strong>STALL</strong> these requests when the host asks (USB 2.0 §9.6.2, §9.2.7). Don't return zero bytes or empty descriptors; the spec is explicit that STALL is the correct response.</p>
+
+    <h2>Request error — what STALL means at this layer</h2>
+    <p>Per §9.2.7, "Request Error" is the catch-all device response for "I don't support that request, or its parameters are invalid." The device signals it by stalling the data or status stage of the control transfer (not by NAKing the SETUP, which is forbidden — see Ch 03). Hosts treat this as a soft failure and move on. So: unknown <code>bRequest</code>? STALL the data stage. Unsupported descriptor type? STALL. Unsupported feature selector? STALL.</p>
+
+    <h2>How to capture this on your machine</h2>
+
+    <div class="build-this">
+      <h3>Build this</h3>
+      <p>Sample: <code class="sample-link">firmware/samples/usb/usb_01_hello_enum/</code> (in progress — you are about to build it).</p>
+      <p>The sample is a minimal Zephyr USB-Device-Next device that does exactly what's described in Phases 0–4 and nothing more. After flashing, plug it in, run the verification command for your OS, and confirm you see the descriptor fields above.</p>
+    </div>
+
+    <section class="verify">
+      <h2>Verify</h2>
+      <p>Once <code>usb_01</code> is flashed and plugged in, run one of these to capture the enumeration sequence and walk through it against this chapter.</p>
+      <div>
+        <div class="os-card linux">
+          <span class="os-tag">Linux</span>
+          <pre><code># enumerate
+lsusb -v -d 1209:ede7
+
+# capture the wire
+sudo modprobe usbmon
+sudo wireshark -i usbmon0 -Y 'usb.idVendor == 0x1209'
+
+# or the cli version
+sudo cat /sys/kernel/debug/usb/usbmon/0u | head -200</code></pre>
+        </div>
+        <div class="os-card mac">
+          <span class="os-tag">macOS</span>
+          <pre><code># enumerate
+system_profiler SPUSBDataType | grep -A 30 "edevkit\|usb_01"
+
+# IORegistry — full descriptor tree
+ioreg -p IOUSB -l -w 0 | grep -A 40 "edevkit"
+
+# wire capture (requires Apple Developer tools)
+# Tools → "Hardware IO Tools for Xcode" → PacketLogger</code></pre>
+        </div>
+        <div class="os-card win">
+          <span class="os-tag">Windows</span>
+          <pre><code>:: enumerate (PowerShell)
+Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like "*VID_1209*" }
+
+:: graphical descriptor view
+usbview.exe   :: from Windows SDK; navigate to your device
+
+:: wire capture
+:: install USBPcap, then run wireshark and pick the USBPcap interface</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <h2>Common pitfalls</h2>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"Device enumerates as 'Unknown Device' on Windows but works on Linux."</strong> Almost always a malformed string descriptor (missing language IDs, wrong type byte, length mismatch). Linux is forgiving; Windows is strict. Check that string index 0 returns the language-ID descriptor (<code>04 03 09 04</code>), not a UTF-16LE string.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"<code>GET_DESCRIPTOR(device)</code> works but <code>GET_DESCRIPTOR(config)</code> times out."</strong> Your <code>wTotalLength</code> field is wrong — the host asked for a longer descriptor than your firmware actually returns, so the IN endpoint never finishes. Recount: <code>wTotalLength</code> = sum of all bytes from the config descriptor through every interface and endpoint descriptor that follows.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"Device disappears immediately after <code>SET_ADDRESS</code>."</strong> Address transition timing bug. The status stage of the SET_ADDRESS transfer must be ACK'd on address 0; the move to the new address happens <em>after</em> that ACK. Most stacks get this right; if you're writing a controller driver, this is the most common bug.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"macOS doesn't show updated strings even after I rebuilt the firmware."</strong> macOS aggressively caches USB string descriptors keyed on (VID, PID, bcdDevice). Bump <code>bcdDevice</code> by 1 in your descriptor when iterating, or run <code>sudo killall -HUP USBHostBSDClient</code>.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"Linux says 'device not accepting address' followed by repeated retries."</strong> Either your device didn't ACK the SET_ADDRESS status, or it didn't switch addresses correctly. Capture with usbmon and check whether the device is still responding on address 0 (failed transition) or on the new address (host bug, less likely).</p>
+    </div>
+
+    <h2>Going deeper</h2>
+    <ul>
+      <li>USB 2.0 Specification §9 (Device Framework) — the canonical spec for enumeration. <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a>.</li>
+      <li>Linux USB-skeleton driver — <a href="https://github.com/torvalds/linux/blob/master/drivers/usb/usb-skeleton.c">drivers/usb/usb-skeleton.c</a> — host-side view of the same dance.</li>
+      <li>Microsoft's <a href="https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/usb-device-layout">USB Device Layout</a> — Windows-side enumeration peculiarities, including the language-ID descriptor strictness.</li>
+      <li>Zephyr USB-Device-Next: <a href="https://docs.zephyrproject.org/latest/services/usb/device_next/index.html">USB device support</a> — the API <code>usb_01</code> programs against.</li>
+    </ul>
+
+    <p class="part-end-note">
+      <strong>End of Part I.</strong> You've covered the why (Ch 01), the wire (Ch 02), the packets (Ch 03), the four transfer types (Ch 04), and the byte-by-byte enumeration (Ch 05). From here, Part II opens up the descriptor tree in detail, paired with the first concrete samples.
+    </p>
+
+    <nav class="chapter-nav" aria-label="Chapter navigation">
+      <a class="prev" href="04_transfer_types.html">
+        <div class="nav-label">← Previous</div>
+        <div class="nav-title">Ch 04: Transfer types</div>
+      </a>
+      <a class="next" href="../partII/06_descriptors.html">
+        <div class="nav-label">Next →</div>
+        <div class="nav-title">Ch 06: Device, configuration, interface, endpoint</div>
+      </a>
+    </nav>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

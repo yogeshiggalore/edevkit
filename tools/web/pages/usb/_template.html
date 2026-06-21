@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="{{ One-line description used by docs hub. Keep under 160 chars. }}">
+  <title>edevkit USB Book — Part X · Ch NN: {{ Chapter Title }}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Chapter template</span>
+      <span class="grow"></span>
+      <span class="last-verified">Verified · Zephyr 4.0 · 2026-05-06</span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · template</div>
+    <h1>{{ Chapter Title }}</h1>
+    <p class="lede">{{ One-sentence subtitle that frames the chapter. }}</p>
+  </header>
+
+<section class="chapter-meta" aria-label="Chapter metadata">
+      <div class="meta-row">
+        <div class="meta-label">You'll learn</div>
+        <div>
+          <ul>
+            <li>{{ outcome 1 }}</li>
+            <li>{{ outcome 2 }}</li>
+            <li>{{ outcome 3 }}</li>
+          </ul>
+        </div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Prereqs</div>
+        <div>{{ Chapters/concepts/hardware required before this one. }}</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Sample</div>
+        <div><code class="sample-link">firmware/samples/usb/usb_NN_{{ name }}/</code> · {{ status: "ships with this chapter" / "theory only" }}</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Verified</div>
+        <div>Zephyr 4.0 on rpi_pico2/rp2350a/m33 · 2026-05-06</div>
+      </div>
+    </section>
+
+    <h2>{{ Section heading }}</h2>
+    <p>{{ Plain prose. Aim for clarity over cleverness. Short paragraphs. }}</p>
+
+    <div class="callout info">
+      <div class="callout-title">Note</div>
+      <p>Use callouts sparingly. Variants: <code>callout</code>, <code>callout warn</code>, <code>callout danger</code>, <code>callout good</code>, <code>callout pitfall</code>.</p>
+    </div>
+
+    <h3>A byte-level table when descriptors come up</h3>
+    <table class="byte-table">
+      <thead>
+        <tr><th>Offset</th><th>Hex</th><th>Field</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr class="spec-section"><td colspan="4">Device descriptor</td></tr>
+        <tr><td class="offset">0x00</td><td class="hex">12</td><td class="field">bLength</td><td class="meaning">18 bytes</td></tr>
+        <tr><td class="offset">0x01</td><td class="hex">01</td><td class="field">bDescriptorType</td><td class="meaning">DEVICE</td></tr>
+      </tbody>
+    </table>
+
+    <h3>A diagram when timing or topology matters</h3>
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+  participant H as Host
+  participant D as Device
+  H->>D: SETUP (GET_DESCRIPTOR)
+  D-->>H: DATA (descriptor bytes)
+  H->>D: ACK
+      </pre>
+    </div>
+
+    <pre><code>// code excerpts must compile — no pseudocode
+int main(void) {
+    return 0;
+}
+</code></pre>
+
+    <div class="build-this">
+      <h3>Build this</h3>
+      <p>Sample: <code class="sample-link">firmware/samples/usb/usb_NN_{{ name }}/</code></p>
+      <p>{{ One paragraph: what the sample does, what to look for when it runs, what success looks like. }}</p>
+    </div>
+
+    <section class="verify">
+      <h2>Verify</h2>
+      <p>{{ One sentence framing what we are about to confirm. }}</p>
+      <div>
+        <div class="os-card linux">
+          <span class="os-tag">Linux</span>
+          <pre><code>lsusb -v -d 1209:eeee
+sudo dmesg -w | grep -i usb</code></pre>
+        </div>
+        <div class="os-card mac">
+          <span class="os-tag">macOS</span>
+          <pre><code>system_profiler SPUSBDataType | grep -A 20 edevkit
+log stream --predicate 'subsystem == "com.apple.iousbhost"'</code></pre>
+        </div>
+        <div class="os-card win">
+          <span class="os-tag">Windows</span>
+          <pre><code>usbview.exe              # GUI
+pnputil /enum-devices /connected /class USB</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <h2>Common pitfalls</h2>
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>{{ Symptom in one line. }}</strong> {{ Cause and fix. Cite the spec section if relevant. }}</p>
+    </div>
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>{{ Another symptom. }}</strong> {{ Cause and fix. }}</p>
+    </div>
+
+    <h2>Going deeper</h2>
+    <ul>
+      <li>USB 2.0 spec, §{{ section }} — <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a></li>
+      <li>{{ Zephyr API reference, RFC, blog post, etc. }}</li>
+    </ul>
+
+    <nav class="chapter-nav" aria-label="Chapter navigation">
+      <a class="prev" href="{{ ../partI/NN-1.html or placeholder }}">
+        <div class="nav-label">← Previous</div>
+        <div class="nav-title">{{ Previous chapter title }}</div>
+      </a>
+      <a class="next" href="{{ ../partI/NN+1.html }}">
+        <div class="nav-label">Next →</div>
+        <div class="nav-title">{{ Next chapter title }}</div>
+      </a>
+    </nav>
+
+  </div>
+
+  <script src="_assets/book.js" defer></script>
+</body>
+</html>

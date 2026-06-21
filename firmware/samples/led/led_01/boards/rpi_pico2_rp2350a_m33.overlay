@@ -1,0 +1,13 @@
+/ {
+    gpiocustom {
+        compatible = "gpio-keys";
+        appled0: appled_0 {
+            gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;
+            label = "app led 0";
+        };
+    };
+
+    aliases {
+        appled0 = &appled0;
+    };
+};

@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="USB string descriptors — separate from the descriptor tree, fetched by index, encoded as UTF-16LE. How LANGID at index 0 unlocks every other string, and how to derive a per-unit serial from silicon.">
+  <title>edevkit USB Book — Part II · Ch 07: String descriptors &amp; per-unit identity</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Part II · Ch 07</span>
+      <span class="grow"></span>
+      <span class="last-verified">Verified · Zephyr 4.4 · 2026-05-11</span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · part II · ch 07</div>
+    <h1>String descriptors &amp; per-unit identity</h1>
+    <p class="lede">Strings sit outside the descriptor tree, fetched by index in a separate transfer — and that gap is what makes localised product names, runtime-derived serials, and "Vendor Specific Device → human readable name" all possible.</p>
+  </header>
+
+  <section class="chapter-meta" aria-label="Chapter metadata">
+    <div class="meta-row">
+      <div class="meta-label">You'll learn</div>
+      <div>
+        <ul>
+          <li>Why strings are <em>not</em> embedded in the configuration response — and the transfers that fetch them instead.</li>
+          <li>The LANGID descriptor at index 0, and why every host refuses to read anything else until it has been served.</li>
+          <li>UTF-16LE encoding on the wire vs ASCII7 in the firmware source, and why mixing them silently corrupts non-ASCII characters.</li>
+          <li>Late-binding string indices — the iface descriptor declares "<code>iInterface = N</code>" but the bytes at index <code>N</code> are decided at boot, not compile time.</li>
+          <li>How to derive a per-unit, globally-unique serial from the silicon's chip ID with zero per-unit production work.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Prereqs</div>
+      <div>Ch 05 (enumeration) and Ch 06 (descriptor tree). You've seen the <code>i*</code> fields in §2 / §4 / §6.1 of the device, interface, and configuration descriptors and know they're "indices into something."</div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Sample</div>
+      <div><code class="sample-link">firmware/samples/usb/usb_03/</code> · <a href="/docs/firmware_sample_usb_03.html">design doc</a> — six string descriptors (LANGID, Manufacturer, Product, Serial, Interface, Configuration) with a runtime-formatted <code>EDV-XXXX-YYYY-ZZZZ</code> serial.</div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Verified</div>
+      <div>2026-05-11 · USB 2.0 spec §9.6.7, §9.6.1, §9.6.3, §9.6.5; Zephyr 4.4 USB-Device-Next.</div>
+    </div>
+  </section>
+
+  <!-- ─────────────── 1. SEPARATION ─────────────── -->
+
+  <h2>1. Strings sit outside the tree</h2>
+
+  <p>When the host fetched the configuration descriptor in Ch 06, it got 32 bytes — the configuration, the interface, and both endpoint descriptors, concatenated. Notice what it did <em>not</em> get: <strong>not a single byte of human-readable text.</strong></p>
+
+  <p>That's by design. Strings are stored separately. The device descriptor has three index fields (<code>iManufacturer</code>, <code>iProduct</code>, <code>iSerialNumber</code>); the configuration descriptor has one (<code>iConfiguration</code>); the interface descriptor has one (<code>iInterface</code>). Each is a 1-byte index into the device's string-descriptor table — fetched separately, one string at a time, with the request:</p>
+
+  <pre><code>GET_DESCRIPTOR(STRING, index, langid)</code></pre>
+
+  <p>The reasons for this separation:</p>
+
+  <ul>
+    <li><strong>Localisation.</strong> One device can ship the same product name in English, French, Japanese, etc. — the host picks the langid it wants from a list the device advertises.</li>
+    <li><strong>Variable size.</strong> Strings can be arbitrarily long. Inlining them into the configuration response would make <code>wTotalLength</code> dependent on language, complicating descriptor parsing.</li>
+    <li><strong>Lazy fetch.</strong> Hosts only read strings they need to display. A driver that only needs the class/subclass triple to bind never fetches the iProduct string at all.</li>
+  </ul>
+
+  <div class="callout info">
+    <div class="callout-title">Mental model</div>
+    <p>The descriptor tree is the <em>structural</em> blueprint — fixed-size fields, indices, types. The string table is the <em>presentation</em> layer — variable-size text, fetched on demand, optionally localised. Indices in the tree point into the table, but the table is fetched separately.</p>
+  </div>
+
+  <!-- ─────────────── 2. LANGID ─────────────── -->
+
+  <h2>2. Index 0 — the LANGID descriptor</h2>
+
+  <p>Every other string fetch requires a <code>langid</code> argument. Where does the host learn which langids the device supports? From the descriptor at <strong>index 0</strong>, which has a special format: instead of a UTF-16LE string, it's an array of 2-byte language IDs.</p>
+
+  <table class="byte-table">
+    <thead><tr><th>Offset</th><th>Hex</th><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td class="offset">0x00</td><td class="hex">04</td><td class="field">bLength</td><td class="meaning">4 — two bytes of header + one 2-byte langid. (For multi-language devices: <code>2 + 2*N</code>.)</td></tr>
+      <tr><td class="offset">0x01</td><td class="hex">03</td><td class="field">bDescriptorType</td><td class="meaning">STRING (0x03) — same type byte as every other string descriptor.</td></tr>
+      <tr><td class="offset">0x02</td><td class="hex">09 04</td><td class="field">wLANGID[0]</td><td class="meaning"><code>0x0409</code> — English (United States). LE on wire so bytes are <code>09 04</code>.</td></tr>
+    </tbody>
+  </table>
+
+  <p>USB 2.0 §9.6.7 reserves index 0 for this LANGID descriptor and requires the host to read it before reading any other string. Without LANGID at index 0, requests like <code>GET_DESCRIPTOR(STRING, 1, 0x0409)</code> have no defined behaviour — the host can't know whether the device supports the langid it's asking for.</p>
+
+  <p>For the great majority of devices, single-language English-US (<code>0x0409</code>) is plenty. Multi-language devices simply append more 2-byte langids to the array; the host picks the one matching its locale.</p>
+
+  <div class="callout warn">
+    <div class="callout-title">Skipping LANGID is the most common string-descriptor bug</div>
+    <p>If a device doesn't register a LANGID descriptor at index 0, every string fetch fails. Different hosts respond differently: Linux logs and gives up, Windows shows the device as "Unknown Device", macOS displays whatever it cached previously. The symptom is "names don't show up"; the cause is always index 0.</p>
+  </div>
+
+  <!-- ─────────────── 3. UTF-16LE ─────────────── -->
+
+  <h2>3. UTF-16LE on the wire</h2>
+
+  <p>String descriptors at indices 1+ are <strong>UTF-16LE on the wire</strong>, regardless of how they're stored in firmware. The byte layout for a string <code>"edevkit"</code> (7 ASCII chars):</p>
+
+  <table class="byte-table">
+    <thead><tr><th>Offset</th><th>Hex</th><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td class="offset">0x00</td><td class="hex">10</td><td class="field">bLength</td><td class="meaning"><code>2 + 2 × 7 = 16</code>. Header + one UTF-16 code unit per character.</td></tr>
+      <tr><td class="offset">0x01</td><td class="hex">03</td><td class="field">bDescriptorType</td><td class="meaning">STRING (0x03).</td></tr>
+      <tr><td class="offset">0x02</td><td class="hex">65 00</td><td class="field">UTF-16LE 'e'</td><td class="meaning"><code>0x0065</code> little-endian.</td></tr>
+      <tr><td class="offset">0x04</td><td class="hex">64 00</td><td class="field">UTF-16LE 'd'</td><td class="meaning"><code>0x0064</code>.</td></tr>
+      <tr><td class="offset">0x06</td><td class="hex">65 00</td><td class="field">UTF-16LE 'e'</td><td class="meaning"></td></tr>
+      <tr><td class="offset">0x08</td><td class="hex">76 00</td><td class="field">UTF-16LE 'v'</td><td class="meaning"></td></tr>
+      <tr><td class="offset">0x0A</td><td class="hex">6B 00</td><td class="field">UTF-16LE 'k'</td><td class="meaning"></td></tr>
+      <tr><td class="offset">0x0C</td><td class="hex">69 00</td><td class="field">UTF-16LE 'i'</td><td class="meaning"></td></tr>
+      <tr><td class="offset">0x0E</td><td class="hex">74 00</td><td class="field">UTF-16LE 't'</td><td class="meaning"></td></tr>
+    </tbody>
+  </table>
+
+  <p>Two consequences for firmware:</p>
+
+  <ol>
+    <li><strong>String length on the wire is <code>2 × (character count)</code>.</strong> A 32-character interface name like <code>"Vendor (descriptor demo, no I/O)"</code> takes 66 bytes on the wire (2 header + 64 UTF-16LE).</li>
+    <li><strong>Non-ASCII characters require multi-byte UTF-16LE encoding.</strong> An em-dash (U+2014) is <code>14 20</code> on the wire; a naïve "widen each byte to 2 bytes" implementation produces <code>14 00</code>, which is U+0014 (a control character), not the em-dash. Many USB stacks (Zephyr included) provide an "ascii7" path that does the naïve widening only; non-ASCII content needs pre-encoded UTF-16LE bytes.</li>
+  </ol>
+
+  <div class="callout warn">
+    <div class="callout-title">G12 — wire bytes are UTF-16LE, source is ASCII7</div>
+    <p>Zephyr's <code>USBD_DESC_PRODUCT_DEFINE("My—Product")</code> with an em-dash compiles cleanly but emits wrong bytes on the wire. Stick to printable ASCII7 (0x20–0x7E) for string literals, or hand-craft a UTF-16LE byte array and disable the ascii7 flag on the descriptor node. The G12 defense in <a href="/docs/firmware_sample_usb_03.html#defenses">usb_03 §5</a> has the implementation details.</p>
+  </div>
+
+  <!-- ─────────────── 4. INDEX ASSIGNMENT ─────────────── -->
+
+  <h2>4. Indices are runtime-assigned, not hard-coded</h2>
+
+  <p>The interface descriptor declares <code>iInterface = 4</code>. The configuration descriptor declares <code>iConfiguration = 5</code>. Where do those numbers come from?</p>
+
+  <p>They come from <strong>registration order</strong>. The stack assigns string indices in the order <code>usbd_add_descriptor()</code> is called: the first call gets index 0, the second gets index 1, and so on. So if your firmware registers strings in this order:</p>
+
+  <pre><code>1. LANGID            → idx 0  (mandatory; spec)
+2. Manufacturer      → idx 1
+3. Product           → idx 2
+4. Serial            → idx 3
+5. Interface         → idx 4   ← stored in iface.iInterface
+6. Configuration     → idx 5   ← stored in cfg_desc.iConfiguration
+</code></pre>
+
+  <p>… then the iface descriptor's <code>iInterface</code> field needs to carry <code>4</code> and the configuration's <code>iConfiguration</code> needs to carry <code>5</code>. <strong>But neither value is known at compile time</strong> — they depend on the runtime order of <code>usbd_add_descriptor</code> calls.</p>
+
+  <h3>4a. The late-binding moment</h3>
+
+  <div class="mermaid-wrap">
+    <pre class="mermaid">
+sequenceDiagram
+  participant App as main()
+  participant Core as USB core
+  participant Wire as Wire (post-enumeration)
+  Note over App: iface.iInterface = 0 at compile time
+  App->>Core: usbd_add_descriptor(&amp;lang)        idx 0
+  App->>Core: usbd_add_descriptor(&amp;mfr)         idx 1
+  App->>Core: usbd_add_descriptor(&amp;product)     idx 2
+  App->>Core: usbd_add_descriptor(&amp;serial)      idx 3
+  App->>Core: usbd_add_descriptor(&amp;iface_str)   idx 4
+  Note over App: ← Patch: iface.iInterface = usbd_str_desc_get_idx(&amp;iface_str)  // = 4
+  App->>Core: usbd_add_configuration(&amp;cfg)      stack auto-adds cfg_str → idx 5
+  App->>Core: usbd_init()                       validates the tree
+  Note over Wire: Host issues GET_DESCRIPTOR(iface)
+  Wire-->>Wire: iInterface byte = 4
+  Note over Wire: Host issues GET_DESCRIPTOR(STRING, 4, 0x0409)
+  Wire-->>Wire: "Vendor (descriptor demo, no I/O)"
+    </pre>
+  </div>
+
+  <p>The descriptor blob's <code>iInterface</code> byte is <strong>patched after registration, before <code>usbd_init</code> validates the tree.</strong> This pattern is the "late binding" of USB strings: the structural descriptor and the string it references are connected at runtime, not at compile time. Reorder the <code>usbd_add_descriptor</code> calls and the index byte changes — but if it's read from <code>usbd_str_desc_get_idx()</code> and patched into the struct, the firmware Just Works regardless of order.</p>
+
+  <div class="callout info">
+    <div class="callout-title">iConfiguration is the easier sibling</div>
+    <p>Zephyr's <code>USBD_CONFIGURATION_DEFINE(cfg, ..., &amp;cfg_str)</code> takes a pointer to the config-string descriptor as its fourth argument. <code>usbd_add_configuration()</code> registers <code>cfg_str</code> on your behalf and writes <code>iConfiguration</code> into the cfg descriptor automatically. You handle <code>iInterface</code> by hand; the stack handles <code>iConfiguration</code> for you. Don't try to register cfg_str twice — see G15 in <a href="/docs/firmware_sample_usb_03.html#defenses">usb_03 §5</a>.</p>
+  </div>
+
+  <!-- ─────────────── 5. PER-UNIT SERIAL ─────────────── -->
+
+  <h2>5. Per-unit identity — the serial number</h2>
+
+  <p>The <code>iSerialNumber</code> field exists so that two physically-identical USB devices can be distinguished on the same host. Without unique serials, your OS (especially Windows) may assign the same COM port number or mount point to whichever device plugged in first, leading to surprising behaviour when you have two boards on one machine.</p>
+
+  <h3>5a. Where unique numbers come from</h3>
+
+  <p>Three common sources, ordered by quality:</p>
+
+  <table>
+    <thead><tr><th>Source</th><th>Quality</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Silicon chip ID</td><td><strong>Best</strong></td><td>Most modern MCUs ship a 64-bit unique ID laser-fused at manufacture. RP2350 exposes this through <code>hwinfo_get_device_id()</code>. Globally unique, board-independent, zero per-unit production work.</td></tr>
+      <tr><td>External EEPROM / one-time-programmable region</td><td>Good</td><td>Requires a production step to write. Adds component cost but lets you re-flash firmware without losing identity.</td></tr>
+      <tr><td>Random at first boot, persisted to flash</td><td>Workable</td><td>Cheapest. Random number space large enough to avoid collisions in any practical population (≥ 64 bits). Requires writable flash and a persistence layer (LittleFS, raw page).</td></tr>
+    </tbody>
+  </table>
+
+  <h3>5b. The <code>EDV-XXXX-YYYY-ZZZZ</code> format</h3>
+
+  <p>The production edevkit1 firmware uses a 12-hex-character serial derived from the first 6 bytes of the RP2350 chip ID, formatted in three 4-char groups for readability:</p>
+
+  <pre><code>EDV-A1B2-C3D4-E5F6
+└┬┘ └─────┬─────┘
+"EDV"    first 6 bytes of hwinfo_get_device_id(), formatted as %02X
+prefix   per chip
+</code></pre>
+
+  <p>18 characters total, 38 bytes on the wire after UTF-16LE encoding. The "EDV" prefix is a courtesy to humans grepping for edevkit serials in logs; the host doesn't care about the format and treats the entire string as opaque.</p>
+
+  <div class="callout info">
+    <div class="callout-title">Why not all 64 bits?</div>
+    <p>USB string descriptors are limited to 256 bytes total (one byte for <code>bLength</code>). At 2 bytes per UTF-16LE character, that's ~125 characters maximum, far more than 16 hex characters would need. The 6-byte (48-bit) prefix is plenty unique to the practical population of any one product — the birthday-paradox collision probability with 1M devices and 48-bit serials is &lt; 0.002%. Twelve hex characters also fits on a printed sticker.</p>
+  </div>
+
+  <!-- ─────────────── 6. CACHING ─────────────── -->
+
+  <h2>6. Host-side caching</h2>
+
+  <p>Operating systems cache string descriptors aggressively, keyed on the tuple <code>(VID, PID, bcdDevice)</code>. The cache survives reboots; macOS in particular is famous for serving stale strings well after a device's firmware has been reflashed.</p>
+
+  <p>The intended pattern is: bump <code>bcdDevice</code> by one whenever you ship a string change. Hosts treat any tuple change as a new device, drop the cached strings, and re-fetch. During iterative development this is a one-byte change in <code>USBD_DEVICE_DEFINE</code>; in production firmware it's the device-revision field and bumps for any wire-visible change.</p>
+
+  <div class="callout warn">
+    <div class="callout-title">Symptom: rebuilt firmware, host still shows old strings</div>
+    <p>macOS, Windows, even some Linux distros cache. Increment <code>bcdDevice</code>. If you can't (because production firmware is shipping that exact value), the workarounds are <code>sudo killall -HUP USBHostBSDClient</code> on macOS, replug + driver reinstall on Windows, or <code>echo 0 &gt; /sys/bus/usb/devices/.../authorized; echo 1 &gt; ...</code> on Linux.</p>
+  </div>
+
+  <!-- ─────────────── BUILD THIS ─────────────── -->
+
+  <div class="build-this">
+    <h3>Build this</h3>
+    <p>Sample: <code class="sample-link">firmware/samples/usb/usb_03/</code> · <a href="/docs/firmware_sample_usb_03.html">design doc</a></p>
+    <p>The sample registers all six standard string descriptors (LANGID + Manufacturer + Product + Serial + Interface + Configuration), derives the serial at boot from <code>hwinfo_get_device_id()</code>, and applies the late-binding pattern from §4 to keep <code>iInterface</code> in sync with whatever index the stack assigns. After flashing, <code>lsusb -v -d 1209:ede3</code> on Linux should print human-readable text at every level of the descriptor tree — and the serial will be unique to your specific board.</p>
+  </div>
+
+  <!-- ─────────────── VERIFY ─────────────── -->
+
+  <section class="verify">
+    <h2>Verify</h2>
+    <p>Read all six strings back. Confirm the serial is unique to your board (try plugging two boards).</p>
+    <div>
+      <div class="os-card linux">
+        <span class="os-tag">Linux</span>
+        <pre><code>lsusb -v -d 1209:ede3 | grep -E 'iManufacturer|iProduct|iSerial|iConfiguration|iInterface'
+
+# Each line should show "N {text}" — N is the index, {text} is the resolved string.</code></pre>
+      </div>
+      <div class="os-card mac">
+        <span class="os-tag">macOS</span>
+        <pre><code>ioreg -p IOUSB -l -w 0 | grep -A 12 'usb_03'
+
+# Look for "USB Product Name", "USB Vendor Name", "USB Serial Number".
+# ioreg is live; system_profiler caches and may lag 10-30s behind reality.</code></pre>
+      </div>
+      <div class="os-card win">
+        <span class="os-tag">Windows</span>
+        <pre><code>:: USB Tree View (https://www.uwe-sieber.de/usbtreeview_e.html) — decoded GUI
+
+powershell -Command "Get-PnpDevice -PresentOnly | Where { $_.HardwareID -like '*VID_1209*PID_EDE3*' } | Format-List FriendlyName, InstanceId"
+:: InstanceId includes the serial number as its last segment.</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <h2>Common pitfalls</h2>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Manufacturer / Product / Serial all show as empty or '(error)'."</strong> LANGID descriptor at index 0 is missing or not registered first (§2). Every other string fetch depends on LANGID having been served. Confirm <code>USBD_DESC_LANG_DEFINE(lang_desc)</code> is the <em>first</em> <code>usbd_add_descriptor()</code> call.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"iInterface shows as 0 on the host even though I registered an interface string."</strong> The late-binding patch (§4a) didn't run, or ran after <code>usbd_init</code> (which validates the tree). Order must be: register strings → query indices → patch descriptors → call <code>usbd_init</code>.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Product string truncates mid-word on Linux but works on macOS."</strong> The string literal contains a non-ASCII character (em-dash, accented letter) and the firmware's ASCII7 widening path produced wrong UTF-16LE bytes (§3, G12). Replace with ASCII7 substitutes (<code>—</code> → <code>-</code>) or hand-encode UTF-16LE.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Two boards show the same serial."</strong> Either (a) <code>hwinfo_get_device_id()</code> returned a board-default constant — possible on emulators or unconfigured boards but rare on real RP2350 silicon, or (b) <code>snprintf</code> formatting is masking the chip-ID bytes (bug in the format string). Log the raw <code>id[0..7]</code> bytes via RTT and compare them across boards first.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"<code>lsusb -v</code> shows the strings but they disappear after replug."</strong> Almost always macOS — a cache invalidation race in <code>USBHostBSDClient</code>. Bump <code>bcdDevice</code> in firmware, replug, and the strings will stick.</p>
+  </div>
+
+  <!-- ─────────────── GOING DEEPER ─────────────── -->
+
+  <h2>Going deeper</h2>
+  <ul>
+    <li>USB 2.0 spec §9.6.7 (String) — the canonical definition of LANGID descriptor format and string retrieval. <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a>.</li>
+    <li>USB-IF Defined Class Codes — <a href="https://www.usb.org/defined-class-codes">usb.org/defined-class-codes</a> — for context on what the class triples mean.</li>
+    <li>Microsoft "USB string descriptors" — <a href="https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/usb-string-descriptors">learn.microsoft.com</a> — Windows-specific behaviour, including its strictness about LANGID at index 0.</li>
+    <li><a href="/docs/firmware_sample_usb_03.html">firmware_sample_usb_03.html</a> — implementation side; G11–G15 string-specific gotchas.</li>
+  </ul>
+
+  <nav class="chapter-nav" aria-label="Chapter navigation">
+    <a class="prev" href="06_descriptors.html">
+      <div class="nav-label">← Previous</div>
+      <div class="nav-title">Ch 06: Device, configuration, interface, endpoint</div>
+    </a>
+    <a class="next" href="08_control_transfers.html">
+      <div class="nav-label">Next →</div>
+      <div class="nav-title">Ch 08: Control transfers in depth</div>
+    </a>
+  </nav>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

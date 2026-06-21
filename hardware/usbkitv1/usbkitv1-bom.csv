@@ -1,0 +1,12 @@
+Item,Refs,Qty,Value,Package,Description,Manufacturer,MPN,LCSC,Mouser,Robu (IN),Unit Price USD,Notes
+1,U1,1,XIAO-nRF52840,Module 21x17.5mm,Seeed XIAO nRF52840 SMD module (castellated; NO headers),Seeed Studio,102010469,—,713-102010469,robu.in/?s=xiao+nrf52840,10.90,Main MCU. Buy the SMD (castellated) variant — NOT the headers-on version.
+2,U2,1,COM-09032,THT 5-DOF joystick,SparkFun thumb joystick + select button,SparkFun,COM-09032,—,474-COM-09032,robu.in/?s=COM-09032,3.50,5-direction nav (Up/Dn/L/R/Sel via 2 ADC + 1 GPIO).
+3,"SW1, SW2, SW3, SW4",4,SW_PUSH 12mm,THT 12x12x7.3mm,12mm tactile pushbutton 4-pin,TE Connectivity,FSM4JSMATR,C221912,506-FSM4JSMATR,robu.in/?s=12mm+tactile,0.30,Big arcade-style. Any 12x12 4-pin THT tactile fits (B3F-5050 also works).
+4,SW5,1,SW_PUSH 6mm,THT 6x6x4.3mm,Small reset tactile pushbutton,Omron,B3F-1000,C72443,653-B3F-1000,robu.in/?s=6mm+tactile,0.15,Reset button. Any 6x6x4 or 6x6x5 THT tactile fits.
+5,D1,1,LED Green,0805,SMD LED — green for D9 indicator,Lite-On,LTST-C170KGKT,C2297,859-LTST-C170KGKT,robu.in/?s=0805+led+green,0.04,GPIO_D9 indicator.
+6,D2,1,LED Red,0805,SMD LED — red for D10 indicator,Lite-On,LTST-C170KRKT,C2286,859-LTST-C170KRKT,robu.in/?s=0805+led+red,0.04,GPIO_D10 indicator (red — distinguishable from D1).
+7,"R1, R2, R3, R4, R5, R10",6,10 kΩ 1%,0805,SMD chip resistor 10K 1/8W,Yageo,RC0805FR-0710KL,C17414,603-RC0805FR-0710KL,robu.in/?s=10k+0805,0.02,Pull-ups on button inputs + reset.
+8,"R6, R7",2,1 kΩ 1%,0805,SMD chip resistor 1K 1/8W,Yageo,RC0805FR-071KL,C17513,603-RC0805FR-071KL,robu.in/?s=1k+0805,0.02,LED series resistors (~1.3 mA @ 3.3 V).
+9,J1,1,Header 1x3,2.54mm pitch THT,Single-row male pin header,Wurth,61300311121,C124385,710-61300311121,robu.in/?s=berg+strip,0.10,UART (TX/RX/G). Cut from 1x40 strip if cheaper.
+10,J4,1,Header 1x5,2.54mm pitch THT,Single-row male pin header,Wurth,61300511121,C124388,710-61300511121,robu.in/?s=berg+strip,0.15,SWD + expansion (3V3/G/DIO/CLK/RST).
+11,J6,1,Header 1x2,2.54mm pitch THT,Single-row male pin header,Wurth,61300211121,C124378,710-61300211121,robu.in/?s=berg+strip,0.08,LiPo BAT (+ on LEFT pad per silkscreen).

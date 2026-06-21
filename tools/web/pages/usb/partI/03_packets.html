@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="The PID byte, token/data/handshake packets, transactions, frames, microframes, and how they all fit together on the wire.">
+  <title>edevkit USB Book — Part I · Ch 03: Packets &amp; framing</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Part I · Ch 03</span>
+      <span class="grow"></span>
+      <span class="last-verified">Theory · 2026-05-06</span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · part I · ch 03</div>
+    <h1>Packets &amp; framing</h1>
+    <p class="lede">From a stream of NRZI bits to packets, transactions, and frames — the layer your firmware actually programs against.</p>
+  </header>
+
+<section class="chapter-meta" aria-label="Chapter metadata">
+      <div class="meta-row">
+        <div class="meta-label">You'll learn</div>
+        <div>
+          <ul>
+            <li>The PID byte and the four packet families it encodes.</li>
+            <li>Tokens (IN, OUT, SETUP, SOF), data packets, and handshakes (ACK, NAK, STALL, NYET).</li>
+            <li>Why a "transaction" is always a sequence of two or three packets, and how that pairs with the host-led model from Ch 01.</li>
+            <li>What the data-toggle bit (DATA0/DATA1) is for and what bug it actually prevents.</li>
+            <li>How CRC5 and CRC16 protect packets, and what to do when you see CRC errors.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Prereqs</div>
+        <div>Chapters 01 and 02. You're comfortable with "host always asks first" and have a mental picture of D+/D- as a serial link.</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Sample</div>
+        <div>None — theory only. Wireshark captures from the first sample (<code class="sample-link">usb_01</code>) will exercise everything in this chapter.</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Verified</div>
+        <div>2026-05-06 · USB 2.0 spec §8 (Protocol Layer).</div>
+      </div>
+    </section>
+
+    <h2>The packet — the smallest unit USB cares about</h2>
+    <p>Every USB transmission, from "hi I'm here" to "here are 64 bytes of CDC data", is a packet. Every packet has the same outer shape:</p>
+
+    <pre><code>┌──────┬──────┬─────────────────────────┬──────────┬─────┐
+│ SYNC │ PID  │  payload (varies)       │   CRC    │ EOP │
+└──────┴──────┴─────────────────────────┴──────────┴─────┘
+   8b      8b           0..N bytes           5b/16b
+</code></pre>
+
+    <ul>
+      <li><strong>SYNC</strong> — a fixed bit pattern (KJKJKJKK at FS, longer at HS) the receiver locks onto for clock recovery.</li>
+      <li><strong>PID</strong> — Packet Identifier, the most important byte in USB. Tells the receiver what kind of packet this is. We dissect it in a moment.</li>
+      <li><strong>Payload</strong> — empty for handshakes, addresses for tokens, actual data for DATA packets.</li>
+      <li><strong>CRC</strong> — 5 bits for tokens, 16 bits for DATA. Handshakes have no CRC.</li>
+      <li><strong>EOP</strong> — End-of-Packet. The SE0-then-J pattern from Chapter 02.</li>
+    </ul>
+
+    <p>SYNC, CRC, and EOP are handled by your USB peripheral hardware. From firmware, you see PID and payload. We focus on those.</p>
+
+    <h2>Bit/byte ordering on the wire</h2>
+    <p>One small fact that bites everyone the first time they read a USB capture: USB transmits <strong>least-significant bit first</strong> within each byte (USB 2.0 §8.1). Multi-byte fields are little-endian. CRCs are transmitted MSb-first after inversion. Your peripheral hardware and your USB analyzer both handle this for you, so byte-level firmware sees normal LE bytes; but if you ever scope D+/D- and try to decode bits by hand, the bit order is reversed from how the byte prints.</p>
+    <p>The packet payload is also <strong>bit-stuffed</strong> on the wire — after 6 consecutive 1-bits the transmitter inserts a 0, which the receiver removes. This affects only the wire timing (the packet is slightly longer than the payload would suggest); it never reaches firmware. Chapter 02 covers the encoding details.</p>
+
+    <h2>The PID byte</h2>
+    <p>The PID is 8 bits but encodes only 4 bits of information. The lower 4 bits are the type code; the upper 4 bits are the bitwise complement of the lower 4. This redundancy lets the receiver detect a corrupted PID without consulting the CRC — handy because the rest of the packet's interpretation depends on the PID.</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Bit</th><th>7</th><th>6</th><th>5</th><th>4</th><th>3</th><th>2</th><th>1</th><th>0</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">Meaning</td><td colspan="4" style="text-align:center;">~PID3..~PID0 (complement)</td><td colspan="4" style="text-align:center;">PID3..PID0 (type)</td></tr>
+      </tbody>
+    </table>
+
+    <p>The 4-bit type splits into four families along bits 1:0 of the PID nibble:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>PID nibble</th><th>Family</th><th>Member</th><th>Used for</th></tr>
+      </thead>
+      <tbody>
+        <tr class="spec-section"><td colspan="4">Tokens — host announces "what comes next"</td></tr>
+        <tr><td class="hex">0001</td><td class="field">Token</td><td class="field">OUT</td><td class="meaning">Host will send DATA to device on this endpoint.</td></tr>
+        <tr><td class="hex">1001</td><td class="field">Token</td><td class="field">IN</td><td class="meaning">Host requests DATA from device on this endpoint.</td></tr>
+        <tr><td class="hex">0101</td><td class="field">Token</td><td class="field">SOF</td><td class="meaning">Start-of-Frame; carries 11-bit frame number.</td></tr>
+        <tr><td class="hex">1101</td><td class="field">Token</td><td class="field">SETUP</td><td class="meaning">Opens a control transfer; data that follows is fixed 8-byte SETUP packet.</td></tr>
+        <tr class="spec-section"><td colspan="4">Data — payload</td></tr>
+        <tr><td class="hex">0011</td><td class="field">Data</td><td class="field">DATA0</td><td class="meaning">Even-toggle data packet.</td></tr>
+        <tr><td class="hex">1011</td><td class="field">Data</td><td class="field">DATA1</td><td class="meaning">Odd-toggle data packet.</td></tr>
+        <tr><td class="hex">0111</td><td class="field">Data</td><td class="field">DATA2</td><td class="meaning">HS isochronous high-bandwidth (3 packets/microframe).</td></tr>
+        <tr><td class="hex">1111</td><td class="field">Data</td><td class="field">MDATA</td><td class="meaning">HS isochronous "more data" packet.</td></tr>
+        <tr class="spec-section"><td colspan="4">Handshake — single-byte response</td></tr>
+        <tr><td class="hex">0010</td><td class="field">Handshake</td><td class="field">ACK</td><td class="meaning">Receiver got a valid packet.</td></tr>
+        <tr><td class="hex">1010</td><td class="field">Handshake</td><td class="field">NAK</td><td class="meaning">Device temporarily can't accept/send; ask again.</td></tr>
+        <tr><td class="hex">1110</td><td class="field">Handshake</td><td class="field">STALL</td><td class="meaning">Endpoint is in error state; needs explicit clear.</td></tr>
+        <tr><td class="hex">0110</td><td class="field">Handshake</td><td class="field">NYET</td><td class="meaning">HS only; "I got it, but don't send another yet."</td></tr>
+        <tr class="spec-section"><td colspan="4">Special — bus-level</td></tr>
+        <tr><td class="hex">1100</td><td class="field">Special</td><td class="field">PRE / ERR</td><td class="meaning">Hub preamble (LS through FS hub) / HS error.</td></tr>
+        <tr><td class="hex">1000</td><td class="field">Special</td><td class="field">SPLIT</td><td class="meaning">HS hub splitting LS/FS transactions.</td></tr>
+      </tbody>
+    </table>
+
+    <p>You'll see all of these in a Wireshark capture annotated by name. The hardware does the encode/decode; firmware-side, you mostly care about which family you're dealing with.</p>
+
+    <h2>Anatomy of each packet family</h2>
+
+    <h3>Token packets — fixed 3-byte payload</h3>
+
+    <p>After the SYNC + PID byte, a token carries 11 bits of address fields plus 5 bits of CRC:</p>
+
+    <pre><code>SYNC | PID(IN/OUT/SETUP) | ADDR (7) | ENDP (4) | CRC5 (5) | EOP
+                          └─────────11 bits──────┘
+</code></pre>
+
+    <p><code>ADDR</code> is the device address (1..127, with 0 for "newly attached"). <code>ENDP</code> is the endpoint number within that device (0..15). Together they uniquely target one buffer pair on one device. The 5-bit CRC covers ADDR + ENDP.</p>
+
+    <p>SOF tokens replace ADDR+ENDP with an 11-bit frame number that increments each frame. The frame number rolls over at 2048. Devices that care (audio class, mostly) use it to align their buffers.</p>
+
+    <h3>Data packets — variable payload</h3>
+
+    <pre><code>SYNC | PID(DATA0/1/2/M) | data (0..N bytes) | CRC16 | EOP
+</code></pre>
+
+    <p>Payload size is bounded by the endpoint's wMaxPacketSize (8/16/32/64 for FS, up to 512 for HS bulk, 1024 for HS iso). The CRC16 covers the data bytes only.</p>
+
+    <p>The DATA0/DATA1 toggle is the part most worth understanding because it explains a real failure mode. When the host sends OUT data to a device:</p>
+    <ol>
+      <li>Host sends OUT token, then DATA0 with payload.</li>
+      <li>Device buffers it, replies ACK.</li>
+      <li>Host sees ACK, flips its toggle to DATA1 for the next packet.</li>
+      <li>Device sees DATA1, accepts it (its expected toggle is also DATA1 now), replies ACK.</li>
+    </ol>
+
+    <p>If the ACK is corrupted in transit, the host doesn't know whether the device accepted the data. So the host re-sends the same DATA0 packet. The device sees DATA0 when it was expecting DATA1 — it knows this is a duplicate, drops it, and ACKs again. Without the toggle, the device would deliver duplicate bytes upward whenever an ACK got lost.</p>
+
+    <div class="callout info">
+      <div class="callout-title">When toggles bite</div>
+      <p>If your firmware ever drops out of sync with the host on the toggle bit (e.g., an endpoint reset that doesn't reset the toggle), the host and device disagree on what's a duplicate. Symptoms: every other packet appears lost. The fix is the standard control request <code>CLEAR_FEATURE(ENDPOINT_HALT)</code>, which both clears any STALL and resets the toggle to DATA0. We meet this in Chapter 08.</p>
+    </div>
+
+    <h3>Handshake packets — PID-only</h3>
+    <p>A handshake is just a SYNC + PID + EOP — no payload, no CRC.</p>
+
+    <pre><code>SYNC | PID(ACK/NAK/STALL/NYET) | EOP
+</code></pre>
+
+    <p>Three of the four are routine:</p>
+    <ul>
+      <li><strong>ACK</strong> — the receiver got a valid CRC-passing packet. Issued by host on OUT, by device on IN. Either side may issue it.</li>
+      <li><strong>NAK</strong> — issued by device only. "I can't accept/send right now, ask again." The host treats this as not-an-error and reschedules.</li>
+      <li><strong>STALL</strong> — issued by device. "This endpoint is in error state; I won't transfer until you clear me." The host stops scheduling that endpoint. Recovery: <code>CLEAR_FEATURE(ENDPOINT_HALT)</code> on endpoint 0. Control endpoint 0 stalling is special — it's "I don't support that request" and self-clears with the next SETUP packet.</li>
+      <li><strong>NYET</strong> — HS only. PING/NYET protocol lets a host pre-poll to avoid wasting bandwidth on a NAK.</li>
+    </ul>
+
+    <p><strong>PING scope.</strong> The ping protocol applies only to <strong>HS bulk and control endpoints during the data and status stages</strong> — never during the SETUP stage of a control transfer. The host pings the device with a special PING token; the device replies ACK ("ready") or NAK ("not yet"). Knowing this scope prevents misreading captures where SETUP transactions appear to skip the ping (USB 2.0 §8.5.1).</p>
+
+    <h2>Transactions — packets in pairs and triples</h2>
+
+    <p>A USB <em>transaction</em> is the smallest meaningful host-device exchange. There are three transaction shapes, one for each direction:</p>
+
+    <h3>OUT transaction (host → device)</h3>
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+  participant H as Host
+  participant D as Device
+  H->>D: OUT token (addr=N, ep=2)
+  H->>D: DATA0/1 (payload, CRC16)
+  alt receiver OK
+    D-->>H: ACK
+  else device buffer full
+    D-->>H: NAK
+  else endpoint halted
+    D-->>H: STALL
+  end
+      </pre>
+    </div>
+
+    <h3>IN transaction (device → host)</h3>
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+  participant H as Host
+  participant D as Device
+  H->>D: IN token (addr=N, ep=3)
+  alt device has data
+    D-->>H: DATA0/1 (payload, CRC16)
+    H->>D: ACK
+  else device empty
+    D-->>H: NAK
+  else endpoint halted
+    D-->>H: STALL
+  end
+      </pre>
+    </div>
+
+    <h3>SETUP transaction (the only one that's special)</h3>
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+  participant H as Host
+  participant D as Device
+  H->>D: SETUP token (addr=N, ep=0)
+  H->>D: DATA0 (8-byte SETUP packet, CRC16)
+  D-->>H: ACK (mandatory — devices may NOT NAK or STALL a SETUP)
+      </pre>
+    </div>
+
+    <p>That last sequence diagram contains the single most important rule in USB protocol design: <strong>a device must always ACK a SETUP packet</strong>. It cannot NAK (would let a confused device wedge enumeration) or STALL (would prevent the host from clearing the stall via control endpoint 0). The device may then NAK or STALL <em>subsequent</em> data/status stages of the control transfer, but the SETUP itself must always land.</p>
+
+    <p>One exception worth knowing: if the SETUP token itself is corrupted (PID-check fails or CRC fails), the device sends <strong>no response at all</strong> — neither ACK nor STALL. The host sees the timeout and retries (USB 2.0 §8.4.6.4 / §8.7). The "always-ACK" rule applies only to <em>well-formed</em> SETUP packets that the device successfully decoded.</p>
+
+    <p>The 8-byte SETUP packet inside that DATA0 is the structure that drives every standard USB request:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Offset</th><th>Field</th><th>Size</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="offset">0</td><td class="field">bmRequestType</td><td class="hex">1</td><td class="meaning">Direction (bit 7), type (bits 6:5: standard/class/vendor), recipient (bits 4:0)</td></tr>
+        <tr><td class="offset">1</td><td class="field">bRequest</td><td class="hex">1</td><td class="meaning">Request code (e.g. GET_DESCRIPTOR = 0x06)</td></tr>
+        <tr><td class="offset">2</td><td class="field">wValue</td><td class="hex">2</td><td class="meaning">Request-specific (e.g. descriptor type + index)</td></tr>
+        <tr><td class="offset">4</td><td class="field">wIndex</td><td class="hex">2</td><td class="meaning">Request-specific (e.g. interface or endpoint number)</td></tr>
+        <tr><td class="offset">6</td><td class="field">wLength</td><td class="hex">2</td><td class="meaning">Bytes to transfer in the data stage (may be 0)</td></tr>
+      </tbody>
+    </table>
+
+    <p>We unpack this in detail in Chapter 08, then put it through its paces in Chapter 05's enumeration walkthrough.</p>
+
+    <h2>Frames and microframes</h2>
+
+    <p>Tokens, data, and handshakes are all individual packets. <strong>Frames</strong> group them on a 1 ms (FS) or 125 µs (HS microframe) cadence. The host emits an SOF token at the start of every frame, then schedules transactions in priority order (control + iso first, interrupt next, bulk last).</p>
+
+    <pre><code>┌────────────── 1 ms (FS frame) ──────────────────────────────┐
+│ SOF │ ctrl xact │ iso xact │ int xact │ bulk xact │ idle  ...│
+└─────┴───────────┴──────────┴──────────┴───────────┴──────────┘
+                                                  ↑
+                                           SOF (next frame)
+</code></pre>
+
+    <p>Two consequences for firmware:</p>
+    <ul>
+      <li>Your interrupt endpoint with <code>bInterval = 4</code> means "poll me at most every 4 frames" — your data has up to a 4 ms freshness window.</li>
+      <li>Bulk transfers fight for leftover bandwidth. On a quiet bus, a bulk OUT packet may be delivered within microseconds of the host's queue. On a busy bus, it can wait many frames.</li>
+    </ul>
+
+    <p>Microframes (HS only) divide each 1 ms frame into 8 slices of 125 µs. A high-speed interrupt endpoint can be polled up to once per microframe; high-speed isochronous can pack three packets per microframe (the DATA2/MDATA PIDs are part of that mechanism).</p>
+
+    <h2>What the wire actually looks like — a tiny enumeration trace</h2>
+
+    <p>Skipping forward briefly to motivate Chapter 05: here is the first millisecond of an enumeration, packet by packet. Don't worry about the byte values yet — focus on the shape.</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>#</th><th>Direction</th><th>PID</th><th>Payload</th><th>Annotation</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="offset">1</td><td>—</td><td class="field">SE0 ≥ 10 ms</td><td>—</td><td class="meaning">Bus reset</td></tr>
+        <tr><td class="offset">2</td><td>H→D</td><td class="field">SETUP</td><td class="hex">addr=0 ep=0</td><td class="meaning">Open control xfer</td></tr>
+        <tr><td class="offset">3</td><td>H→D</td><td class="field">DATA0</td><td class="hex">80 06 00 01 00 00 40 00</td><td class="meaning">GET_DESCRIPTOR(device, 64)</td></tr>
+        <tr><td class="offset">4</td><td>D→H</td><td class="field">ACK</td><td>—</td><td class="meaning">Device accepts SETUP</td></tr>
+        <tr><td class="offset">5</td><td>H→D</td><td class="field">IN</td><td class="hex">addr=0 ep=0</td><td class="meaning">Host asks for data</td></tr>
+        <tr><td class="offset">6</td><td>D→H</td><td class="field">DATA1</td><td class="hex">12 01 00 02 00 00 00 40 ...</td><td class="meaning">First 8 bytes of device descriptor</td></tr>
+        <tr><td class="offset">7</td><td>H→D</td><td class="field">ACK</td><td>—</td><td class="meaning">Host got it</td></tr>
+        <tr><td class="offset">8</td><td>H→D</td><td class="field">OUT</td><td class="hex">addr=0 ep=0</td><td class="meaning">Status stage starts</td></tr>
+        <tr><td class="offset">9</td><td>H→D</td><td class="field">DATA1</td><td class="hex">(zero-length)</td><td class="meaning">Status stage</td></tr>
+        <tr><td class="offset">10</td><td>D→H</td><td class="field">ACK</td><td>—</td><td class="meaning">Done</td></tr>
+      </tbody>
+    </table>
+
+    <p>That's a single control transfer (read 8 bytes of device descriptor). Notice every packet conforms to one of the three transaction shapes from earlier. There's nothing else on the wire.</p>
+
+    <h2>Bus turn-around timing</h2>
+    <p>Every transaction has a bounded "turn-around" window — the time the receiver gets to respond before the sender treats the transaction as failed. USB 2.0 §7.1.18 / §8.7.2 set the limits:</p>
+    <ul>
+      <li><strong>Full-speed</strong> bus turn-around must complete within <strong>~7.5 bit-times</strong> after the EOP of the previous packet; the receiver may take longer to <em>start</em> driving but the response must finish within the host's timeout.</li>
+      <li><strong>High-speed</strong> turn-around is much tighter, ~736 ns from EOP to the start of the response.</li>
+    </ul>
+    <p>Practically: if your firmware can't have the IN-endpoint buffer ready by the time the host's IN token arrives, the right answer is to NAK promptly — not to delay the bus. Slow ACKs/responses past the turn-around window are treated as failed transactions and trigger the 3-retry recovery from Chapter 01.</p>
+
+    <h2>CRCs — what they protect, what they don't</h2>
+    <p>Two CRCs at the protocol layer:</p>
+    <ul>
+      <li><strong>CRC5</strong> on tokens — covers the 11 bits of ADDR/ENDP (or frame number for SOF). Polynomial 0x05 = x⁵ + x² + 1. A failing CRC5 means the host's address field corrupted; the device must drop the packet silently. The host will retry up to 3 times.</li>
+      <li><strong>CRC16</strong> on DATA payloads — covers the data bytes only (not PID). Polynomial 0x8005 = x¹⁶ + x¹⁵ + x² + 1. A failing CRC16 means the receiver does not ACK; the sender retransmits.</li>
+    </ul>
+
+    <p>The protocol layer does not prevent <em>logical</em> errors — wrong descriptor, wrong endpoint, wrong wLength. Those are the application's problem, surfaced through the standard request layer (Chapter 08).</p>
+
+    <h2>Common pitfalls</h2>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"Wireshark shows lots of NAKs and I think the device is broken."</strong> NAK is correct behavior whenever a device hasn't filled its IN buffer or can't accept an OUT yet. Look at the rate over time, not the presence. Sustained 100% NAK on an endpoint that <em>should</em> have data means your firmware isn't writing to that endpoint's buffer.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"Every other bulk transfer disappears."</strong> Data toggle is desynced. After certain endpoint resets, software may forget to re-zero the toggle. Check your USB stack's reset path; in Zephyr USB-Device-Next, this is normally handled but custom class drivers can break it.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"Endpoint stalled and I can't recover."</strong> Stalls on endpoint 0 are self-clearing on the next SETUP. Stalls on other endpoints need an explicit <code>CLEAR_FEATURE(ENDPOINT_HALT)</code> from the host. If your device is stuck STALL'ing endpoint 0 specifically, the bug is in the SETUP handler — log every SETUP packet that arrives.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"My firmware sees a SETUP it didn't expect to handle and the host hangs."</strong> Devices must <em>always</em> ACK SETUP. If you can't service the request (unsupported descriptor, e.g.), you stall the data stage by writing a STALL response on endpoint 0's IN/OUT — not by dropping the SETUP. The next SETUP will clear the stall automatically.</p>
+    </div>
+
+    <h2>Going deeper</h2>
+    <ul>
+      <li>USB 2.0 Specification §8 (Protocol Layer) — the canonical chapter on packets and transactions. <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a>.</li>
+      <li>USB 2.0 Specification §11.17 (Hub Split Transactions) — for understanding PRE / SPLIT PIDs when LS/FS devices live behind an HS hub.</li>
+      <li><a href="https://github.com/torvalds/linux/blob/master/Documentation/usb/usbmon.rst">Linux usbmon</a> — captures packets at this layer; pair with Wireshark to inspect a real bus.</li>
+    </ul>
+
+    <nav class="chapter-nav" aria-label="Chapter navigation">
+      <a class="prev" href="02_electrical.html">
+        <div class="nav-label">← Previous</div>
+        <div class="nav-title">Ch 02: Electrical &amp; USB-C</div>
+      </a>
+      <a class="next" href="04_transfer_types.html">
+        <div class="nav-label">Next →</div>
+        <div class="nav-title">Ch 04: Transfer types</div>
+      </a>
+    </nav>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

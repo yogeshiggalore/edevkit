@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Zephyr USB-Device-Next API reference for edevkit — class implementation pattern, the actual struct/macro signatures from Zephyr 4.x, and the gotchas we hit bringing up usb_01.">
+  <title>edevkit — Firmware · Zephyr USB-Device-Next reference</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<style>
+  /* ── tokens — aligned to the docs hub design system ─────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+
+    --bg:          oklch(99.2% 0.003 240);
+    --bg-soft:     oklch(97% 0.005 240);
+    --bg-elev:     oklch(100% 0 0);
+    --line:        oklch(91% 0.012 240);
+    --line-soft:   oklch(94.5% 0.008 240);
+    --line-strong: oklch(85% 0.014 240);
+    --grid-dot:    oklch(0% 0 0 / .055);
+    --code-bg:     oklch(96.5% 0.007 240);
+    --code-border: oklch(91% 0.012 240);
+
+    --fg:    oklch(20% 0.02 240);
+    --fg-2:  oklch(36% 0.02 240);
+    --muted: oklch(50% 0.02 240);
+    --faint: oklch(64% 0.015 240);
+
+    --r-2: 6px; --r-3: 10px; --r-pill: 999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur:  200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+      --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+      --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+      --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+      --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+      --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+      --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+      --bg-elev: oklch(20% 0.018 240);
+      --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+      --line-strong: oklch(35% 0.022 240);
+      --grid-dot: oklch(100% 0 0 / .05);
+      --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+      --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+      --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+    --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+    --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+    --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+    --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+    --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+    --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+    --bg-elev: oklch(20% 0.018 240);
+    --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+    --line-strong: oklch(35% 0.022 240);
+    --grid-dot: oklch(100% 0 0 / .05);
+    --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+    --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+    --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+  }
+
+  /* ── reset / base ────────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-text); font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg); min-height: 100dvh;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px; background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar ──────────────────────────────────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto; padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none; font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600; color: var(--fg-2);
+    padding: 6px 10px; border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .doc-tag {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--faint); padding: 4px 10px;
+    border-radius: var(--r-pill); background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .grow { flex: 1; }
+
+  /* ── content wrap + hero ─────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px; margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted);
+    padding: 5px 11px; background: var(--bg-soft);
+    border: 1px solid var(--line); border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+  header.hero h1 {
+    font-family: var(--font-sans);
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  header.hero .lede {
+    font-size: 17px; color: var(--fg-2); line-height: 1.6;
+    margin: 0; max-width: 70ch;
+  }
+
+  /* ── typography ──────────────────────────────────────────────────────── */
+  h2 {
+    font-family: var(--font-sans); font-size: 26px;
+    margin-top: 56px; margin-bottom: 14px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-family: var(--font-sans); font-size: 19px;
+    margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  strong { font-weight: 600; }
+
+  /* ── code ────────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  :not(pre) > code {
+    background: var(--code-bg); padding: 1px 6px;
+    border-radius: 4px; font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--code-border);
+    border-radius: var(--r-3); padding: 14px 16px;
+    overflow-x: auto; font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ────────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0; padding: 14px 18px; border-radius: var(--r-3);
+    background: var(--bg-soft); border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.info    { background: var(--brand-soft);  border-left-color: var(--brand); }
+  .callout.warn    { background: var(--warn-soft);   border-left-color: var(--warn); }
+  .callout.good    { background: var(--good-soft);   border-left-color: var(--good); }
+  .callout.danger  { background: var(--danger-soft); border-left-color: var(--danger); }
+  .callout.pitfall { background: var(--accent-soft); border-left-color: var(--accent); }
+  .callout-title {
+    display: inline-block; font-family: var(--font-mono);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700; color: var(--muted); margin-bottom: 4px;
+  }
+  .callout.info    .callout-title { color: var(--brand); }
+  .callout.good    .callout-title { color: var(--good); }
+  .callout.warn    .callout-title { color: oklch(45% 0.18 80); }
+  .callout.danger  .callout-title { color: var(--danger); }
+  .callout.pitfall .callout-title { color: oklch(45% 0.16 70); }
+
+  /* ── tables ──────────────────────────────────────────────────────────── */
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 18px 0; font-size: 14px;
+    background: var(--bg-elev); border: 1px solid var(--line);
+    border-radius: var(--r-3); overflow: hidden;
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 8px 12px; text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  thead th {
+    background: var(--bg-soft); font-family: var(--font-sans);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  table.api-table .name { font-family: var(--font-mono); color: var(--brand); white-space: nowrap; }
+  table.api-table .sig  { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg); }
+  table.api-table .note { color: var(--fg-2); }
+
+  .ok    { color: var(--good); font-weight: 600; }
+  .warn-text { color: oklch(48% 0.18 80); font-weight: 600; }
+  .err   { color: var(--danger); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" title="Back to docs hub">
+      <span aria-hidden="true">←</span> edevkit
+    </a>
+    <span class="doc-tag">Firmware · Zephyr USBD</span>
+    <span class="grow"></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · firmware · zephyr usb-device-next</div>
+  <h1>Zephyr USB-Device-Next reference</h1>
+  <p class="lede">The new (post-3.x) Zephyr USB device stack — how it's structured, how to bring up a class, and the seven things that bit us during <code>usb_01_hello_enum</code>. Written for new contributors who'll write samples 02 onward.</p>
+</header>
+
+<h2>Pick the right stack</h2>
+<p>Zephyr ships two USB device stacks side-by-side. They use different macro families and different headers, and turning the wrong one on gives confusing build errors.</p>
+
+<table>
+  <thead><tr><th>Stack</th><th>Kconfig</th><th>Macro family</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td><strong>USB-Device-Next</strong></td><td><code>CONFIG_USB_DEVICE_STACK_NEXT=y</code></td><td><code>USBD_*</code> (e.g. <code>USBD_DEVICE_DEFINE</code>)</td><td class="ok">Use this — actively maintained</td></tr>
+    <tr><td>Legacy USB-Device</td><td><code>CONFIG_USB_DEVICE_STACK=y</code></td><td><code>usb_*</code> (e.g. <code>usb_dc_*</code>, <code>usb_register_*</code>)</td><td class="warn-text">Frozen; will be removed</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <div class="callout-title">Single most common build error</div>
+  <p>If <code>USBD_*</code> macros are undefined when you compile, the next-stack Kconfig isn't set. Check <code>prj.conf</code> for <code>CONFIG_USB_DEVICE_STACK_NEXT=y</code> first, before anything else.</p>
+</div>
+
+<h2>Three-layer architecture</h2>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ Application                              src/main.c          │
+│  - Builds a usbd_context (VID/PID/strings/configs/classes)   │
+│  - Calls usbd_init() then usbd_enable()                      │
+├─────────────────────────────────────────────────────────────┤
+│ usbd core           subsys/usb/device_next/                 │
+│  - Manages enumeration state machine                         │
+│  - Dispatches standard requests to class drivers             │
+│  - Exposes the USBD_*_DEFINE macro family                    │
+├─────────────────────────────────────────────────────────────┤
+│ udc driver          drivers/usb/udc/udc_&lt;soc&gt;.c              │
+│  - Per-SoC: one driver per USB peripheral                    │
+│  - rpi_pico2/rp2350: udc_rpi_pico.c                          │
+│  - Bound automatically via devicetree (compatible string)    │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+
+<p>You only write at the top layer. The core is generic. The bottom layer is bound by devicetree — you don't touch USB controller registers.</p>
+
+<h2>Boot sequence in <code>main()</code></h2>
+<p>Every USB-Device-Next sample's <code>main()</code> follows this order. Skipping any step, or running them out of order, breaks enumeration.</p>
+
+<pre><code>1. usbd_add_descriptor(&amp;ctx, &amp;lang)              // language IDs (index 0)
+2. usbd_add_descriptor(&amp;ctx, &amp;mfr)               // iManufacturer (index 1)
+3. usbd_add_descriptor(&amp;ctx, &amp;product)           // iProduct       (index 2)
+4. usbd_add_descriptor(&amp;ctx, &amp;serial)            // iSerialNumber  (index 3)
+5. usbd_add_configuration(&amp;ctx, USBD_SPEED_FS, &amp;cfg)
+6. usbd_register_class(&amp;ctx, "class_name", USBD_SPEED_FS, 1)  // 1 = config index
+7. usbd_init(&amp;ctx)        // freezes descriptor tree, computes wTotalLength
+8. usbd_enable(&amp;ctx)      // connects the D+ pull-up — host can now see us
+9. k_sleep(K_FOREVER)      // stack runs in its own work queue
+</code></pre>
+
+<div class="callout">
+  <div class="callout-title">Order matters</div>
+  <p>Configurations must exist before classes can attach to them. Classes must exist before <code>usbd_init</code> validates the tree. <code>usbd_init</code> must succeed before <code>usbd_enable</code> connects the pull-up.</p>
+</div>
+
+<h2>Implementing a class</h2>
+<p>A class is three things in one C file:</p>
+
+<ol>
+  <li><strong>Descriptor blob</strong> — packed C struct(s) for the interface(s) and endpoints.</li>
+  <li><strong>NULL-terminated array of descriptor pointers</strong> — what <code>get_desc</code> returns.</li>
+  <li><strong>Vtable + <code>USBD_DEFINE_CLASS</code></strong> — registers the class instance with the core.</li>
+</ol>
+
+<p>The <em>minimum</em> vtable for a vendor class with no functional behavior:</p>
+
+<pre><code>static int  hello_enum_init   (struct usbd_class_data *const c);  // -&gt; 0
+static void hello_enum_enable (struct usbd_class_data *const c);  // log
+static void hello_enum_disable(struct usbd_class_data *const c);  // log
+static void *hello_enum_get_desc(struct usbd_class_data *const c,
+                                 const enum usbd_speed speed);    // returns array
+
+static const struct usbd_class_api hello_enum_api = {
+    .init     = hello_enum_init,
+    .enable   = hello_enum_enable,
+    .disable  = hello_enum_disable,
+    .get_desc = hello_enum_get_desc,
+    /* feature_halt, update, control_to_dev, control_to_host,
+       request, suspended, resumed, sof, shutdown — all NULL */
+};
+
+USBD_DEFINE_CLASS(hello_enum, &amp;hello_enum_api, NULL, NULL);
+</code></pre>
+
+<p>The fourth argument to <code>USBD_DEFINE_CLASS</code> is the optional <code>v_reqs</code> (vendor request handler). Passing <code>NULL</code> is fine when you have no vendor-specific control requests.</p>
+
+<h2>The <code>usbd_class_api</code> vtable — actual signatures</h2>
+<p>Pulled directly from <code>$ZEPHYR_BASE/include/zephyr/usb/usbd.h</code>. <strong>These are the spellings; do not guess.</strong></p>
+
+<table class="api-table">
+  <thead><tr><th>Field</th><th>Signature</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="name">init</td><td class="sig">int (struct usbd_class_data *)</td><td class="note">Class init at <code>usbd_init</code> time. Return 0 on success.</td></tr>
+    <tr><td class="name">shutdown</td><td class="sig">void (struct usbd_class_data *)</td><td class="note">Symmetric cleanup.</td></tr>
+    <tr><td class="name">enable</td><td class="sig">void (struct usbd_class_data *)</td><td class="note">Fired on <code>SET_CONFIGURATION(n≥1)</code>. The "I'm now operational" hook.</td></tr>
+    <tr><td class="name">disable</td><td class="sig">void (struct usbd_class_data *)</td><td class="note">Fired on <code>SET_CONFIGURATION(0)</code> or unplug.</td></tr>
+    <tr><td class="name">control_to_dev</td><td class="sig">int (c, setup, const net_buf *buf)</td><td class="note">Class-specific OUT setup. Return <code>-ENOTSUP</code> for requests you don't handle.</td></tr>
+    <tr><td class="name">control_to_host</td><td class="sig">int (c, setup, net_buf *buf)</td><td class="note">Class-specific IN setup.</td></tr>
+    <tr><td class="name">request</td><td class="sig">int (c, net_buf *buf, int err)</td><td class="note">Endpoint transfer completion. Only fires for non-EP0 endpoints.</td></tr>
+    <tr><td class="name">feature_halt</td><td class="sig">void (c, uint8_t ep, bool halted)</td><td class="note">Endpoint halt-feature update notification.</td></tr>
+    <tr><td class="name">update</td><td class="sig">void (c, uint8_t iface, uint8_t alt)</td><td class="note">Fired on <code>SET_INTERFACE</code> alt-setting change.</td></tr>
+    <tr><td class="name">suspended</td><td class="sig">void (struct usbd_class_data *)</td><td class="note">Bus suspend (3 ms idle). Drop power if you can.</td></tr>
+    <tr><td class="name">resumed</td><td class="sig">void (struct usbd_class_data *)</td><td class="note">Bus resume.</td></tr>
+    <tr><td class="name">sof</td><td class="sig">void (struct usbd_class_data *)</td><td class="note">Start-of-frame; only fires if you set this. Leave NULL unless you specifically need per-frame ticks.</td></tr>
+    <tr><td class="name">get_desc</td><td class="sig">void * (c, enum usbd_speed)</td><td class="note"><strong>Must return a NULL-terminated array of <code>struct usb_desc_header *</code>, NOT a single pointer.</strong> See gotcha #4.</td></tr>
+  </tbody>
+</table>
+
+<div class="callout info">
+  <div class="callout-title">NULL is fine</div>
+  <p>Optional callbacks left as <code>NULL</code> in the vtable initializer are handled by the core. You only need to populate the ones your class actually uses. For a vendor class with zero data endpoints, that's typically just <code>init</code>, <code>enable</code>, <code>disable</code>, and <code>get_desc</code>.</p>
+</div>
+
+<h2>Where to find truth in the tree</h2>
+<p>Always cross-check against the actual headers in your version. Recall is not authoritative.</p>
+
+<pre><code># the public API
+$ZEPHYR_BASE/include/zephyr/usb/usbd.h
+
+# chapter-9 standard descriptor structs and constants
+$ZEPHYR_BASE/include/zephyr/usb/usb_ch9.h
+
+# existing class implementations to copy patterns from
+$ZEPHYR_BASE/subsys/usb/device_next/class/usbd_dfu.c       # small, runtime-mode has 0 data endpoints
+$ZEPHYR_BASE/subsys/usb/device_next/class/usbd_cdc_acm.c   # composite IAD example
+$ZEPHYR_BASE/subsys/usb/device_next/class/usbd_hid.c       # HID-class pattern</code></pre>
+
+<p>One-line greps you'll use often:</p>
+
+<pre><code># Find the real signature of any usbd_* function
+sed -n '/^struct usbd_class_api/,/^};/p' $ZEPHYR_BASE/include/zephyr/usb/usbd.h
+
+# Confirm a macro's argument count before calling it
+grep -nE "^#define\s+USBD_DESC_" $ZEPHYR_BASE/include/zephyr/usb/usbd.h
+
+# Find the right UDC node label for your board
+grep -i "compatible.*pico-usbd\|usbd:" \
+  $ZEPHYR_BASE/boards/raspberrypi/rpi_pico2/*.dts</code></pre>
+
+<h2>The seven gotchas (catalogue)</h2>
+<p>Bugs we hit during <code>usb_01</code> bring-up, in order of frequency. Read these before writing your next sample.</p>
+
+<h3>1. <code>USBD_DESC_SERIAL_NUMBER_DEFINE</code> takes ONE argument</h3>
+<p>Not <code>(name, "string")</code>. The serial is auto-generated from the chip's hardware ID via <code>hwinfo_get_device_id()</code>. Just <code>USBD_DESC_SERIAL_NUMBER_DEFINE(serial);</code> — done.</p>
+
+<h3>2. Devicetree node label must match the board's <code>.dts</code></h3>
+<p>Build error: <code>'__device_dts_ord_DT_N_NODELABEL_xxx_ORD' undeclared</code>. The fix is to grep the board file for the actual USB controller node label and use it in both <code>app.overlay</code> (<code>&amp;label { status = "okay"; };</code>) and <code>main.c</code> (<code>DT_NODELABEL(label)</code>).</p>
+
+<h3>3. Most callbacks return <code>void</code>, not <code>int</code></h3>
+<p>The compiler error is <code>incompatible pointer types</code>. Reference the table above; <code>void</code> for all lifecycle/notification callbacks (enable/disable/feature_halt/update/suspended/resumed/sof/shutdown), <code>int</code> only for <code>init</code>, <code>request</code>, <code>control_to_*</code>.</p>
+
+<h3>4. <code>get_desc</code> returns a NULL-terminated <em>array</em> of pointers</h3>
+<p>Symptom: <code>BUS FAULT, BFAR=0xffffff00</code> at boot, in <code>init_configuration_inst</code>. Root cause: the core walks the returned value as <code>struct usb_desc_header **</code>, dereferencing each pointer until it finds <code>NULL</code>. Returning <code>(void *)&amp;your_iface</code> makes it interpret the descriptor's bytes as pointers — chaos. The fix:</p>
+
+<pre><code>static struct usb_desc_header *fs_desc[] = {
+    (struct usb_desc_header *) &amp;your_iface,
+    NULL,    /* terminator */
+};
+
+static void *get_desc(c, speed) {
+    if (speed == USBD_SPEED_FS) return fs_desc;
+    return NULL;
+}</code></pre>
+
+<h3>5. Don't <code>const</code> interface descriptors</h3>
+<p>Zephyr writes <code>bInterfaceNumber</code> at init time. If you mark the descriptor <code>const</code> and the linker places it in flash, the write either silently fails or hard-faults. Leave them mutable:</p>
+
+<pre><code>static struct usb_if_descriptor my_iface = {  /* no const */
+    ...
+};</code></pre>
+
+<h3>6. Class name string mismatch is a silent failure</h3>
+<p><code>USBD_DEFINE_CLASS(hello_enum, ...)</code> creates a registration keyed on <code>"hello_enum"</code>. <code>usbd_register_class(&amp;ctx, "hello_enum", ...)</code> must use the identical string. Any typo → <code>-ENOENT</code> at registration, no enumeration. Defend with a single <code>#define</code>:</p>
+
+<pre><code>#define HELLO_ENUM_NAME "hello_enum"
+USBD_DEFINE_CLASS(hello_enum, ...);
+...
+usbd_register_class(&amp;ctx, HELLO_ENUM_NAME, ...);</code></pre>
+
+<h3>7. Returning <code>0</code> for unsupported requests hangs the host</h3>
+<p>If your <code>control_to_host</code> or <code>control_to_dev</code> returns <code>0</code> for a request you didn't handle, the core thinks you supplied a response and the host waits forever for data. Always return <code>-ENOTSUP</code> for class-specific requests you don't implement — the core then STALLs the request, which is correct per USB 2.0 §9.2.7.</p>
+
+<h2>Optional: byte-perfect device descriptor for Book Ch 05</h2>
+<p>Zephyr USB-Device-Next sets the device-class triple to <code>0xEF/0x02/0x01</code> (IAD) by default, even on single-interface devices. Spec-canonical "see interface descriptors" is <code>0x00/0x00/0x00</code>. To match Book Ch 05's worked example exactly, override after <code>usbd_init</code>:</p>
+
+<pre><code>err = usbd_init(&amp;ctx);
+if (err) goto fail;
+
+usbd_device_set_code_triple(&amp;ctx, USBD_SPEED_FS, 0x00, 0x00, 0x00);
+
+err = usbd_enable(&amp;ctx);
+</code></pre>
+
+<p>Functionally identical (every host accepts both). Cosmetic only.</p>
+
+<h2>Going deeper</h2>
+<ul>
+  <li><a href="/docs/usb_book.html">USB Book</a> — Part I covers the protocol-side foundations these classes build on. Ch 05 walks enumeration byte-by-byte against <code>usb_01_hello_enum</code>.</li>
+  <li><a href="https://docs.zephyrproject.org/latest/services/usb/device_next/index.html" target="_blank" rel="noopener">Zephyr USB-Device-Next docs ↗</a> — official API reference; verify against <em>your</em> Zephyr version since the API has shifted across releases.</li>
+  <li><a href="/docs/firmware_workflow.html">Firmware workflow</a> — the <code>edev_*</code> shell helpers, RTT setup, coredump analysis.</li>
+  <li>USB 2.0 specification — <code>documents/usb_20.pdf</code>. §9 Device Framework defines the standard requests every class must answer correctly.</li>
+</ul>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="The EP0 control-transfer state machine — 8-byte Setup packets, three transfer shapes (3-stage IN, 3-stage OUT, 2-stage), STALL recovery, and how custom vendor requests carry app-level commands.">
+  <title>edevkit USB Book — Part II · Ch 08: Control transfers in depth</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Part II · Ch 08</span>
+      <span class="grow"></span>
+      <span class="last-verified">Verified · Zephyr 4.4 · 2026-05-11</span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · part II · ch 08</div>
+    <h1>Control transfers in depth</h1>
+    <p class="lede">EP0 is the only endpoint that's always open in both directions, always there from the moment a device is reset, and always parsed with the same 8-byte Setup format. Every other USB transfer is data; control transfers are <em>conversation</em>.</p>
+  </header>
+
+  <section class="chapter-meta" aria-label="Chapter metadata">
+    <div class="meta-row">
+      <div class="meta-label">You'll learn</div>
+      <div>
+        <ul>
+          <li>The 8-byte Setup packet — every bit position, every field, every meaning.</li>
+          <li>The three control-transfer shapes (3-stage IN, 3-stage OUT, 2-stage no-data) and why the STATUS stage always flips direction.</li>
+          <li>STALL on EP0 — what it means, when it happens, and why it auto-clears without intervention.</li>
+          <li>Standard vs class-specific vs vendor-specific requests — and which level of the firmware handles each.</li>
+          <li>Why you can pack up to 4 bytes of payload into the Setup packet itself and skip the DATA stage entirely.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Prereqs</div>
+      <div>Chapter 04 (transfer types) introduced control transfers; Chapter 05 (enumeration) showed them in use. This chapter zooms in on the wire-level details.</div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Sample</div>
+      <div><code class="sample-link">firmware/samples/usb/usb_04/</code> · <a href="/docs/firmware_sample_usb_04.html">design doc</a> — four vendor requests on EP0 that exercise every shape this chapter describes, with a pyusb verification script that drives them from the host.</div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Verified</div>
+      <div>2026-05-11 · USB 2.0 spec §5.5, §8.5.3, §9.3, §9.4; Zephyr 4.4 USB-Device-Next.</div>
+    </div>
+  </section>
+
+  <!-- ─────────────── 1. WHAT EP0 IS ─────────────── -->
+
+  <h2>1. What EP0 is, and what makes it special</h2>
+
+  <p>Every USB device has at least one endpoint: <strong>endpoint 0</strong>. EP0 is reserved by the spec for control transfers and is never enumerated in the descriptor tree — it's implicitly there from reset. Two properties make EP0 unique:</p>
+
+  <ul>
+    <li><strong>Bidirectional in one identity.</strong> Other endpoints have a direction bit in their address (<code>0x01</code> is OUT, <code>0x81</code> is IN — these are <em>two</em> endpoints sharing a number). EP0 has no direction bit; the host decides direction per-transfer via the Setup packet.</li>
+    <li><strong>Always available, even before configuration.</strong> Bulk / interrupt / isochronous endpoints come alive only after <code>SET_CONFIGURATION</code>. EP0 is alive from the bus reset onward — that's how the host can issue <code>GET_DESCRIPTOR</code> before knowing the device's address or class.</li>
+  </ul>
+
+  <p>The trade-off: EP0 is slow. <code>bMaxPacketSize0</code> is 8/16/32/64 (Full-Speed) and there's no concept of streaming — every transfer is bounded by the SETUP/STATUS framing. Control transfers are for <em>configuration and command</em>, not bulk data.</p>
+
+  <!-- ─────────────── 2. SETUP PACKET ─────────────── -->
+
+  <h2>2. The 8-byte Setup packet</h2>
+
+  <p>Every control transfer begins with a SETUP token followed by an 8-byte DATA0 packet on EP0 OUT. The 8 bytes have a fixed layout (USB 2.0 §9.3, Table 9-2):</p>
+
+  <table class="byte-table">
+    <thead><tr><th>Offset</th><th>Size</th><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td class="offset">0</td><td class="hex">1</td><td class="field">bmRequestType</td><td class="meaning">3 bit-fields packed: direction, type, recipient. See §2a.</td></tr>
+      <tr><td class="offset">1</td><td class="hex">1</td><td class="field">bRequest</td><td class="meaning">The request code itself. Standard, class, or vendor-defined depending on the type field in <code>bmRequestType</code>.</td></tr>
+      <tr><td class="offset">2</td><td class="hex">2</td><td class="field">wValue</td><td class="meaning">Request-specific 16-bit value, little-endian. For <code>GET_DESCRIPTOR</code> it's <code>(type &lt;&lt; 8) | index</code>; for <code>SET_CONFIGURATION</code> it's the config value; for a vendor request, whatever you defined.</td></tr>
+      <tr><td class="offset">4</td><td class="hex">2</td><td class="field">wIndex</td><td class="meaning">Request-specific 16-bit value, LE. For an INTERFACE-recipient request, this is the interface number; for ENDPOINT-recipient, the endpoint address; for DEVICE-recipient, often a langid (e.g., for <code>GET_DESCRIPTOR(STRING)</code>) or zero.</td></tr>
+      <tr><td class="offset">6</td><td class="hex">2</td><td class="field">wLength</td><td class="meaning">Number of bytes the host expects to transfer in the DATA stage, LE. <strong>0 means "no DATA stage"</strong> — the transfer is 2-stage.</td></tr>
+    </tbody>
+  </table>
+
+  <p>That's the entire wire-level shape of a control request. Every standard request, every class request, every vendor request: same 8 bytes, different field values.</p>
+
+  <h3>2a. <code>bmRequestType</code> bit layout</h3>
+
+  <pre><code>bit:    7        6 5      4 3 2 1 0
+        ─        ─ ─      ───────────
+       direction type     recipient
+
+direction: 0 = host → device (OUT)    1 = device → host (IN)
+type:      0 = standard               1 = class
+           2 = vendor                 3 = reserved
+recipient: 0 = device                 1 = interface
+           2 = endpoint               3 = other
+</code></pre>
+
+  <p>Common values you'll see in the wild:</p>
+
+  <table>
+    <thead><tr><th>Hex</th><th>Direction</th><th>Type</th><th>Recipient</th><th>Typical use</th></tr></thead>
+    <tbody>
+      <tr><td class="hex">0x80</td><td>IN</td><td>Standard</td><td>Device</td><td><code>GET_DESCRIPTOR</code>, <code>GET_STATUS(device)</code></td></tr>
+      <tr><td class="hex">0x00</td><td>OUT</td><td>Standard</td><td>Device</td><td><code>SET_ADDRESS</code>, <code>SET_CONFIGURATION</code></td></tr>
+      <tr><td class="hex">0x81</td><td>IN</td><td>Standard</td><td>Interface</td><td><code>GET_INTERFACE</code></td></tr>
+      <tr><td class="hex">0xA1</td><td>IN</td><td>Class</td><td>Interface</td><td>HID <code>GET_REPORT</code>, CDC <code>GET_LINE_CODING</code></td></tr>
+      <tr><td class="hex">0x21</td><td>OUT</td><td>Class</td><td>Interface</td><td>HID <code>SET_REPORT</code>, CDC <code>SET_LINE_CODING</code></td></tr>
+      <tr><td class="hex">0xC1</td><td>IN</td><td>Vendor</td><td>Interface</td><td>usb_04 <code>GET_UPTIME</code></td></tr>
+      <tr><td class="hex">0x41</td><td>OUT</td><td>Vendor</td><td>Interface</td><td>usb_04 <code>SET_LOG_MSG</code> / <code>SET_LED_BLINK</code></td></tr>
+    </tbody>
+  </table>
+
+  <!-- ─────────────── 3. THE THREE SHAPES ─────────────── -->
+
+  <h2>3. The three transfer shapes</h2>
+
+  <p>After the SETUP packet, the rest of the transfer is determined entirely by two values: <code>direction</code> (bit 7 of <code>bmRequestType</code>) and <code>wLength</code>. They combine into exactly three shapes:</p>
+
+  <h3>3a. 3-stage host-IN (wLength &gt; 0, direction = 1)</h3>
+
+  <div class="mermaid-wrap">
+    <pre class="mermaid">
+sequenceDiagram
+  participant H as Host
+  participant D as Device
+
+  H->>D: SETUP (8 bytes)
+  Note over D: parse bRequest, prepare response
+  D-->>H: DATA in (1..N packets, total ≤ wLength)
+  H->>D: STATUS out (ZLP)
+  Note over H,D: Transfer complete — host received data, device knows it landed
+    </pre>
+  </div>
+
+  <p>Used for <code>GET_DESCRIPTOR</code>, <code>GET_STATUS</code>, <code>GET_CONFIGURATION</code>, and any vendor / class request that returns data. The device fills the DATA stage with up to <code>wLength</code> bytes; STATUS is a zero-length OUT from the host saying "I got it."</p>
+
+  <h3>3b. 3-stage host-OUT (wLength &gt; 0, direction = 0)</h3>
+
+  <div class="mermaid-wrap">
+    <pre class="mermaid">
+sequenceDiagram
+  participant H as Host
+  participant D as Device
+
+  H->>D: SETUP (8 bytes)
+  H->>D: DATA out (1..N packets, total = wLength)
+  Note over D: process the payload
+  D-->>H: STATUS in (ZLP)
+  Note over H,D: Transfer complete — device received data, host knows it landed
+    </pre>
+  </div>
+
+  <p>Used for <code>SET_DESCRIPTOR</code> (rare), class-specific bulk-of-data setters (CDC <code>SET_LINE_CODING</code>), and any vendor request that ships a payload. The host sends <code>wLength</code> bytes after SETUP; STATUS is a zero-length IN from the device saying "consumed."</p>
+
+  <h3>3c. 2-stage no-data (wLength = 0)</h3>
+
+  <div class="mermaid-wrap">
+    <pre class="mermaid">
+sequenceDiagram
+  participant H as Host
+  participant D as Device
+
+  H->>D: SETUP (8 bytes; payload in wValue/wIndex)
+  D-->>H: STATUS in (ZLP)
+  Note over H,D: Transfer complete — payload was small enough to fit in Setup
+    </pre>
+  </div>
+
+  <p>Used for <code>SET_ADDRESS</code>, <code>SET_CONFIGURATION</code>, <code>CLEAR_FEATURE</code>, <code>SET_FEATURE</code>, and any request whose payload fits in the 4 bytes (<code>wValue</code> + <code>wIndex</code>) of the Setup packet itself. STATUS is always a zero-length IN — even though "direction" was OUT, status flips direction because there's no DATA the device needs to ACK in reverse.</p>
+
+  <div class="callout info">
+    <div class="callout-title">Why STATUS always flips direction</div>
+    <p>The STATUS stage exists so the recipient of the DATA stage can signal "done." In a 3-stage IN transfer, the host receives DATA, so the host sends the STATUS ZLP. In a 3-stage OUT, the device receives DATA, so the device sends STATUS. In a 2-stage transfer, there's no DATA; STATUS is always an IN ZLP regardless. This isn't arbitrary; it's USB 2.0 §8.5.3, and it's the rule that lets the host and device synchronise on transfer completion without an explicit length-acknowledged field.</p>
+  </div>
+
+  <!-- ─────────────── 4. wLength SEMANTICS ─────────────── -->
+
+  <h2>4. <code>wLength</code> is the host's upper bound, not the actual size</h2>
+
+  <p>For 3-stage IN transfers, <code>wLength</code> is an <strong>upper bound</strong> on what the host is willing to accept — not a contract that the device <em>must</em> return exactly that many bytes. Two cases:</p>
+
+  <ul>
+    <li><strong>Device has fewer bytes</strong> than <code>wLength</code> requested: device returns what it has; if the response length is less than <code>wLength</code> AND is an exact multiple of <code>bMaxPacketSize0</code>, the device appends a ZLP (zero-length packet) so the host knows the transfer is done. Otherwise, the short packet itself signals end-of-transfer.</li>
+    <li><strong>Device has more bytes</strong> than <code>wLength</code> requested: device returns exactly <code>wLength</code>, no more. The host explicitly bounded the transfer; truncation is the host's intent.</li>
+  </ul>
+
+  <p>For 3-stage OUT transfers, <code>wLength</code> is what the host <em>declared</em> it will send — but it can short-packet the DATA stage early, terminating before <code>wLength</code> bytes are sent. The device's handler should always trust the actual received-byte count (the <code>buf-&gt;len</code> field in Zephyr) over <code>setup-&gt;wLength</code>.</p>
+
+  <div class="callout warn">
+    <div class="callout-title">G17 / G18 from usb_04</div>
+    <p>The "use buf-&gt;len, not setup-&gt;wLength" rule is one of the three new gotchas introduced in <a href="/docs/firmware_sample_usb_04.html#defenses">usb_04 §5</a>. Both directions have the same problem — trusting the host's declared length over what actually arrived on the wire opens you up to reading uninitialised memory or padding garbage onto the wire.</p>
+  </div>
+
+  <!-- ─────────────── 5. STALL ─────────────── -->
+
+  <h2>5. STALL — the third response (after ACK and NAK)</h2>
+
+  <p>A device has three ways to respond to a Setup packet:</p>
+
+  <table>
+    <thead><tr><th>Response</th><th>Meaning</th><th>Host behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>ACK</td><td>"Got it; will handle."</td><td>Proceeds to DATA / STATUS stage.</td></tr>
+      <tr><td>NAK</td><td>"Got it but busy; retry."</td><td>Resends the SETUP after a short delay.</td></tr>
+      <tr><td>STALL</td><td>"Cannot handle this request."</td><td>Aborts the transfer; control pipe is "halted."</td></tr>
+    </tbody>
+  </table>
+
+  <p>STALL is the wire-level error signal. Common causes:</p>
+
+  <ul>
+    <li>Unknown <code>bRequest</code> (device's vendor-class handler doesn't recognise the request code).</li>
+    <li><code>wValue</code> / <code>wIndex</code> out of range (e.g., <code>GET_DESCRIPTOR(STRING, 99, ...)</code> when only 6 strings exist).</li>
+    <li>Request type mismatch (e.g., a CLASS-recipient request to a device that's pure vendor).</li>
+    <li>Deliberate — <code>usb_04</code>'s <code>STALL_ME</code> request returns <code>-ENOTSUP</code> from the class callback specifically to demonstrate STALL handling.</li>
+  </ul>
+
+  <h3>5a. EP0 STALL auto-clears</h3>
+
+  <p>This is the most important property of EP0 STALL, per USB 2.0 §8.5.3.4:</p>
+
+  <div class="callout good">
+    <div class="callout-title">EP0 STALL auto-clears on the next SETUP</div>
+    <p>Unlike STALLs on bulk or interrupt endpoints (which require an explicit <code>CLEAR_FEATURE(ENDPOINT_HALT)</code> from the host to recover), EP0 STALLs clear automatically the moment the next SETUP token arrives. The host doesn't have to do anything special — it just issues its next request and the device responds normally.</p>
+    <p>This is why STALL on EP0 is <em>cheap</em>. Returning STALL for an unrecognised vendor request is the correct behaviour; the host gets an error from its <code>libusb_control_transfer()</code> call, but the pipe is healthy for the next request.</p>
+  </div>
+
+  <h3>5b. How Zephyr signals STALL from a class callback</h3>
+
+  <p>The class API has two control callbacks: <code>control_to_host</code> (for IN requests) and <code>control_to_dev</code> (for OUT requests). Both return <code>int</code>. The convention is:</p>
+
+  <table>
+    <thead><tr><th>Return</th><th>Meaning</th><th>Wire</th></tr></thead>
+    <tbody>
+      <tr><td><code>0</code></td><td>Handled successfully.</td><td>Core completes the transfer with ACK/data.</td></tr>
+      <tr><td><code>-ENOTSUP</code></td><td>Not mine.</td><td>Core sends STALL on EP0. Auto-clears on next SETUP.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Returning <code>0</code> for a request you didn't actually handle (e.g., your switch statement's default case) is silently wrong: the core ACKs the transfer, the host moves on thinking everything succeeded, and the bytes the host expected never arrive. Always return <code>-ENOTSUP</code> for the cases you don't handle.</p>
+
+  <!-- ─────────────── 6. THREE REQUEST FAMILIES ─────────────── -->
+
+  <h2>6. Three families of control requests</h2>
+
+  <p>The <code>type</code> bits of <code>bmRequestType</code> (bits 5–6) split control requests into three families. Each is handled at a different level of the firmware:</p>
+
+  <table>
+    <thead><tr><th>Family</th><th>Type bits</th><th>Defined by</th><th>Handled by</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>Standard</td><td>00</td><td>USB 2.0 §9.4</td><td>USB core, transparently</td><td><code>GET_DESCRIPTOR</code>, <code>SET_CONFIGURATION</code></td></tr>
+      <tr><td>Class</td><td>01</td><td>Class spec (HID, CDC, MSC, …)</td><td>The class driver (if device declares that class)</td><td>HID <code>GET_REPORT</code>, CDC <code>SET_LINE_CODING</code></td></tr>
+      <tr><td>Vendor</td><td>10</td><td>You</td><td>Your <code>control_to_*</code> callbacks</td><td>usb_04 <code>GET_UPTIME</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>The 11 standard requests (USB 2.0 Table 9-3) are handled by the Zephyr core without your involvement — that's how every prior usb_* sample worked even though no callbacks were defined. Class requests fire only if you declared a recognised class in <code>bInterfaceClass</code>; usb_02/03/04 use <code>0xFF</code> (vendor specific), so class requests never reach the device. Vendor requests are the open territory — you define both the request codes and the response logic.</p>
+
+  <h3>6a. Routing — who gets which request</h3>
+
+  <p>Within Zephyr's class API, control requests are routed by <strong>recipient</strong> (bits 0–4 of <code>bmRequestType</code>), not by type:</p>
+
+  <table>
+    <thead><tr><th>Recipient</th><th>wIndex carries</th><th>Routes to</th></tr></thead>
+    <tbody>
+      <tr><td>DEVICE (0)</td><td>0, or langid for some standard requests</td><td>Per-bRequest device vreq table (if registered); else device-level vendor handler.</td></tr>
+      <tr><td>INTERFACE (1)</td><td>Interface number</td><td>Class owning that interface, via <code>control_to_*</code>.</td></tr>
+      <tr><td>ENDPOINT (2)</td><td>Endpoint address</td><td>Class owning that endpoint, via <code>control_to_*</code>.</td></tr>
+      <tr><td>OTHER (3)</td><td>Implementation-defined</td><td>Rare; mostly hub class.</td></tr>
+    </tbody>
+  </table>
+
+  <p>This is why a vendor class that declares its requests as <code>recipient = INTERFACE</code> needs to <strong>filter on <code>RequestType.type</code> inside its callback</strong>: the core delivered the request because the recipient matched, not because the type matched. Standard or class requests with the same recipient would land in the same handler. <a href="/docs/firmware_sample_usb_04.html#defenses">G16 in usb_04 §5</a> shows the one-line guard:</p>
+
+  <pre><code>if (setup->RequestType.type != USB_REQTYPE_TYPE_VENDOR) {
+    return -ENOTSUP;
+}</code></pre>
+
+  <p>That kicks the request back to the core, which routes it to standard-request handling or returns STALL — exactly what we want.</p>
+
+  <!-- ─────────────── BUILD THIS ─────────────── -->
+
+  <div class="build-this">
+    <h3>Build this</h3>
+    <p>Sample: <code class="sample-link">firmware/samples/usb/usb_04/</code> · <a href="/docs/firmware_sample_usb_04.html">design doc</a></p>
+    <p>The sample implements four vendor requests — one of each shape — and ships with a 60-line pyusb script (<code>verify.py</code>) that drives them from the host. Run the script and watch the RTT log: one matching log line per request. Capture with usbmon / USBPcap to see the raw 8 URBs (4 Setup + 4 completions) on the wire and confirm each Setup packet's bytes match §2's table.</p>
+  </div>
+
+  <!-- ─────────────── VERIFY ─────────────── -->
+
+  <section class="verify">
+    <h2>Verify</h2>
+    <p>Drive all four request shapes from the host and capture the wire-level Setup packets.</p>
+    <div>
+      <div class="os-card linux">
+        <span class="os-tag">Linux</span>
+        <pre><code># Install pyusb, set udev rule (see usb_04 design doc §12a), then:
+python firmware/samples/usb/usb_04/verify.py
+
+# Capture wire bytes:
+sudo modprobe usbmon
+sudo wireshark -i usbmon3 -k -Y 'usb.dst == "host" or usb.src == "host"'</code></pre>
+      </div>
+      <div class="os-card mac">
+        <span class="os-tag">macOS</span>
+        <pre><code># No special perms needed:
+pip install pyusb
+python firmware/samples/usb/usb_04/verify.py
+
+# Capture (XHC tap):
+sudo wireshark -i XHC20 -k</code></pre>
+      </div>
+      <div class="os-card win">
+        <span class="os-tag">Windows</span>
+        <pre><code>:: Install WinUSB via Zadig (against PID 0xede4)
+pip install pyusb libusb
+python firmware\samples\usb\usb_04\verify.py
+
+:: Capture: USBPcap → Wireshark</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <h2>Common pitfalls</h2>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"My vendor request times out with no handler ever firing."</strong> Recipient mismatch: host used <code>CTRL_RECIPIENT_DEVICE</code> but device routes only <code>INTERFACE</code>, or <code>wIndex</code> doesn't match the interface number. The core silently drops requests that don't match any registered handler. Add a <code>LOG_INF</code> at handler entry to confirm dispatch; if it never fires, the routing's wrong.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"<code>libusb_control_transfer()</code> returns success but my callback never ran."</strong> Almost certainly a <code>GET_STATUS</code> or other standard interface-recipient request that fell through to the core's default standard-request handler. The core handled it without your callback. If you intended your vendor handler to fire, check the <code>bmRequestType.type</code> bits — you probably sent <code>0x81</code> (standard) instead of <code>0xC1</code> (vendor).</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"After STALL, subsequent requests also fail."</strong> Shouldn't happen on EP0 — STALL auto-clears on next SETUP (§5a, USB 2.0 §8.5.3.4). If it persists, suspect (a) the host stack got confused (replug to reset), or (b) the request handler crashed (check RTT for fault output).</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"3-stage IN request returns N bytes, host expected M and got short."</strong> Working as designed — <code>wLength</code> is an upper bound (§4). If the host needs exactly M bytes, the device must produce M bytes; the core won't pad on your behalf.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"3-stage OUT handler reads garbage past the intended payload."</strong> Using <code>setup-&gt;wLength</code> instead of <code>buf-&gt;len</code> as the byte count (§4, G18). Host short-packeted; only <code>buf-&gt;len</code> bytes are valid; reading further is uninitialised memory.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"2-stage request expects 2 bytes of data in DATA stage."</strong> <code>wLength &gt; 0</code> makes a request 3-stage automatically. To use a 2-stage transfer with payload in the Setup packet, set <code>wLength = 0</code> and pack the data into <code>wValue</code> (16 bits) or <code>wValue + wIndex</code> (32 bits). No DATA stage will occur.</p>
+  </div>
+
+  <!-- ─────────────── GOING DEEPER ─────────────── -->
+
+  <h2>Going deeper</h2>
+  <ul>
+    <li>USB 2.0 spec §5.5 (Control Transfers overview), §8.5.3 (transaction protocol), §8.5.3.4 (STALL handshake), §9.3 (Setup packet), §9.4 (standard requests). <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a>.</li>
+    <li><a href="/docs/firmware_sample_usb_04.html">firmware_sample_usb_04.html</a> — implementation side: the four-vendor-requests sample plus G16/G17/G18.</li>
+    <li>Linux source: <code>drivers/usb/core/message.c</code> — the host-side <code>usb_control_msg()</code> entry point.</li>
+    <li>pyusb docs — <a href="https://pyusb.github.io/pyusb/tutorial.html#dealing-with-multiple-identical-devices">pyusb.github.io</a> — the host-side library used by the sample's <code>verify.py</code>.</li>
+    <li><a href="/docs/firmware_zephyr_usbd.html">Zephyr USB-Device-Next reference</a> — the eight structural gotchas (now including G16–G18 from this chapter's sample) that bite anyone writing class drivers.</li>
+  </ul>
+
+  <p class="part-end-note">
+    <strong>End of Part II's core trio.</strong> You've seen the descriptor tree (Ch 06), the string table that hangs off it (Ch 07), and the EP0 conversation that drives the whole show (Ch 08). Part II finishes with Ch 09 (BOS, MS OS 2.0 — the modern way to expose driverless behaviour to Windows), then Part III opens the door to Zephyr's USB-Device-Next internals.
+  </p>
+
+  <nav class="chapter-nav" aria-label="Chapter navigation">
+    <a class="prev" href="07_strings.html">
+      <div class="nav-label">← Previous</div>
+      <div class="nav-title">Ch 07: String descriptors &amp; per-unit identity</div>
+    </a>
+    <a class="next" href="../partIV/15_cdc_acm.html">
+      <div class="nav-label">Next →</div>
+      <div class="nav-title">Ch 15: CDC ACM — your first real I/O</div>
+    </a>
+  </nav>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

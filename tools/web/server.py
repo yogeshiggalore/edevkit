@@ -10,9 +10,11 @@ edevkit2, …) keep their version-specific naming inside their own docs only.
 
 Run from this directory:
 
-    python server.py                 # auto-reload, http://127.0.0.1:8765
-    uvicorn server:app --reload      # equivalent
+    python server.py                 # auto-reload, http://127.0.0.1:8765, opens browser
+    uvicorn server:app --reload      # equivalent (no browser auto-open)
     uvicorn server:app --host 0.0.0.0 --port 8000   # bind to LAN
+
+Set EDEVKIT_NO_BROWSER=1 to suppress browser auto-open (e.g. headless / SSH).
 """
 
 from __future__ import annotations
@@ -245,15 +247,20 @@ async def index(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/docs/{filename}")
-async def serve_doc(filename: str):
-    # Prevent path traversal — only flat filenames inside `pages/` are allowed.
-    if "/" in filename or "\\" in filename or ".." in filename or filename.startswith("."):
-        raise HTTPException(status_code=400, detail="bad filename")
-    path = PAGES_DIR / filename
-    if not path.is_file():
+@app.get("/docs/{path:path}")
+async def serve_doc(path: str):
+    # Allow nested paths (e.g. usb/partI/01_why_usb.html, usb/_assets/book.css)
+    # but defend against traversal: resolve and assert it stays under PAGES_DIR.
+    if "\\" in path or path.startswith("/") or path.startswith("."):
+        raise HTTPException(status_code=400, detail="bad path")
+    target = (PAGES_DIR / path).resolve()
+    try:
+        target.relative_to(PAGES_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="path escapes pages root")
+    if not target.is_file():
         raise HTTPException(status_code=404, detail="doc not found")
-    return FileResponse(path)
+    return FileResponse(target)
 
 
 @app.get("/api/docs")
@@ -307,31 +314,47 @@ async def not_found(request: Request, _exc):
 # Entrypoint                                                                   #
 # --------------------------------------------------------------------------- #
 
+def _open_browser_when_ready(host: str, port: int, *, timeout: float = 10.0) -> None:
+    """Wait for the server port to accept a connection, then open the user's
+    default browser at the docs hub. Runs in a background thread so it doesn't
+    block uvicorn startup. Silently gives up after `timeout` seconds.
+
+    Lives in the parent (supervisor) process when uvicorn runs with reload=True,
+    so it only fires once per `python server.py` invocation — not on every
+    file-save reload.
+    """
+    import socket
+    import time
+    import webbrowser
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                webbrowser.open_new_tab(f"http://{host}:{port}/")
+                return
+        except OSError:
+            time.sleep(0.15)
+
+
 if __name__ == "__main__":
     import os
     import threading
-    import webbrowser
-
     import uvicorn
 
-    HOST = "127.0.0.1"
-    PORT = 8765
-    URL  = f"http://{HOST}:{PORT}/"
+    HOST, PORT = "127.0.0.1", 8765
+    URL = f"http://{HOST}:{PORT}/"
 
-    def _open_browser() -> None:
-        # Suppressed by EDEVKIT_NO_BROWSER=1 (CI, headless, repeated reloads).
-        # Also suppressed in uvicorn's reload child process — it re-imports
-        # this module under the name "server", not "__main__", so the
-        # whole block is naturally skipped on reload.
-        if os.environ.get("EDEVKIT_NO_BROWSER"):
-            return
-        try:
-            webbrowser.open(URL)
-        except Exception:
-            pass  # opening the browser is a nicety, never fatal
-
-    # Give uvicorn ~1 s to bind the socket before the browser tries to load.
-    threading.Timer(1.0, _open_browser).start()
+    # Auto-open the docs hub in the user's browser on first start. Suppressed
+    # by EDEVKIT_NO_BROWSER=1 (headless / SSH / CI use). The supervisor process
+    # runs this block exactly once; uvicorn's reload child inherits the parent's
+    # behaviour but never re-runs __main__, so reloads don't re-open.
+    if os.environ.get("EDEVKIT_NO_BROWSER", "").strip() not in ("1", "true", "yes"):
+        threading.Thread(
+            target=_open_browser_when_ready,
+            args=(HOST, PORT),
+            daemon=True,
+        ).start()
 
     print(f"\n  edevkit docs hub serving at {URL}\n  (set EDEVKIT_NO_BROWSER=1 to skip auto-open)\n")
 

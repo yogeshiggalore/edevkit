@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="CDC ACM — the USB Communications Device Class · Abstract Control Model. Wire-level theory: IAD, the two-interface composite, CDC functional descriptors, class-specific control requests, SerialState notifications, the bulk pair, ZLP rules, the duplex model that maps full-duplex UART onto a half-duplex USB wire, the Full-Speed bandwidth budget with a per-baud-rate payload table, and how Linux / macOS / Windows auto-load a driver against it.">
+  <title>edevkit USB Book — Part IV · Ch 15: CDC ACM</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Part IV · Ch 15</span>
+      <span class="grow"></span>
+      <span class="last-verified">Verified · Zephyr 4.4 · 2026-05-14</span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · part IV · ch 15</div>
+    <h1>CDC ACM — your first real I/O</h1>
+    <p class="lede">Up to this point the device has only existed as a static descriptor tree (Ch 06–07) and a request-response talker on EP0 (Ch 08). CDC ACM is where USB finally <em>moves bytes</em>. It is also the first <strong>standard</strong> class we touch — the host doesn't need any custom driver, any <code>.inf</code>, any Zadig dance: it sees the device, looks up the class triple, loads <code>cdc_acm</code> / <code>AppleUSBCDCACMData</code> / <code>usbser.sys</code>, and presents the device to userspace as <code>/dev/ttyACMx</code>, <code>/dev/cu.usbmodemXXXX</code>, or <code>COMx</code>. From the firmware side it looks like a UART. From the host side it looks like a serial port. From the wire side it's a six-descriptor, two-interface, four-endpoint composite. This chapter is about that gap.</p>
+  </header>
+
+  <section class="chapter-meta" aria-label="Chapter metadata">
+    <div class="meta-row">
+      <div class="meta-label">You'll learn</div>
+      <div>
+        <ul>
+          <li>Why CDC has to be a <em>composite</em> class — and why every CDC ACM device begins with an Interface Association Descriptor (IAD).</li>
+          <li>The five CDC <strong>functional descriptors</strong> that sit between the control interface and its endpoint — Header, Call Management, ACM, Union — and what each one tells the host.</li>
+          <li>The four class-specific control requests that ride EP0: <code>SET_LINE_CODING</code>, <code>GET_LINE_CODING</code>, <code>SET_CONTROL_LINE_STATE</code>, <code>SEND_BREAK</code> — when they fire, what their byte layouts look like, and which ones a virtual serial port can safely ignore.</li>
+          <li>Why baud rate, parity, and stop bits are <em>fiction</em> on a CDC ACM device (and what to do anyway).</li>
+          <li>The interrupt-IN endpoint that nobody uses — <code>SerialState</code> notifications — and what they're <em>for</em> when somebody finally needs them.</li>
+          <li>The bulk pair that does the actual work, plus the ZLP rule that determines whether your transfers terminate cleanly.</li>
+          <li>Why CDC ACM is "full-duplex over a half-duplex wire" — three layers, three duplex states — and how the bulk pair plus the host scheduler rebuild the duplex abstraction the application sees.</li>
+          <li>The Full-Speed bandwidth budget: ~18 bulk transactions per frame, ~576 KB/s per direction simultaneous theoretical, and what UART baud rates that actually translates to on real stacks.</li>
+          <li>How each major OS finds, loads, and exposes a CDC ACM device — and the one Windows-7-era detail (<code>usbser.inf</code>) that's only just stopped mattering.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Prereqs</div>
+      <div>Ch 04 (transfer types — control + bulk + interrupt), Ch 06 (descriptors), Ch 08 (control transfers). If you haven't built usb_02–usb_04, build at least usb_02 first; CDC ACM's descriptor tree is several times larger than anything you've shipped so far and the only way to make sense of it is to be fluent in the descriptor shape from Ch 06.</div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Sample</div>
+      <div><code class="sample-link">firmware/samples/usb/usb_10/</code> · <a href="/docs/firmware_sample_usb_10.html">design doc</a> — a single virtual serial port that echoes whatever the host writes to it. First sample where the host can <em>type at the device</em> using the OS's stock terminal.</div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Verified</div>
+      <div>2026-05-14 · USB 2.0 spec §5 (frame timing, bit-stuffing) + §9.6.4 (IAD), USB-IF <em>CDC v1.20</em> §5 (functional descriptors), <em>PSTN v1.20</em> §6 (ACM requests + notifications), Zephyr 4.4 <code>usbd_cdc_acm.c</code>, Linux <code>drivers/usb/class/cdc-acm.c</code>, macOS <code>IOUSBHostFamily</code>, Microsoft <code>usbser.sys</code> (Win10 1709+).</div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────── 1. WHAT CDC IS ─────────────────────── -->
+
+  <h2>1. What CDC is — and why we even have a class for serial</h2>
+
+  <p>By the late 1990s USB was clearly going to win, and the question facing the USB-IF was: how do you replace RS-232? Not the wires — those obviously went away — but the <em>idea</em> of a stream-of-bytes-with-some-control-lines that every operating system, programming language, and terminal program already knew how to talk to. The answer was the <strong>Communications Device Class</strong> (CDC), published as a USB-IF spec in 1999 and refined across multiple subclasses. The headline subclass — the one that maps "serial port" to "two USB interfaces and four endpoints" — is the <strong>Abstract Control Model</strong> (ACM). Everything in this chapter is CDC <em>and</em> ACM; "CDC ACM" is the noun.</p>
+
+  <p>The pitch is exactly what you'd expect from a 1999 spec: pretend the device is a modem. CDC has lots of subclasses — <code>0x02</code> ACM, <code>0x06</code> ECM (Ethernet), <code>0x0C</code> EEM, <code>0x0D</code> NCM, plus a half-dozen telephony models nobody implements any more — and the "modem-like things" lineage shows in every byte. There are functional descriptors for Call Management. There are notifications about <strong>ring detect</strong>, <strong>carrier detect</strong>, and a <strong>break</strong> condition. There's a control request to send an <em>AT command</em>. CDC ACM in 2026 is RS-232 in modem cosplay — useful precisely because the cosplay is universally recognised.</p>
+
+  <div class="callout info">
+    <div class="callout-title">Three things to keep in mind about CDC ACM</div>
+    <ul>
+      <li><strong>It's two interfaces, not one.</strong> The spec separates "the control plane" (Communications interface, class <code>0x02</code>) from "the data plane" (Data interface, class <code>0x0A</code>). Both are mandatory.</li>
+      <li><strong>Most of the modem-era complexity is optional.</strong> A CDC ACM virtual serial port in 2026 implements 5% of the spec and gets away with it because the OS only checks for the 5% it cares about.</li>
+      <li><strong>The OS does almost all the work.</strong> You declare the right class triples, the host finds them, the OS-bundled driver wraps the bulk endpoints in a tty / COM port, and userspace talks to that. The firmware never sees the words "tty", "COM", or "serial port" — it sees a UART API.</li>
+    </ul>
+  </div>
+
+  <h3>1a. Where CDC ACM lives in the descriptor universe</h3>
+
+  <p>Recall from Ch 06 the descriptor hierarchy: <code>Device → Configuration → Interface → Endpoint</code>. Standard classes (CDC, HID, MSC) extend that tree with class-specific descriptors that hang off the interface. CDC ACM extends it more than most:</p>
+
+  <pre><code>Device  (one — same as every sample)
+ └─ Configuration
+     ├─ Interface Association Descriptor       ← new — Ch 19 expands on this
+     │
+     ├─ Interface 0  (Communications, class 0x02, subclass 0x02 ACM)
+     │   ├─ CDC Header functional descriptor              ← class-specific
+     │   ├─ CDC Call Management functional descriptor     ← class-specific
+     │   ├─ CDC Abstract Control Management func. desc.   ← class-specific
+     │   ├─ CDC Union functional descriptor               ← class-specific
+     │   └─ Endpoint 0x82 — interrupt IN, MPS=16, bInterval=10ms
+     │
+     └─ Interface 1  (Data, class 0x0A)
+         ├─ Endpoint 0x01 — bulk OUT, MPS=64
+         └─ Endpoint 0x81 — bulk IN,  MPS=64
+</code></pre>
+
+  <p>If you printed every descriptor byte-by-byte from a stock Zephyr CDC ACM instance and laid them end-to-end, you'd see <strong>about 75 bytes</strong> of descriptors for a single virtual serial port — vs ~32 bytes for usb_02's bare two-bulk-endpoint vendor class. Every byte in those extra 43 is either an IAD or a functional descriptor. Sections 2–5 walk through them in order.</p>
+
+  <!-- ─────────────────────── 2. IAD ─────────────────────── -->
+
+  <h2>2. The composite shape — and why CDC needs an IAD</h2>
+
+  <p>A USB <em>interface</em> is the smallest unit of "thing the OS loads a driver against." Pre-2005, the host's heuristic for finding a driver was: read the device's class triple from the device descriptor; if it's <code>0x00/0x00/0x00</code> (the "see interface descriptors" sentinel), iterate over each interface and look up that interface's own class triple. One driver per interface. One interface per device, almost always. Easy.</p>
+
+  <p>CDC broke this. CDC ACM has <em>two</em> interfaces — Communications and Data — but they belong to the same logical function (the virtual serial port). A naïve host would happily load one driver for interface 0 (CDC class) and a different driver (or none) for interface 1 (CDC-Data class) and end up unable to wire them together. CDC's original answer in 1999 was the Union functional descriptor (§3d below): it tells the host "interface 0 is the master; interface 1 is its subordinate." That worked, sort of — Linux still uses the Union descriptor today — but it required every host stack to learn CDC-specific parsing rules.</p>
+
+  <p>The clean fix arrived in 2003 with an <em>ECN to USB 2.0</em> introducing the <strong>Interface Association Descriptor</strong> (IAD). The IAD is a generic, class-agnostic way to say "the next <em>N</em> interfaces are one function — load one driver for all of them." It sits in the descriptor stream <strong>before</strong> the first interface it groups:</p>
+
+  <pre><code>Offset  Size  Field              Value (typical CDC ACM)
+  0      1   bLength             0x08   (IAD is exactly 8 bytes)
+  1      1   bDescriptorType     0x0B   (USB_DESC_INTERFACE_ASSOC)
+  2      1   bFirstInterface     0x00   (Communications iface number)
+  3      1   bInterfaceCount     0x02   (this + next; both belong together)
+  4      1   bFunctionClass      0x02   (CDC)
+  5      1   bFunctionSubClass   0x02   (ACM)
+  6      1   bFunctionProtocol   0x01   (AT commands V.250 — or 0x00 "none")
+  7      1   iFunction           0x00   (optional string descriptor index)
+</code></pre>
+
+  <p>For a host to honour the IAD, the device must <em>also</em> set its <em>device-level</em> class triple to <code>0xEF / 0x02 / 0x01</code> — the "Miscellaneous / Common Class / IAD" sentinel that tells modern hosts "this device uses IADs; parse them." Zephyr USB-Device-Next does this for you automatically: as soon as one registered class advertises an IAD, the core sets the device descriptor's <code>bDeviceClass</code> triple to <code>0xEF / 0x02 / 0x01</code>. This is the same triple from the gotcha note in <code>reference_zephyr_usbd_api</code> — Zephyr defaults to it on <em>every</em> device, even single-interface vendor ones, which is harmless but not byte-canonical to the spec.</p>
+
+  <div class="callout pitfall">
+    <div class="callout-title">A common misconception</div>
+    <p><strong>"The IAD is part of the Communications interface."</strong> It isn't — it sits in the configuration descriptor's flat byte stream <em>between</em> the configuration header and the first interface, with no parent-child relationship to either. Hosts that pre-date the 2003 ECN ignore it (it's just an unknown descriptor type to them) and fall through to the Union functional descriptor instead. That's why CDC ACM keeps the Union descriptor even though the IAD has been mandatory in practice for ~20 years.</p>
+  </div>
+
+  <!-- ─────────────────────── 3. FUNCTIONAL DESCRIPTORS ─────────────────────── -->
+
+  <h2>3. Functional descriptors — CDC's class-specific extension</h2>
+
+  <p>Standard descriptors (Device / Configuration / Interface / Endpoint) all use <code>bDescriptorType</code> values <code>&lt; 0x10</code>. The USB-IF reserved <code>0x21..0x2F</code> for class-specific descriptors, and CDC takes <code>0x24</code> for <strong>functional descriptors</strong> attached to a Communications interface, plus <code>0x25</code> for class-specific endpoint descriptors (unused by ACM). Every CDC functional descriptor follows the same 3-byte header:</p>
+
+  <pre><code>Offset  Size  Field                  Notes
+  0      1   bFunctionLength         total length of this descriptor incl. header
+  1      1   bDescriptorType         always 0x24 — CS_INTERFACE
+  2      1   bDescriptorSubtype      what kind of functional descriptor this is
+  3..N      (subtype-specific)        body
+</code></pre>
+
+  <p>For CDC ACM the four subtypes that matter are <code>0x00</code> Header, <code>0x01</code> Call Management, <code>0x02</code> Abstract Control Management, and <code>0x06</code> Union. They appear in that order, between the Communications interface descriptor and its single interrupt-IN endpoint:</p>
+
+  <h3>3a. Header functional descriptor (subtype 0x00)</h3>
+
+  <pre><code>Offset  Size  Field            Value
+  0      1   bFunctionLength   0x05
+  1      1   bDescriptorType   0x24   (CS_INTERFACE)
+  2      1   bDescriptorSubtype 0x00  (HEADER)
+  3      2   bcdCDC            0x0110 (CDC spec 1.10)  little-endian
+</code></pre>
+
+  <p>The Header descriptor announces "this interface is CDC, and we're claiming spec version 1.10." The version field lets a host with old quirks key on a specific CDC release. Every CDC interface starts with one of these and no host has cared about the version field in 20 years — but it's required.</p>
+
+  <h3>3b. Call Management functional descriptor (subtype 0x01)</h3>
+
+  <pre><code>Offset  Size  Field             Value (typical)
+  0      1   bFunctionLength    0x05
+  1      1   bDescriptorType    0x24
+  2      1   bDescriptorSubtype 0x01   (CALL_MANAGEMENT)
+  3      1   bmCapabilities     0x00   (no call mgmt — virtual serial)
+                                       bit 0: device handles call mgmt itself
+                                       bit 1: call mgmt over data class iface
+  4      1   bDataInterface     0x01   (interface number of the Data iface)
+</code></pre>
+
+  <p>Call Management is a modem-era construct: it describes how the device dials, answers, and hangs up. For a virtual serial port the answer is <strong>"it doesn't"</strong> — <code>bmCapabilities = 0x00</code>. Some hosts (notably older Linux) want this descriptor to <em>exist</em> with capabilities zero, rather than be absent. So you include it, you zero it, and you move on.</p>
+
+  <h3>3c. Abstract Control Management functional descriptor (subtype 0x02)</h3>
+
+  <pre><code>Offset  Size  Field             Value (typical)
+  0      1   bFunctionLength    0x04
+  1      1   bDescriptorType    0x24
+  2      1   bDescriptorSubtype 0x02   (ABSTRACT_CONTROL_MANAGEMENT)
+  3      1   bmCapabilities     0x02   (supports SET/GET_LINE_CODING +
+                                        SET_CONTROL_LINE_STATE)
+                                       bit 0: supports CDC_SEND_ENCAPSULATED_*
+                                       bit 1: supports SET/GET_LINE_CODING,
+                                              SET_CONTROL_LINE_STATE, SerialState
+                                       bit 2: supports SEND_BREAK
+                                       bit 3: supports NETWORK_CONNECTION notif.
+</code></pre>
+
+  <p>The ACM functional descriptor is where the device declares which slice of the ACM-subclass API it implements. <code>0x02</code> — "I do line coding and line state" — is the universal lowest common denominator. Zephyr's CDC ACM ships <code>0x02</code> exactly. If you wanted <code>SEND_BREAK</code> you'd OR in <code>0x04</code>; few devices bother.</p>
+
+  <h3>3d. Union functional descriptor (subtype 0x06)</h3>
+
+  <pre><code>Offset  Size  Field             Value (typical)
+  0      1   bFunctionLength    0x05
+  1      1   bDescriptorType    0x24
+  2      1   bDescriptorSubtype 0x06   (UNION)
+  3      1   bControlInterface  0x00   (master — the Communications iface)
+  4      1   bSubordinateInterface0  0x01   (Data iface)
+</code></pre>
+
+  <p>The Union descriptor is the spec-canonical way to link the Communications interface to its Data interface. It pre-dates the IAD by four years and is the fallback for hosts that don't honour IADs. <strong>Always include it.</strong> The body can list multiple subordinates (some CDC subclasses use that — NCM, for example) but ACM always has exactly one subordinate. A Union descriptor with one subordinate is 5 bytes.</p>
+
+  <p>Together the four functional descriptors are <strong>5 + 5 + 4 + 5 = 19 bytes</strong> of CDC-specific class data inside the Communications interface. Plus the 8-byte IAD ahead of it and the 9-byte Communications interface descriptor itself, you've already spent 36 bytes before you've described a single endpoint.</p>
+
+  <!-- ─────────────────────── 4. CONTROL REQUESTS ─────────────────────── -->
+
+  <h2>4. The four class-specific control requests</h2>
+
+  <p>CDC ACM defines a small set of class requests that ride EP0, all with <code>bmRequestType.type = CLASS (1)</code> and <code>bmRequestType.recipient = INTERFACE (1)</code>. <code>wIndex</code> carries the Communications interface number (almost always <code>0x0000</code>). The host issues these <em>after</em> <code>SET_CONFIGURATION</code>, often without the device firmware doing anything — Zephyr's CDC ACM class handles them all internally and exposes the results as Zephyr UART state.</p>
+
+  <p>The four request codes (PSTN 1.20 §6.3):</p>
+
+  <table class="matrix-table">
+    <thead><tr><th>bRequest</th><th>Name</th><th>bmRequestType</th><th>wValue</th><th>wLength</th><th>DATA stage</th></tr></thead>
+    <tbody>
+      <tr><td class="hex">0x20</td><td>SET_LINE_CODING</td><td class="hex">0x21</td><td>0</td><td>7</td><td>OUT, 7-byte line-coding struct</td></tr>
+      <tr><td class="hex">0x21</td><td>GET_LINE_CODING</td><td class="hex">0xA1</td><td>0</td><td>7</td><td>IN, 7-byte line-coding struct</td></tr>
+      <tr><td class="hex">0x22</td><td>SET_CONTROL_LINE_STATE</td><td class="hex">0x21</td><td>DTR/RTS bits</td><td>0</td><td>none (2-stage)</td></tr>
+      <tr><td class="hex">0x23</td><td>SEND_BREAK</td><td class="hex">0x21</td><td>duration ms</td><td>0</td><td>none (2-stage)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>4a. SET_LINE_CODING / GET_LINE_CODING (0x20 / 0x21)</h3>
+
+  <p>These two carry a 7-byte struct in the DATA stage:</p>
+
+  <pre><code>struct cdc_acm_line_coding {
+    uint32_t dwDTERate;      // baud — little-endian, 32-bit
+    uint8_t  bCharFormat;    // 0 = 1 stop bit, 1 = 1.5, 2 = 2
+    uint8_t  bParityType;    // 0 None, 1 Odd, 2 Even, 3 Mark, 4 Space
+    uint8_t  bDataBits;      // 5, 6, 7, 8, 16
+} __packed;
+</code></pre>
+
+  <p>The host issues <code>SET_LINE_CODING</code> when the userspace tool calls something like <code>tcsetattr()</code> (Linux) or <code>SetCommState()</code> (Windows) on the tty / COM. The device is supposed to act on the new settings.</p>
+
+  <div class="callout warn">
+    <div class="callout-title">Why "act on" usually means "ignore"</div>
+    <p>There is no actual UART out the back of a USB virtual serial port. The "115200 8N1" the user typed in their terminal program describes a non-existent physical link — the bits are USB packets, not edges on a TXD pin at a particular bit time. <code>SET_LINE_CODING</code> on a CDC ACM device is therefore <strong>advisory</strong>: the device is free to store the values and report them back on <code>GET_LINE_CODING</code>, but it cannot meaningfully apply them. The exception is when the firmware bridges CDC ACM to a real UART on the MCU's GPIOs — in that case <code>SET_LINE_CODING</code> means "reconfigure the hardware UART to these settings," and a wrong baud breaks the bridge. Zephyr's CDC ACM class stores the values and exposes them via <code>uart_line_ctrl_get(dev, UART_LINE_CTRL_BAUD_RATE, ...)</code> in case the application wants to honour them, but the class itself does nothing with them.</p>
+  </div>
+
+  <h3>4b. SET_CONTROL_LINE_STATE (0x22) — the DTR/RTS bits</h3>
+
+  <p>This request has no DATA stage — both control bits live in <code>wValue</code>:</p>
+
+  <pre><code>wValue bit 0  →  DTR (Data Terminal Ready)   — host is "ready to talk"
+wValue bit 1  →  RTS (Request To Send)       — host is "ready to receive"
+wValue bits 2-15 → reserved (must be zero)
+</code></pre>
+
+  <p>RS-232 used DTR and RTS as flow-control signals; on a CDC ACM device they're vestigial. But one of them — <strong>DTR</strong> — has become the universal "the host has opened the port" signal. When a userspace program calls <code>open("/dev/ttyACM0", ...)</code>, the kernel's CDC ACM driver issues <code>SET_CONTROL_LINE_STATE</code> with <code>wValue = 0x0003</code> (DTR + RTS) before returning from <code>open()</code>. When the program closes the port, the driver issues <code>SET_CONTROL_LINE_STATE</code> with <code>wValue = 0x0000</code>.</p>
+
+  <p>This is the basis of every "wait for host" pattern you'll see in CDC ACM firmware — including Zephyr's:</p>
+
+  <pre><code>// Pseudocode — see usb_10 §5 for the real Zephyr API
+device_init();
+usbd_enable();
+LOG_INF("Waiting for DTR...");
+wait_until(DTR_was_asserted);    // first host open()
+LOG_INF("Host attached.");
+// Now it's safe to send greeting / start streaming
+</code></pre>
+
+  <p>Without the gate, the device might start streaming bytes the moment USB enumeration completes — but the host's userspace hasn't called <code>open()</code> yet, so the tty's read buffer doesn't exist yet, and the kernel either discards the data or holds it in a small FIFO that promptly overflows. The DTR gate is how the firmware says "wait until somebody is listening."</p>
+
+  <div class="callout info">
+    <div class="callout-title">macOS is the strictest about this</div>
+    <p>Linux's <code>cdc_acm</code> driver buffers ~64 KB of pre-open RX data per device by default. macOS buffers much less and is more likely to drop early bytes. Windows is mixed (depends on the USB-serial filter chain). If your firmware sends a greeting line on boot and you see it on Linux but not macOS, the DTR gate is the fix.</p>
+  </div>
+
+  <h3>4c. SEND_BREAK (0x23)</h3>
+
+  <p>Same shape as <code>SET_CONTROL_LINE_STATE</code> but <code>wValue</code> is the duration of the break condition in milliseconds. <code>wValue = 0xFFFF</code> means "until I send another SEND_BREAK with wValue=0." Few devices implement this; the ACM functional descriptor's <code>bmCapabilities</code> bit 2 declares support. If you set bit 2 in the descriptor and the host issues <code>SEND_BREAK</code>, you must handle it — even if "handle" means "log it and do nothing."</p>
+
+  <!-- ─────────────────────── 5. SERIALSTATE ─────────────────────── -->
+
+  <h2>5. The interrupt IN — SerialState notifications</h2>
+
+  <p>The Communications interface has exactly one endpoint: an <strong>interrupt IN</strong> at MPS = 8 or 16 bytes, with <code>bInterval = 10ms</code> on Full-Speed. Its job is to carry asynchronous device-to-host notifications about line state. The most common notification is <strong>SerialState (0x20)</strong>, which is a 10-byte header plus a 2-byte UART state bitmap:</p>
+
+  <pre><code>Offset Size Field            Notes
+ 0     1   bmRequestType    0xA1   (D2H | class | interface)
+ 1     1   bNotificationType 0x20  (SERIAL_STATE)
+ 2     2   wValue           0x0000
+ 4     2   wIndex           Communications iface number (LE)
+ 6     2   wLength          0x0002  (2 bytes of body follow)
+ 8     2   UART state bitmap (LE):
+              bit 0  bRxCarrier    (DCD asserted upstream)
+              bit 1  bTxCarrier    (DSR)
+              bit 2  bBreak        (break received)
+              bit 3  bRingSignal   (RI asserted)
+              bit 4  bFraming      (framing error)
+              bit 5  bParity       (parity error)
+              bit 6  bOverRun      (overrun)
+</code></pre>
+
+  <p>Most ACM devices never send a SerialState notification in their lifetime. The hosts mostly don't care. But the endpoint must exist (a CDC ACM Communications interface with zero endpoints is malformed; the spec says one notification EP), the host enumerates it, the kernel allocates a URB for it, and it sits NAKing forever. That NAK has a cost — about 64 bytes of bus bandwidth per interval (~1 KB/s on FS) — but it's an unavoidable feature of the class shape.</p>
+
+  <p>The Zephyr CDC ACM class translates a couple of UART line-ctrl writes into SerialState notifications: <code>uart_line_ctrl_set(dev, UART_LINE_CTRL_DCD, 1)</code> sets bit 0 and pushes a notification; same for DSR (bit 1) and BREAK (bit 2 — distinct from receiving a host SEND_BREAK). This is mostly useful when the firmware <em>is</em> bridging to a real UART and wants to surface the upstream line-state changes to host software that knows how to consume them — gdbserver, modem managers, etc.</p>
+
+  <!-- ─────────────────────── 6. THE BULK PAIR ─────────────────────── -->
+
+  <h2>6. The bulk pair — where the bytes actually go</h2>
+
+  <p>The Data interface (class <code>0x0A</code>, subclass <code>0x00</code>, protocol <code>0x00</code>) has exactly two endpoints: a bulk IN and a bulk OUT, both at MPS = 64 on Full-Speed (MPS = 512 on High-Speed). No functional descriptors, no class requests, nothing fancy. <strong>Every byte the host writes to <code>/dev/ttyACM0</code> arrives on bulk OUT. Every byte the firmware writes ends up on bulk IN.</strong></p>
+
+  <pre><code>Host write to tty:
+   userspace write(fd, "hello\n", 6)
+     → kernel CDC ACM driver
+       → URB on bulk OUT (EP 0x01), 6 bytes
+         → device sees 6 bytes in its RX FIFO
+
+Host read from tty:
+   userspace read(fd, buf, 1024)
+     → kernel poll completed URBs on bulk IN (EP 0x81)
+       → URBs filled by device sending 64B at a time, until ZLP or short packet
+</code></pre>
+
+  <h3>6a. The ZLP rule</h3>
+
+  <p>This is the one bulk-endpoint rule that bites everybody on their first CDC ACM project: when a transfer's length is an exact multiple of the endpoint's MPS, the receiver doesn't know it's over until either (a) it gets a <strong>short packet</strong> (less than MPS) or (b) it gets a <strong>zero-length packet</strong> (ZLP).</p>
+
+  <pre><code>Sender writes 64 bytes (== 1 × MPS):
+   → IN/OUT packet 1: 64 bytes
+   → ?? — receiver doesn't know if more is coming
+   → Sender must follow with a ZLP to signal end-of-transfer
+     → IN/OUT packet 2: 0 bytes (the ZLP)
+   → Receiver knows the transfer is complete.
+
+Sender writes 100 bytes:
+   → IN/OUT packet 1: 64 bytes
+   → IN/OUT packet 2: 36 bytes (a short packet)
+   → No ZLP needed — the short packet itself signals end-of-transfer.
+</code></pre>
+
+  <p>For a CDC ACM device on FS where MPS = 64: every "send N bytes" operation where N is a multiple of 64 must be followed by a ZLP. Zephyr's CDC ACM class handles this for you when you write through the UART API — the class tracks the last transfer's length and enqueues a ZLP when needed. If you were writing a raw class, you'd have to do it yourself. See Ch 13 (Endpoint buffers, MPS, ZLPs) for the deep version of this rule.</p>
+
+  <!-- ─────────────────────── 7. DUPLEX MODEL ─────────────────────── -->
+
+  <h2>7. Duplex — full-duplex UART, half-duplex wire, full-duplex endpoints</h2>
+
+  <p>UART is genuinely full-duplex at the silicon: separate TX and RX shift registers in the peripheral, separate TXD and RXD pins out, no contention between the two directions ever. USB 2.0's wire — the D+/D− differential pair — is genuinely <em>half-duplex</em>: only one transmitter (host or device) drives the bus at any instant. That mismatch is the source of a recurring "how can CDC ACM bridge a full-duplex UART through a half-duplex wire?" question. The answer is that the question is comparing layers that aren't talking about the same thing.</p>
+
+  <p>At the <strong>endpoint layer</strong> — where the CDC ACM class spec lives, and where your firmware writes its <code>uart_fifo_fill()</code> / <code>uart_fifo_read()</code> calls — USB is fully duplex. Bulk IN and bulk OUT are <em>independent FIFOs</em> from the device's point of view. The firmware doesn't pick one or the other; it pushes RX bytes into the bulk IN ring and pulls TX bytes out of the bulk OUT ring continuously and concurrently, with no mutex between the two directions. The bridge is a pair of pipes:</p>
+
+  <pre><code>            ┌─────────── device side ───────────┐    ┌─── host side ───┐
+
+UART RX ISR ──► rx_ring ──► usbd_ep_enqueue(bulk IN)  ────► /dev/ttyACM0 read()
+                                                       (wire)
+host write() ──► /dev/ttyACM0 ◄──── usbd_ep_enqueue(bulk OUT) ──► tx_ring ──► UART TX ISR
+</code></pre>
+
+  <p>Neither side waits on the other. The UART peripheral has its own RX FIFO; the USB controller has its own bulk-IN and bulk-OUT endpoint FIFOs; the rings in between absorb timing skew. If you stop the host's reader thread, the device's bulk-IN endpoint NAKs (no data accepted), the rx_ring fills, and eventually the UART overruns — but the <em>opposite</em> direction (bulk OUT → UART TX) continues running unimpeded. The two directions are decoupled.</p>
+
+  <h3>7a. What the half-duplex wire does to the model</h3>
+
+  <p>At the wire layer, the host scheduler time-multiplexes IN and OUT transactions on the single differential pair. On Full-Speed the frame is 1 ms; on High-Speed the microframe is 125 µs. Inside each frame the host issues a sequence of IN tokens and OUT tokens (and SOFs and the occasional control token), each one followed by its data and handshake packets. From a single endpoint's point of view, that endpoint sees a transaction targeted at it whenever the host decides to schedule one — typically every frame for a bulk endpoint with data pending, with the host re-polling on NAK and moving on.</p>
+
+  <p>The wire being half-duplex therefore has <strong>no</strong> impact on whether the model is duplex — it has impact only on <em>aggregate bandwidth</em>. If your IN endpoint wants 9 Mbps and your OUT endpoint wants 9 Mbps on the same FS bus, the wire's 12 Mbps physical ceiling forces them to share the budget. That's what §8 quantifies.</p>
+
+  <div class="callout info">
+    <div class="callout-title">Three layers, three duplex states</div>
+    <ul>
+      <li><strong>Application:</strong> CDC ACM looks full-duplex. <code>read()</code> and <code>write()</code> on the same fd do not contend.</li>
+      <li><strong>Endpoint:</strong> Bulk IN and bulk OUT are independent. The class spec and the device firmware see two parallel pipes.</li>
+      <li><strong>Wire:</strong> D+/D− carries one direction at a time. The host scheduler interleaves IN and OUT transactions; on FS the interleaving granularity is well below 1 ms, on HS below 125 µs.</li>
+    </ul>
+    <p>Confusion arises when people transplant the wire-layer fact ("half-duplex bus") onto one of the upper layers ("therefore CDC ACM can't bridge a full-duplex UART"). The transplant is invalid — the endpoint layer rebuilds duplex on top of the half-duplex wire, the same way switched Ethernet rebuilds it on top of CSMA/CD's collision domain.</p>
+  </div>
+
+  <h3>7b. Where the model leaks</h3>
+
+  <p>The duplex abstraction is leaky in three places worth knowing about:</p>
+
+  <ul>
+    <li><strong>Back-pressure asymmetry.</strong> A stalled host reader fills the device's rx_ring, which back-pressures the UART RX, which (without hardware RTS) eventually overruns. A stalled host writer just means there's nothing on bulk OUT — the device's TX side starves cleanly. The two failure modes look completely different in logs, but they both originate as "the host stopped pumping bytes."</li>
+    <li><strong>No flow control bridges through.</strong> CDC ACM has <code>SET_CONTROL_LINE_STATE</code>'s RTS bit, but the host driver doesn't translate the device's "I'm full" state into RTS toward the user's tty layer — most user programs see only blocking <code>write()</code>. Symmetrically, a device's UART driving a hardware target with XON/XOFF flow control has to handle the flow-control bytes itself; CDC ACM is byte-transparent and won't surface them as anything special.</li>
+    <li><strong>Latency, not bandwidth, breaks tight loops.</strong> Even on an idle bus, host-side bulk URB scheduling can introduce 1–5 ms gaps (Windows is worst). A request-response protocol expecting &lt; 1 ms turnaround over CDC ACM will see jitter that has nothing to do with the duplex model and everything to do with kernel scheduling. The fix is HID interrupt endpoints or vendor bulk with very deep host-side URB queues — not anything in the duplex axis.</li>
+  </ul>
+
+  <!-- ─────────────────────── 8. BANDWIDTH BUDGET ─────────────────────── -->
+
+  <h2>8. Bandwidth budget — what UART rates fit a Full-Speed bulk pair</h2>
+
+  <p>Full-Speed USB 2.0 is 12 Mbps on the wire. Of that, the bulk-transfer payload you actually get is much less, because every transaction carries token, data, and handshake packets with their own SYNC / PID / CRC overhead, plus bit-stuffing, plus inter-packet gaps. The math matters because the RP2350's USB peripheral is Full-Speed only (Ch 14 §2), so every byte across every endpoint on an edevkit shares one ~1 MB/s pipe. Sustained UART at any reasonable baud is fine; sustained UART <em>plus</em> SWO bulk <em>plus</em> CMSIS-DAP <em>plus</em> a second CDC ACM is where the budget gets interesting.</p>
+
+  <h3>8a. Per-transaction overhead on Full-Speed</h3>
+
+  <p>A single bulk IN or OUT transaction at MPS = 64 has three packets on the wire — a token from the host, a data packet (either direction), and a handshake (typically ACK from the receiver). Adding bit-stuffing and inter-packet gaps:</p>
+
+  <table class="matrix-table">
+    <thead><tr><th>Packet</th><th>Bytes</th><th>Bit-times on wire</th></tr></thead>
+    <tbody>
+      <tr><td>Token (SYNC + PID + ADDR + EP + CRC5 + EOP)</td><td>3</td><td>~35</td></tr>
+      <tr><td>Data (SYNC + PID + 64 B payload + CRC16 + EOP)</td><td>67</td><td>~547</td></tr>
+      <tr><td>Handshake (SYNC + PID + EOP)</td><td>1</td><td>~19</td></tr>
+      <tr><td>Inter-packet gaps + bit-stuffing</td><td>—</td><td>~60</td></tr>
+      <tr><td><strong>Total per 64-byte transaction</strong></td><td>—</td><td><strong>~660</strong></td></tr>
+    </tbody>
+  </table>
+
+  <p>A Full-Speed frame is 1 ms = 12,000 bit-times. So you fit <strong>~18 bulk transactions per frame</strong>, total, shared across every endpoint on every interface on the device.</p>
+
+  <h3>8b. Single-direction ceiling</h3>
+
+  <p>If only one direction is busy: 18 × 64 B = <strong>1152 B/ms ≈ 1.15 MB/s ≈ 9.2 Mbps</strong> payload. This is the often-quoted "FS bulk wire-rate," and is what one-direction stream benchmarks see. Same number applies to bulk-OUT alone. The 800 KB/s figure cited in §10 below is the same physical ceiling derated for OS-side overhead (URB allocation, tty layer, scheduling) on a typical real host.</p>
+
+  <h3>8c. Bidirectional ceiling — the half-duplex wire bites here</h3>
+
+  <p>When both directions push data, the 18 transactions/frame budget is split. The host scheduler tries to alternate roughly fairly — typically ~9 IN + ~9 OUT per frame on a quiet bus. That works out to:</p>
+
+  <pre><code>9 × 64 B = 576 B/ms = ~576 KB/s per direction (simultaneous)
+                    = ~5.7 Mbaud UART payload per direction (10 bits/byte: 1 start + 8 data + 1 stop)
+</code></pre>
+
+  <p>That's the <strong>theoretical</strong> ceiling. Real stacks lose to:</p>
+
+  <ul>
+    <li><strong>NAKs.</strong> Host polls; device says "no data yet"; the transaction burns wire time for zero payload.</li>
+    <li><strong>Short-packet padding.</strong> UART trickling 1 byte at a time forces a 1-byte bulk packet — full ~660-bit overhead for 8 bits of payload, ~80× worse than a full-MPS packet.</li>
+    <li><strong>ZLPs after exact-multiple-of-MPS transfers</strong> (§6a). One extra empty transaction per multiple-of-64 transfer.</li>
+    <li><strong>Host scheduling jitter.</strong> Windows in particular can park bulk URBs for 1–8 ms gaps under load. Linux is best; macOS is in between.</li>
+    <li><strong>Other endpoints on the device.</strong> Every NAK from every interrupt and bulk endpoint on every interface eats into the same 18-transaction budget — including the SerialState interrupt-IN endpoint that mostly just NAKs (§5).</li>
+  </ul>
+
+  <p>Rule of thumb: <strong>derate by 3–4×</strong> for "I don't want to think about it." That puts a safe bidirectional sustained ceiling at <strong>~1.5–2 Mbaud per direction</strong> on a stock CDC ACM bridge.</p>
+
+  <h3>8d. UART rate vs FS bidirectional budget — the table to keep on your desk</h3>
+
+  <table class="matrix-table">
+    <thead>
+      <tr><th>UART baud</th><th>Bytes/s each way</th><th>% of FS bidi budget (~576 KB/s)</th><th>Verdict</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>115,200</td><td>11.5 KB/s</td><td>2 %</td><td>trivial</td></tr>
+      <tr><td>921,600</td><td>92 KB/s</td><td>16 %</td><td>comfortable</td></tr>
+      <tr><td>1,500,000</td><td>150 KB/s</td><td>26 %</td><td>comfortable</td></tr>
+      <tr><td>2,000,000</td><td>200 KB/s</td><td>35 %</td><td><strong>safe ceiling — recommend here</strong></td></tr>
+      <tr><td>3,000,000</td><td>300 KB/s</td><td>52 %</td><td>works with ≥ 16 KB rings + a well-behaved host</td></tr>
+      <tr><td>4,000,000</td><td>400 KB/s</td><td>70 %</td><td>marginal; host hiccups → drops</td></tr>
+      <tr><td>5,000,000</td><td>500 KB/s</td><td>87 %</td><td>theoretical max, zero headroom</td></tr>
+      <tr><td>6,000,000+</td><td>600 KB/s</td><td>&gt; 100 %</td><td><strong>will drop</strong></td></tr>
+    </tbody>
+  </table>
+
+  <h3>8e. High-Speed USB 2.0 — for completeness</h3>
+
+  <p>On HS (480 Mbps), the microframe is 125 µs and bulk MPS is 512 B. You fit ~13 bulk transactions per microframe — call it <strong>~53 MB/s aggregate</strong>. Real single-direction CDC ACM throughput on HS is 30–40 MB/s; bidirectional ~25 MB/s each. In UART terms that's roughly <strong>200 Mbaud per direction</strong> — the UART peripheral, the level shifters, and the target's pin slew rate will fail decades before HS USB does. If you can put a CDC ACM bridge on HS instead of FS, you stop having to think about bandwidth at all.</p>
+
+  <p>RP2350 is Full-Speed only (Ch 14 §2), so on edevkit hardware the FS analysis above is the operative one. The host's HS hub upstream of the device doesn't help — it just shifts the scheduling tightness to the hub's translator.</p>
+
+  <h3>8f. edevkit-specific — the shared FS pipe</h3>
+
+  <p>The v1 design puts <em>all</em> of these on one FS pipe at once:</p>
+
+  <ul>
+    <li>CMSIS-DAP v2 bulk pair (debug commands + SWO trace)</li>
+    <li>Target log UART CDC ACM</li>
+    <li>Dev-protocol UART CDC ACM</li>
+    <li>SMP / mcumgr CDC ACM (OTA, shell)</li>
+  </ul>
+
+  <p>That's three CDC ACM functions plus a vendor bulk pair, all sharing the same 18-transaction/ms budget. Each function has its own bulk pair; the host's USB stack arbitrates across them. The 800 KB/s number quoted in §10 for a <em>single</em> CDC ACM pipe collapses fast when three of them are streaming at once. This is why the edevkit firmware uses back-pressure-aware producers on SWO and the protocol sniffer rather than per-channel rate caps — when one channel saturates, all channels degrade gracefully instead of one channel silently dropping.</p>
+
+  <!-- ─────────────────────── 9. HOST DRIVER LOADING ─────────────────────── -->
+
+  <h2>9. How the host loads a driver against CDC ACM</h2>
+
+  <p>The whole point of declaring the right class triple is that the OS finds and loads a stock driver without any user intervention. Each major OS does it slightly differently:</p>
+
+  <div class="connector-grid">
+    <div class="connector-card">
+      <h4>Linux — <code>cdc_acm</code></h4>
+      <p>The kernel's USB core walks the device's interfaces, finds Interface 0 with class <code>0x02</code>/<code>0x02</code>/<em>any</em>, and probes the <code>cdc_acm</code> driver against it. The driver creates a <code>/dev/ttyACMx</code> tty (where <em>x</em> is a sequential index per device) and a sysfs entry at <code>/sys/class/tty/ttyACMx/</code>. <code>dmesg</code> shows the binding:</p>
+      <pre><code>cdc_acm 1-2:1.0: ttyACM0: USB ACM device
+</code></pre>
+      <p>The <code>1.0</code> is "interface 0 of device 1-2." The Data interface (1.1) is silently claimed by the same driver via the Union descriptor — the kernel knows that Comms iface 0 has Data iface 1 as a subordinate. Userspace opens <code>/dev/ttyACM0</code> like any tty; the <code>tcgetattr</code> / <code>tcsetattr</code> calls become <code>GET/SET_LINE_CODING</code> control transfers under the hood.</p>
+    </div>
+    <div class="connector-card">
+      <h4>macOS — <code>AppleUSBCDCACMData</code></h4>
+      <p>The IOKit USB stack matches on class/subclass and loads the kernel extension that ships with the OS. The device appears as a pair of nodes in <code>/dev/</code>:</p>
+      <pre><code>/dev/tty.usbmodemXXXXX     # callout-mode
+/dev/cu.usbmodemXXXXX      # call-in mode (the one you want)
+</code></pre>
+      <p>The <code>XXXXX</code> is derived from the device's <em>iSerial</em> string descriptor — which is why per-unit serials (Ch 07) matter on macOS. Two identical devices without per-unit serials get the same node path and only one will work.</p>
+    </div>
+    <div class="connector-card">
+      <h4>Windows — <code>usbser.sys</code></h4>
+      <p>Since Windows 10 build 1709 (Fall Creators Update, Oct 2017), <code>usbser.sys</code> auto-loads against any device whose composite IAD or interface declares CDC ACM. The device appears under "Ports (COM &amp; LPT)" in Device Manager as <code>COM<i>n</i></code>. Pre-1709 Windows required an <code>.inf</code> file pointing at <code>usbser.sys</code>; vendors shipped one but it was always a thin wrapper around the OS-bundled driver. As of 2026, the <code>.inf</code> dance is a museum exhibit — every supported Windows version auto-loads.</p>
+    </div>
+  </div>
+
+  <!-- ─────────────────────── 10. WHERE ACM FALLS SHORT ─────────────────────── -->
+
+  <h2>10. Where CDC ACM falls short</h2>
+
+  <ul>
+    <li><strong>Throughput.</strong> §8 has the full budget analysis. Short version: on FS you get ~800 KB/s real throughput out of <em>one</em> CDC ACM pipe one-way, dropping to ~1.5–2 Mbaud per direction safely sustained when both directions are live, and lower still when multiple class functions share the bus. On HS, ~30 MB/s. Above that you need vendor-class bulk transfers (Ch 21) or larger MPS — CDC ACM's 64/512 MPS is fixed by the class spec.</li>
+    <li><strong>Latency.</strong> Linux's <code>cdc_acm</code> coalesces small writes into 64-byte URBs with up to 1ms of latency; macOS and Windows do similar. If you need &lt; 1ms host-to-device latency, CDC ACM is the wrong tool.</li>
+    <li><strong>Reliability of small writes.</strong> Many host programs write byte-at-a-time and expect each byte to arrive promptly. That works <em>if</em> the host stack flushes after each <code>write()</code> — most do — but you can't rely on it. Defensive firmware treats incoming data as a stream and parses out frame boundaries.</li>
+    <li><strong>Composite limits.</strong> macOS used to balk at composite CDC + anything-else devices unless the IAD was exactly right. As of macOS 11+ this is fine, but composite samples (Ch 19, usb_20) still occasionally surface stack-specific quirks.</li>
+    <li><strong>No bidirectional flow control.</strong> RTS/CTS doesn't actually flow-control anything — they're just wValue bits on a 2-stage control request, with no wire-level effect. If the device's bulk OUT FIFO is full, it has to NAK on the bulk OUT until the application drains — which manifests as the host's <code>write()</code> blocking, not as RTS deasserting. That's usually fine but it surprises people coming from real RS-232.</li>
+  </ul>
+
+  <!-- ─────────────────────── BUILD THIS ─────────────────────── -->
+
+  <div class="build-this">
+    <h3>Build this</h3>
+    <p>Sample: <code class="sample-link">firmware/samples/usb/usb_10/</code> · <a href="/docs/firmware_sample_usb_10.html">design doc</a></p>
+    <p>The sample puts up a single virtual serial port, waits for DTR, then echoes whatever the host writes back to the host one character at a time. Run the sample, open <code>screen /dev/ttyACM0 115200</code> (or the platform equivalent), and type. Every keystroke comes back doubled — once as the local terminal echo, once as the device echo — confirming the bulk pipes are wired both ways. Then read §3, §4, and §6 again with the descriptor capture from <code>lsusb -v</code> in front of you — every byte should match.</p>
+  </div>
+
+  <!-- ─────────────────────── VERIFY ─────────────────────── -->
+
+  <section class="verify">
+    <h2>Verify</h2>
+    <p>Three things to confirm: (a) the device enumerates with the expected class triples and functional descriptors, (b) the OS auto-loads its CDC ACM driver and presents the tty/COM node, (c) bytes round-trip.</p>
+    <div>
+      <div class="os-card linux">
+        <span class="os-tag">Linux</span>
+        <pre><code># 1. Class triples + functional descriptors
+lsusb -v -d 1209:ede5 | grep -E 'bDeviceClass|bInterfaceClass|bDescriptorSubtype'
+
+# 2. Driver bound, node present
+dmesg | tail | grep cdc_acm
+ls -l /dev/ttyACM*
+
+# 3. Echo round-trip (Ctrl-A k to quit screen)
+screen /dev/ttyACM0 115200
+</code></pre>
+      </div>
+      <div class="os-card mac">
+        <span class="os-tag">macOS</span>
+        <pre><code># 1. Class triples + functional descriptors (caches enumeration — use ioreg)
+ioreg -p IOUSB -c IOUSBHostDevice -w0 | grep -A20 ede5
+
+# 2. Node present
+ls -l /dev/cu.usbmodem*
+
+# 3. Echo round-trip (~. to quit screen)
+screen /dev/cu.usbmodemXXXXX 115200
+</code></pre>
+      </div>
+      <div class="os-card win">
+        <span class="os-tag">Windows</span>
+        <pre><code>:: 1. Class triples — open USBView from the Windows Driver Kit
+
+:: 2. Node present — Device Manager → Ports (COM & LPT) → "USB Serial Device (COMn)"
+
+:: 3. Echo round-trip — PuTTY → Serial → COMn @ 115200
+</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────── PITFALLS ─────────────────────── -->
+
+  <h2>Common pitfalls</h2>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Device enumerates but no <code>/dev/ttyACMx</code> appears on Linux."</strong> The class-triple sentinels are wrong. Run <code>lsusb -v</code> and check: device descriptor must be <code>0xEF / 0x02 / 0x01</code>, IAD must precede the Communications interface with <code>bFunctionClass=0x02 / bFunctionSubClass=0x02</code>, Communications interface must be <code>bInterfaceClass=0x02 / bInterfaceSubClass=0x02</code>. Any one of those wrong and the kernel's USB core won't probe <code>cdc_acm</code> against the device.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Greeting line shows up on Linux but not macOS."</strong> Classic missing DTR gate — see §4b. Firmware sends the greeting before the host has opened the port, Linux's larger pre-open buffer hides the bug, macOS doesn't. Move the greeting to <em>after</em> DTR is asserted.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Host write of exactly 64 bytes never completes."</strong> Missing ZLP on the bulk-OUT path. 64 bytes is exactly one FS MPS; the receiver waits for either a short packet or a ZLP to know the transfer is done. Either pad to 65 bytes or send a ZLP after the 64-byte payload (§6a). Zephyr's CDC ACM class handles this on the IN side automatically; on the OUT side it's the host's responsibility, and host drivers do it correctly — so this usually surfaces only in custom userspace tools that bypass the kernel tty layer.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Two identical edevkits both enumerate but only one is visible on macOS."</strong> Missing or duplicate iSerial. macOS keys its <code>/dev/cu.usbmodem<i>XXXXX</i></code> path off the serial-number string descriptor. If two devices have the same iSerial (or both have iSerial = 0), the second one collides. Per-unit serials (Ch 07, usb_03) are mandatory on macOS for fleet use.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"<code>screen</code> hangs on connect on macOS but works on Linux."</strong> Often <code>tty.usbmodem</code> vs <code>cu.usbmodem</code> — the <code>tty.</code> node blocks on DCD; the <code>cu.</code> ("call-up") node doesn't. Always connect to <code>/dev/cu.usbmodem<i>XXXXX</i></code>, not <code>/dev/tty.usbmodem<i>XXXXX</i></code>, on macOS.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Bytes arrive corrupted on Windows when baud is set to something other than 115200."</strong> The firmware is ignoring <code>SET_LINE_CODING</code> (correctly — see §4a callout) but the firmware also <em>looks like</em> it's transforming the data somehow. Almost always this is the userspace tool on the host doing line-ending translation (CR/LF mangling) based on the assumed terminal type, not USB at all. Confirm with raw byte capture (USBPcap) before blaming the device.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Device works once but the second plug-in shows up as a new <code>COM</code> port number on Windows."</strong> Windows ties COM-port assignment to the device's USB instance ID — which includes the iSerial when one is present. With a per-unit serial (Ch 07) the same device always gets the same COM port. Without one, Windows treats every (port × hub-position) combination as a new device and burns COM numbers indefinitely.</p>
+  </div>
+
+  <!-- ─────────────────────── GOING DEEPER ─────────────────────── -->
+
+  <h2>Going deeper</h2>
+  <ul>
+    <li>USB-IF <em>CDC v1.20</em> spec — the parent document for all CDC subclasses (Header / Union / class triple table). <a href="https://www.usb.org/document-library/class-definitions-communication-devices-12">usb.org</a>.</li>
+    <li>USB-IF <em>PSTN v1.20</em> spec — the ACM subclass details, including line coding, SetControlLineState, SerialState notifications. <a href="https://www.usb.org/document-library/class-definitions-communication-devices-12">usb.org</a>.</li>
+    <li>USB 2.0 ECN: <em>Interface Association Descriptors</em> (May 2003) — the spec amendment that introduced the IAD. <a href="https://www.usb.org/document-library/interface-association-descriptor-ecn">usb.org</a>.</li>
+    <li>Linux source: <code>drivers/usb/class/cdc-acm.c</code> — the kernel-side ACM driver, including the IAD + Union handling and the URB-to-tty plumbing.</li>
+    <li>Zephyr source: <code>subsys/usb/device_next/class/usbd_cdc_acm.c</code> — the device-side class implementation. The descriptor struct at lines 56–75 is the canonical reference for what bytes Zephyr emits.</li>
+    <li><a href="/docs/firmware_sample_usb_10.html">firmware_sample_usb_10.html</a> — the design doc for the paired sample (single CDC ACM instance, host-echo, "Wait for DTR" gate, three-OS verification).</li>
+    <li>Ch 13 (Endpoint buffers, MPS, ZLPs) — pending. The deep dive on ZLP rules and back-pressure for bulk endpoints in general, of which the CDC ACM bulk pair is a special case.</li>
+    <li>Ch 19 (Interface Association Descriptors) — pending. The general theory of IADs for composite-class devices; CDC ACM is the simplest example but USB AUDIO 2.0, UVC, and most modern composite classes use the same machinery.</li>
+  </ul>
+
+  <p class="part-end-note">
+    <strong>End of Ch 15.</strong> You now know what a CDC ACM device looks like on the wire and why each piece is there. The next sample (usb_10) turns that into running firmware. Ch 16 — pending — moves on to HID, where the OS-loads-a-driver-for-you trick gets a different shape: <em>report descriptors</em> instead of class triples.
+  </p>
+
+  <nav class="chapter-nav" aria-label="Chapter navigation">
+    <a class="prev" href="../partIII/14_rp2350_usb.html">
+      <div class="nav-label">← Previous</div>
+      <div class="nav-title">Ch 14: RP2350 USB hardware</div>
+    </a>
+    <a class="next placeholder" href="#">
+      <div class="nav-label">Next →</div>
+      <div class="nav-title">Ch 16 — pending (HID, boot vs report)</div>
+    </a>
+  </nav>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

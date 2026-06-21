@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Cross-reference of every USB Book chapter, its paired sample, and the verification command per OS.">
+  <title>edevkit USB Book — Chapter ↔ Sample matrix</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Matrix</span>
+      <span class="grow"></span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · cross-reference</div>
+    <h1>Chapter ↔ Sample matrix</h1>
+  </header>
+
+<div class="matrix-shell">
+  
+  <p class="matrix-intro">Every chapter, its paired sample, and the one-line verification command per OS. Use this page when you've forgotten "where do I confirm DFU is exposed correctly?" or "which sample matches Chapter 18?"</p>
+
+  <div class="legend-row">
+    <span><span class="status ready">written</span> chapter shipped &amp; verified</span>
+    <span><span class="status theory">theory</span> theory chapter — no sample</span>
+    <span><span class="status pending">pending</span> waiting on its sample</span>
+  </div>
+
+  <table class="matrix-table">
+    <thead>
+      <tr>
+        <th>Ch</th>
+        <th>Title</th>
+        <th>Sample</th>
+        <th>Status</th>
+        <th>Verify (Linux / mac / Win)</th>
+        <th>Verified</th>
+      </tr>
+    </thead>
+    <tbody>
+
+      <tr class="tier-row"><td colspan="6">Part I — USB from first principles (theory only)</td></tr>
+      <tr><td class="ch-num">01</td><td><a href="partI/01_why_usb.html">Why USB is the way it is</a></td><td>—</td><td><span class="status theory">theory</span></td><td>—</td><td class="verified">2026-05-06</td></tr>
+      <tr><td class="ch-num">02</td><td><a href="partI/02_electrical.html">Electrical &amp; USB-C basics</a></td><td>—</td><td><span class="status theory">theory</span></td><td>—</td><td class="verified">2026-05-06</td></tr>
+      <tr><td class="ch-num">03</td><td><a href="partI/03_packets.html">Packets &amp; framing</a></td><td>—</td><td><span class="status theory">theory</span></td><td>—</td><td class="verified">2026-05-06</td></tr>
+      <tr><td class="ch-num">04</td><td><a href="partI/04_transfer_types.html">Transfer types</a></td><td>—</td><td><span class="status theory">theory</span></td><td>—</td><td class="verified">2026-05-06</td></tr>
+      <tr><td class="ch-num">05</td><td><a href="partI/05_enumeration.html">Enumeration walkthrough</a></td><td class="sample">usb_01</td><td><span class="status theory">theory</span></td><td class="verify-cmd">lsusb -v / system_profiler / usbview</td><td class="verified">2026-05-06</td></tr>
+
+      <tr class="tier-row"><td colspan="6">Part II — Descriptors (Tier 0 samples)</td></tr>
+      <tr><td class="ch-num">06</td><td><a href="partII/06_descriptors.html">Device, configuration, interface, endpoint</a></td><td class="sample"><a href="/docs/firmware_sample_usb_02.html">usb_02</a></td><td><span class="status theory">chapter + sample</span></td><td class="verify-cmd">lsusb -v -d &lt;vid:pid&gt;</td><td class="verified">2026-05-11</td></tr>
+      <tr><td class="ch-num">07</td><td><a href="partII/07_strings.html">String descriptors &amp; per-unit identity</a></td><td class="sample"><a href="/docs/firmware_sample_usb_03.html">usb_03</a></td><td><span class="status theory">chapter + sample</span></td><td class="verify-cmd">lsusb -v / ioreg -p IOUSB</td><td class="verified">2026-05-11</td></tr>
+      <tr><td class="ch-num">08</td><td><a href="partII/08_control_transfers.html">Control transfers in depth</a></td><td class="sample"><a href="/docs/firmware_sample_usb_04.html">usb_04</a></td><td><span class="status theory">chapter + sample</span></td><td class="verify-cmd">pyusb / verify.py</td><td class="verified">2026-05-11</td></tr>
+      <tr><td class="ch-num">09</td><td>BOS, platform capability, MS OS 2.0</td><td class="sample">usb_25</td><td><span class="status pending">pending</span></td><td class="verify-cmd">lsusb -v / usbview MS OS</td><td class="verified">—</td></tr>
+
+      <tr class="tier-row"><td colspan="6">Part III — Zephyr USB-Device-Next</td></tr>
+      <tr><td class="ch-num">10</td><td>Why next, not legacy</td><td>—</td><td><span class="status pending">pending</span></td><td>—</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">11</td><td>Devicetree bindings &amp; Kconfig</td><td>—</td><td><span class="status pending">pending</span></td><td>—</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">12</td><td>Writing a class driver</td><td>—</td><td><span class="status pending">pending</span></td><td>—</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">13</td><td>Endpoint buffers, MPS, ZLPs</td><td>—</td><td><span class="status pending">pending</span></td><td>—</td><td class="verified">—</td></tr>
+
+      <tr><td class="ch-num">14</td><td>Inside RP2350 — the USB hardware subsystem</td><td>—</td><td><span class="status pending">pending</span></td><td>—</td><td class="verified">—</td></tr>
+
+
+      <tr class="tier-row"><td colspan="6">Part IV — Standard classes (Tier 1 samples)</td></tr>
+      <tr><td class="ch-num">15</td><td><a href="partIV/15_cdc_acm.html">CDC ACM</a></td><td class="sample"><a href="/docs/firmware_sample_usb_10.html">usb_10</a>, usb_11</td><td><span class="status theory">chapter + design doc (sample not yet built)</span></td><td class="verify-cmd">screen / pyserial</td><td class="verified">2026-05-14 (doc)</td></tr>
+      <tr><td class="ch-num">16</td><td>HID — boot vs report</td><td class="sample">usb_12, usb_13</td><td><span class="status pending">pending</span></td><td class="verify-cmd">OS-native HID handling</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">17</td><td>HID generic / raw reports</td><td class="sample">usb_14</td><td><span class="status pending">pending</span></td><td class="verify-cmd">hidapi loop</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">18</td><td>Mass Storage (BBB)</td><td class="sample">usb_15</td><td><span class="status pending">pending</span></td><td class="verify-cmd">mount / Finder / File Explorer</td><td class="verified">—</td></tr>
+
+      <tr class="tier-row"><td colspan="6">Part V — Composite, vendor, driverless (Tier 2 samples)</td></tr>
+      <tr><td class="ch-num">19</td><td>Interface Association Descriptors</td><td class="sample">usb_20</td><td><span class="status pending">pending</span></td><td class="verify-cmd">two ttys / two COMs</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">20</td><td>CDC + HID composite</td><td class="sample">usb_21</td><td><span class="status pending">pending</span></td><td class="verify-cmd">tty + hidapi</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">21</td><td>Vendor-specific class</td><td class="sample">usb_22</td><td><span class="status pending">pending</span></td><td class="verify-cmd">libusb / nusb test</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">22</td><td>WinUSB / WCID</td><td class="sample">usb_23</td><td><span class="status pending">pending</span></td><td class="verify-cmd">usbview MS WCID</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">23</td><td>BOS + MS OS 2.0</td><td class="sample">usb_24</td><td><span class="status pending">pending</span></td><td class="verify-cmd">usbview / libusb</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">24</td><td>Multi-bulk-IN vendor device</td><td class="sample">usb_25</td><td><span class="status pending">pending</span></td><td class="verify-cmd">libusb endpoint enum</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">25</td><td>Isochronous (audio-lite)</td><td class="sample">usb_26</td><td><span class="status pending">pending</span></td><td class="verify-cmd">arecord / AudioMIDI Setup</td><td class="verified">—</td></tr>
+
+      <tr class="tier-row"><td colspan="6">Part VI — Performance (Tier 3 samples)</td></tr>
+      <tr><td class="ch-num">26</td><td>Throughput math &amp; back-pressure</td><td class="sample">usb_30</td><td><span class="status pending">pending</span></td><td class="verify-cmd">edevkit-usbtest throughput</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">27</td><td>Ring buffers &amp; zero-copy</td><td class="sample">usb_30</td><td><span class="status pending">pending</span></td><td class="verify-cmd">edevkit-usbtest stress</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">28</td><td>Latency, polling, NAK</td><td class="sample">usb_30</td><td><span class="status pending">pending</span></td><td class="verify-cmd">timestamped capture</td><td class="verified">—</td></tr>
+
+      <tr class="tier-row"><td colspan="6">Part VII — Putting it together</td></tr>
+      <tr><td class="ch-num">29</td><td>Designing the topology</td><td>—</td><td><span class="status pending">pending</span></td><td>—</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">30</td><td>Coexisting classes</td><td>—</td><td><span class="status pending">pending</span></td><td>—</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">31</td><td>DFU, suspend/wake, alt settings</td><td class="sample">usb_31..35</td><td><span class="status pending">pending</span></td><td class="verify-cmd">dfu-util / pmset</td><td class="verified">—</td></tr>
+
+      <tr class="tier-row"><td colspan="6">Part VIII — Debugging &amp; tools (Tier 4 samples)</td></tr>
+      <tr><td class="ch-num">32</td><td>Wireshark, USBPcap, usbmon, lsusb</td><td class="sample">usb_42</td><td><span class="status pending">pending</span></td><td class="verify-cmd">Wireshark + replay</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">33</td><td>Common bugs (ZLP, MPS, IAD)</td><td class="sample">usb_40, usb_41</td><td><span class="status pending">pending</span></td><td class="verify-cmd">edevkit-usbtest validate</td><td class="verified">—</td></tr>
+      <tr><td class="ch-num">34</td><td>edevkit-usbtest harness</td><td>—</td><td><span class="status pending">pending</span></td><td>—</td><td class="verified">—</td></tr>
+
+      <tr class="tier-row"><td colspan="6">Appendix</td></tr>
+      <tr><td class="ch-num">A</td><td><a href="appendix/glossary.html">Glossary</a></td><td>—</td><td><span class="status theory">reference</span></td><td>—</td><td class="verified">2026-05-06</td></tr>
+      <tr><td class="ch-num">B</td><td><a href="appendix/cheatsheet.html">Cheatsheet</a></td><td>—</td><td><span class="status theory">reference</span></td><td>—</td><td class="verified">2026-05-06</td></tr>
+      <tr><td class="ch-num">C</td><td><a href="appendix/troubleshooting.html">Troubleshooting</a></td><td>—</td><td><span class="status theory">reference</span></td><td>—</td><td class="verified">2026-05-08</td></tr>
+      <tr><td class="ch-num">D</td><td><a href="appendix/stack_comparison.html">USB stack comparison — TinyUSB vs UDN</a></td><td>—</td><td><span class="status ready">written</span></td><td>—</td><td class="verified">2026-05-18</td></tr>
+
+    </tbody>
+  </table>
+
+  <p class="matrix-footnote">
+    A chapter is "ready" only when (a) its sample builds on rpi_pico2/rp2350a/m33, (b) all three OS verification commands have been run on real hardware, and (c) the verified date in the chapter frontmatter matches today.
+  </p>
+</div>
+
+  </div>
+
+  <script src="_assets/book.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,1158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Design + code flow for usb_04_control_demo — the fourth edevkit USB sample. Implements four vendor control requests on EP0 to teach all three control-transfer shapes (3-stage IN, 3-stage OUT, 2-stage no-data) plus deliberate STALL recovery.">
+  <title>edevkit — Firmware · usb_04 design + code flow</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --brand: oklch(56% 0.16 215); --brand-2: oklch(50% 0.18 235);
+    --brand-soft: oklch(94% 0.04 215); --brand-fg: oklch(99% 0.005 215);
+    --accent: oklch(72% 0.15 70); --accent-soft: oklch(95% 0.05 70);
+    --good: oklch(58% 0.14 145); --good-soft: oklch(94% 0.05 145);
+    --warn: oklch(72% 0.16 80); --warn-soft: oklch(95% 0.07 80);
+    --danger: oklch(56% 0.20 28); --danger-soft: oklch(95% 0.05 28);
+
+    --bg: oklch(99.2% 0.003 240); --bg-soft: oklch(97% 0.005 240);
+    --bg-elev: oklch(100% 0 0);
+    --line: oklch(91% 0.012 240); --line-soft: oklch(94.5% 0.008 240);
+    --line-strong: oklch(85% 0.014 240);
+    --grid-dot: oklch(0% 0 0 / .055);
+    --code-bg: oklch(96.5% 0.007 240); --code-border: oklch(91% 0.012 240);
+    --fg: oklch(20% 0.02 240); --fg-2: oklch(36% 0.02 240);
+    --muted: oklch(50% 0.02 240); --faint: oklch(64% 0.015 240);
+
+    --r-2: 6px; --r-3: 10px; --r-pill: 999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --ease: cubic-bezier(.2, 0, 0, 1); --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+      --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+      --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+      --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+      --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+      --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+      --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+      --bg-elev: oklch(20% 0.018 240);
+      --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+      --line-strong: oklch(35% 0.022 240);
+      --grid-dot: oklch(100% 0 0 / .05);
+      --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+      --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+      --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+    --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+    --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+    --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+    --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+    --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+    --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+    --bg-elev: oklch(20% 0.018 240);
+    --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+    --line-strong: oklch(35% 0.022 240);
+    --grid-dot: oklch(100% 0 0 / .05);
+    --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+    --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+    --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-text); font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg); min-height: 100dvh;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px; background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1080px; margin: 0 auto; padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none; font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600; color: var(--fg-2);
+    padding: 6px 10px; border-radius: var(--r-2);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .doc-tag {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--faint); padding: 4px 10px;
+    border-radius: var(--r-pill); background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .grow { flex: 1; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 28px 96px; }
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px; margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted);
+    padding: 5px 11px; background: var(--bg-soft);
+    border: 1px solid var(--line); border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+  header.hero h1 {
+    font-family: var(--font-sans); font-size: 38px; line-height: 1.15;
+    margin: 18px 0 12px; letter-spacing: -0.02em; font-weight: 700;
+  }
+  header.hero .lede {
+    font-size: 18px; line-height: 1.55; color: var(--fg-2); max-width: 720px;
+  }
+
+  h2 {
+    font-family: var(--font-sans); font-size: 24px;
+    margin-top: 56px; margin-bottom: 14px;
+    letter-spacing: -0.018em; font-weight: 700;
+    padding-bottom: 6px; border-bottom: 1px solid var(--line-soft);
+  }
+  h3 {
+    font-family: var(--font-sans); font-size: 19px;
+    margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-family: var(--font-mono); font-size: 12px;
+    margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  strong { font-weight: 600; }
+
+  code, pre, .mono { font-family: var(--font-mono); }
+  :not(pre) > code {
+    background: var(--code-bg); padding: 1px 6px;
+    border-radius: 4px; font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--code-border);
+    border-radius: var(--r-3); padding: 14px 16px;
+    overflow-x: auto; font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+  .file-label {
+    display: inline-block; font-family: var(--font-mono); font-size: 11px;
+    font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--brand); background: var(--brand-soft);
+    padding: 4px 10px; border-radius: var(--r-pill);
+    border: 1px solid color-mix(in oklch, var(--brand) 30%, transparent);
+    margin: 18px 0 -6px;
+  }
+
+  .callout {
+    margin: 18px 0; padding: 14px 18px; border-radius: var(--r-3);
+    background: var(--bg-soft); border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.info    { background: var(--brand-soft);  border-left-color: var(--brand); }
+  .callout.warn    { background: var(--warn-soft);   border-left-color: var(--warn); }
+  .callout.good    { background: var(--good-soft);   border-left-color: var(--good); }
+  .callout.danger  { background: var(--danger-soft); border-left-color: var(--danger); }
+  .callout-title {
+    display: inline-block; font-family: var(--font-mono);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700; color: var(--muted); margin-bottom: 4px;
+  }
+  .callout.info .callout-title    { color: var(--brand); }
+  .callout.warn .callout-title    { color: oklch(45% 0.18 80); }
+  .callout.good .callout-title    { color: var(--good); }
+  .callout.danger .callout-title  { color: var(--danger); }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child  { margin-bottom: 0; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 18px 0; font-size: 14px;
+    background: var(--bg-elev); border: 1px solid var(--line);
+    border-radius: var(--r-3); overflow: hidden;
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 8px 12px; text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  thead th {
+    background: var(--bg-soft); font-family: var(--font-sans);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  td.field { font-family: var(--font-mono); font-weight: 600; color: var(--fg); }
+  td.hex   { font-family: var(--font-mono); color: var(--brand); }
+
+  .toc { margin: 24px 0 40px; padding: 18px 22px; background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--r-3); }
+  .toc-title { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { margin: 4px 0; color: var(--fg-2); }
+  .toc li a { color: var(--fg-2); text-decoration: none; font-weight: 500; }
+  .toc li a:hover { color: var(--brand); }
+
+  .credits {
+    margin: 32px 0 0; padding: 12px 14px;
+    background: var(--bg-soft); border: 1px solid var(--line-soft);
+    border-radius: var(--r-3); font-size: 12px; line-height: 1.55;
+    color: var(--fg-2);
+  }
+  .credits strong { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" title="Back to docs hub">
+      <span aria-hidden="true">←</span> edevkit
+    </a>
+    <span class="doc-tag">Firmware · usb_04 design</span>
+    <span class="grow"></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · firmware · USB sample design doc</div>
+  <h1>usb_04 — control transfers in depth</h1>
+  <p class="lede">Design + code flow for the fourth sample in the USB Book series. Carries usb_03's descriptor tree forward byte-for-byte, then implements <strong>four vendor control requests</strong> on EP0 that exercise every shape a control transfer can take: 3-stage IN, 3-stage OUT, 2-stage no-data, and a deliberate STALL. This is the first sample where the device <em>responds to commands</em> — every prior sample only sat still while the host read descriptors out of it.</p>
+</header>
+
+<div class="callout info">
+  <div class="callout-title">Authoring status — sample built 2026-05-11, paired with Ch 08</div>
+  <p>This doc is the locking spec for <code>firmware/samples/usb/usb_04/</code> and stands in for USB Book Ch 08 ("Control transfers in depth") until that chapter is formally split out. Every API claim has been verified against <code>$ZEPHYR_BASE/include/zephyr/usb/usbd.h</code> and <code>usb_ch9.h</code> on Zephyr v4.4.99-ge2a556ff6417, and every Setup-packet field is traceable to USB 2.0 §9.3.</p>
+</div>
+
+<div class="toc">
+  <div class="toc-title">Sections</div>
+  <ol>
+    <li><a href="#goal">Goal &amp; scope</a></li>
+    <li><a href="#delta">What changes vs usb_03</a></li>
+    <li><a href="#requests">The four vendor requests, byte-level</a></li>
+    <li><a href="#state-machine">The EP0 control-transfer state machine</a></li>
+    <li><a href="#defenses">Carry-forward defenses + new (G1–G18)</a></li>
+    <li><a href="#layout">File layout</a></li>
+    <li><a href="#flow">Boot &amp; runtime flow</a></li>
+    <li><a href="#code-main">Code: <code>src/main.c</code></a></li>
+    <li><a href="#code-class">Code: <code>src/control_demo.c</code></a></li>
+    <li><a href="#code-rest">Code: <code>prj.conf</code> · <code>CMakeLists.txt</code> · <code>boards/*.overlay</code></a></li>
+    <li><a href="#build">Build, flash, RTT</a></li>
+    <li><a href="#verify">Verify on the host (Linux · macOS · Windows)</a></li>
+    <li><a href="#pitfalls">Anticipated pitfalls</a></li>
+    <li><a href="#credits-section">Attribution</a></li>
+  </ol>
+</div>
+
+<!-- ─────────────────────────── 1. GOAL ─────────────────────────── -->
+
+<h2 id="goal">1. Goal &amp; scope</h2>
+
+<p><strong>One sentence:</strong> implement four custom vendor requests on EP0 — <code>GET_UPTIME</code>, <code>SET_LOG_MSG</code>, <code>SET_LED_BLINK</code>, <code>STALL_ME</code> — wired through Zephyr's <code>control_to_host</code> and <code>control_to_dev</code> class callbacks, so that the wire-level mechanics of every control-transfer shape (3-stage IN, 3-stage OUT, 2-stage no-data, deliberate STALL) become directly observable from a 20-line Python script on the host.</p>
+
+<p>This is the first sample where the device <em>does work</em> in response to host requests. Up to now (usb_01..03) the device has only existed as a static blob of descriptor bytes that the host enumerates and then ignores. EP0 has been delivering exactly the standard requests <code>GET_DESCRIPTOR</code> and <code>SET_ADDRESS</code>; everything else has gone unanswered. usb_04 keeps the descriptor tree frozen and turns on the request path.</p>
+
+<p>Pairs with <a href="/docs/usb/partII/08_control_transfers.html">USB Book Ch 08 — Control transfers in depth</a> (chapter not yet split out; this design doc is the source-of-truth until it is).</p>
+
+<div class="callout info">
+  <div class="callout-title">Why this shape was chosen</div>
+  <p>Four requests is the minimum that hits every transfer shape exactly once. Adding a fifth would teach nothing new; dropping any one would leave a gap. The selection is pedagogical, not realistic — a production protocol would group commands by function and avoid the <code>STALL_ME</code> entirely. What you're learning here is the wire shape, not the API design.</p>
+</div>
+
+<h3>What usb_04 does <em>not</em> cover</h3>
+<ul>
+  <li><strong>Bulk I/O.</strong> EP1 IN and EP1 OUT still NAK forever, same as usb_02/03. Bulk endpoints have their own dedicated sample later (likely a <code>usb_05_bulk_loopback</code> paired with Ch 13 "Endpoint buffers, MPS, ZLPs"). Mixing control and bulk in one sample would force the reader to debug two new things at once.</li>
+  <li><strong>Standard or class requests.</strong> The Zephyr core handles all 11 standard device requests (USB 2.0 §9.4) — <code>GET_STATUS</code>, <code>SET_ADDRESS</code>, <code>GET_DESCRIPTOR</code>, <code>SET_CONFIGURATION</code>, etc. — without our intervention. Class-specific requests would only fire if we declared a recognised class (HID, CDC, MSC); we're vendor-class, so the host never issues them.</li>
+  <li><strong>Asynchronous control transfers.</strong> Zephyr's callback model is synchronous: <code>control_to_host</code> must fill <code>buf</code> and return before the function exits. Long-running responses (read a sensor that takes 50 ms) need a different pattern — out of scope.</li>
+  <li><strong>Interface alternate settings &amp; multi-config.</strong> Slated for <code>usb_31..35</code> (Ch 31).</li>
+</ul>
+
+<h3>Locked decisions</h3>
+<table>
+  <thead><tr><th>Field</th><th>Value</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td class="field">VID</td><td class="hex">0x1209</td><td>pid.codes open-hardware umbrella — constant across every sample.</td></tr>
+    <tr><td class="field">PID</td><td class="hex">0xede4</td><td><code>0xede0 + 4</code>. Grep-friendly in captures.</td></tr>
+    <tr><td class="field">Class name (Zephyr)</td><td><code>"control_demo"</code></td><td>Must match <code>USBD_DEFINE_CLASS</code> and <code>usbd_register_class</code> (G3).</td></tr>
+    <tr><td class="field">Product string</td><td>"usb_04 - control_demo"</td><td>ASCII hyphen — G12.</td></tr>
+    <tr><td class="field">Interface string</td><td>"Vendor (control demo, 4 EP0 requests)"</td><td>Says what's actually demonstrated.</td></tr>
+    <tr><td class="field">Vendor request recipient</td><td>INTERFACE (1)</td><td>Cleanest routing — core delivers directly to the class's <code>control_to_*</code> callbacks. <code>wIndex</code> carries the interface number (0).</td></tr>
+    <tr><td class="field">bRequest range</td><td><code>0x01..0x04</code></td><td>Vendor-defined; no spec reservation. We use sequential values for the demo set.</td></tr>
+    <tr><td class="field">bcdDevice</td><td class="hex">0x0104</td><td>Bumped from usb_03's <code>0x0103</code> to bust the macOS descriptor cache.</td></tr>
+    <tr><td class="field">Class triple</td><td>0xFF/0xFF/0xFF (vendor)</td><td>Carried over from usb_03. No host driver loads → vendor requests go through libusb / pyusb / WinUSB.</td></tr>
+    <tr><td class="field">Board</td><td><code>rpi_pico2/rp2350a/m33</code></td><td>Cortex-M33 cores, not Hazard3.</td></tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 2. DELTA ─────────────────────────── -->
+
+<h2 id="delta">2. What changes vs usb_03</h2>
+
+<table>
+  <thead><tr><th>Aspect</th><th>usb_03</th><th>usb_04</th></tr></thead>
+  <tbody>
+    <tr><td>PID</td><td class="hex">0xede3</td><td class="hex">0xede4</td></tr>
+    <tr><td>bcdDevice</td><td class="hex">0x0103</td><td class="hex">0x0104</td></tr>
+    <tr><td>Class name</td><td><code>"strings_demo"</code></td><td><code>"control_demo"</code></td></tr>
+    <tr><td>Class file</td><td><code>src/strings_demo.c</code></td><td><code>src/control_demo.c</code></td></tr>
+    <tr><td>Product string</td><td>"usb_03 - strings_demo"</td><td>"usb_04 - control_demo"</td></tr>
+    <tr><td>Interface string</td><td>"Vendor (descriptor demo, no I/O)"</td><td>"Vendor (control demo, 4 EP0 requests)"</td></tr>
+    <tr><td>Descriptor tree</td><td>1 iface, 2 bulk EPs, <code>wTotalLength = 0x0020</code></td><td><strong>identical</strong> — bytes do not change.</td></tr>
+    <tr><td>Class vtable callbacks</td><td><code>init, enable, disable, get_desc</code></td><td>same four + <strong><code>control_to_host</code> + <code>control_to_dev</code></strong></td></tr>
+    <tr><td>Vendor requests handled</td><td>0</td><td>4 (<code>GET_UPTIME</code>, <code>SET_LOG_MSG</code>, <code>SET_LED_BLINK</code>, <code>STALL_ME</code>)</td></tr>
+    <tr><td>Verification path</td><td><code>lsusb -v</code> / <code>ioreg</code> read descriptors</td><td>same + <code>pyusb</code> / <code>libusb</code> issue vendor control transfers</td></tr>
+    <tr><td>New gotchas introduced</td><td>G11–G15</td><td>G16, G17, G18 (control-transfer specifics)</td></tr>
+  </tbody>
+</table>
+
+<p>Notice that the descriptor tree did not change — usb_04 is a pure <em>behaviour</em> addition. From the host's perspective, before the first vendor request is issued, usb_04 is byte-indistinguishable from usb_03 (modulo PID and product string). The new behaviour only manifests when host code starts sending <code>libusb_control_transfer()</code> calls.</p>
+
+<!-- ─────────────────────────── 3. REQUESTS ─────────────────────────── -->
+
+<h2 id="requests">3. The four vendor requests, byte-level</h2>
+
+<p>Every USB control transfer starts with an 8-byte <strong>Setup packet</strong> on EP0. The format (USB 2.0 §9.3, Table 9-2) is fixed:</p>
+
+<pre><code>Offset  Size  Field             Meaning
+  0      1    bmRequestType     bit 7    : direction (0 = host→device, 1 = device→host)
+                                 bits 5-6 : type      (0 std, 1 class, 2 vendor, 3 reserved)
+                                 bits 0-4 : recipient (0 device, 1 interface, 2 endpoint)
+  1      1    bRequest          opaque to USB — meaning defined by the class / vendor
+  2      2    wValue            request-specific, little-endian
+  4      2    wIndex            request-specific, little-endian; for INTERFACE recipient → iface number
+  6      2    wLength           number of bytes to follow in the DATA stage (0 means no DATA stage)
+</code></pre>
+
+<p>For all four usb_04 requests, <code>bmRequestType.type = VENDOR (2)</code> and <code>bmRequestType.recipient = INTERFACE (1)</code>. Only the direction bit and <code>bRequest</code> distinguish them. <code>wIndex = 0</code> always (our one and only interface number).</p>
+
+<h3>3a. Setup-packet bytes per request</h3>
+
+<table>
+  <thead>
+    <tr><th>bRequest</th><th>Name</th><th>bmRequestType</th><th>wValue</th><th>wIndex</th><th>wLength</th><th>Shape</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="hex">0x01</td>
+      <td class="field">GET_UPTIME</td>
+      <td class="hex">0xC1</td>
+      <td class="hex">0x0000</td>
+      <td class="hex">0x0000</td>
+      <td class="hex">0x0008</td>
+      <td>3-stage IN</td>
+    </tr>
+    <tr>
+      <td class="hex">0x02</td>
+      <td class="field">SET_LOG_MSG</td>
+      <td class="hex">0x41</td>
+      <td class="hex">0x0000</td>
+      <td class="hex">0x0000</td>
+      <td class="hex">≤ 0x0020</td>
+      <td>3-stage OUT</td>
+    </tr>
+    <tr>
+      <td class="hex">0x03</td>
+      <td class="field">SET_LED_BLINK</td>
+      <td class="hex">0x41</td>
+      <td class="hex">count</td>
+      <td class="hex">0x0000</td>
+      <td class="hex">0x0000</td>
+      <td>2-stage (no DATA)</td>
+    </tr>
+    <tr>
+      <td class="hex">0x04</td>
+      <td class="field">STALL_ME</td>
+      <td class="hex">0xC1 or 0x41</td>
+      <td class="hex">0x0000</td>
+      <td class="hex">0x0000</td>
+      <td class="hex">0x0000</td>
+      <td>SETUP → STALL</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Decoding the bmRequestType bytes:</p>
+
+<pre><code>0xC1 = 0b 1 10 00001         → IN  | Vendor | Interface
+0x41 = 0b 0 10 00001         → OUT | Vendor | Interface
+</code></pre>
+
+<h3>3b. What each request teaches</h3>
+
+<table>
+  <thead><tr><th>Request</th><th>Wire shape</th><th>What's new about it</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">GET_UPTIME</td>
+      <td>SETUP → DATA (in, 8B) → STATUS (out, 0B)</td>
+      <td><strong>Three-stage host-IN.</strong> Device fills 8 bytes (a little-endian <code>k_uptime_get()</code> in ms) into the DATA stage. STATUS stage is a zero-length OUT from host → device that ACKs receipt. This is the same shape as <code>GET_DESCRIPTOR</code>, which is how every prior sample's descriptor reads worked — only the bRequest and the data source change.</td>
+    </tr>
+    <tr>
+      <td class="field">SET_LOG_MSG</td>
+      <td>SETUP → DATA (out, N≤32B) → STATUS (in, 0B)</td>
+      <td><strong>Three-stage host-OUT.</strong> Host sends N bytes of UTF-8 text in the DATA stage; device LOG_HEXDUMPs them. STATUS stage is a zero-length IN from device → host that ACKs successful receipt. <strong>The STATUS direction is always opposite to the DATA direction</strong> (USB 2.0 §8.5.3); that's how the host knows when the device has finished consuming the payload.</td>
+    </tr>
+    <tr>
+      <td class="field">SET_LED_BLINK</td>
+      <td>SETUP → STATUS (in, 0B)</td>
+      <td><strong>Two-stage host-OUT with no DATA stage.</strong> <code>wValue</code> carries the "count" payload (up to 16 bits). The entire transfer is just two packets on the wire. This is the most efficient control-transfer shape, used when payload fits in <code>wValue</code>+<code>wIndex</code>'s 32 bits combined — common for "set a flag" / "trigger an action" requests in real protocols.</td>
+    </tr>
+    <tr>
+      <td class="field">STALL_ME</td>
+      <td>SETUP → STALL</td>
+      <td><strong>Deliberate protocol STALL.</strong> Device's <code>control_to_*</code> returns <code>-ENOTSUP</code>; the Zephyr core responds to the host with an EP0 STALL handshake. Host's <code>libusb_control_transfer</code> returns <code>LIBUSB_ERROR_PIPE (-9)</code>. EP0 STALLs auto-clear on the next Setup packet per USB 2.0 §8.5.3.4 — unlike bulk-EP STALLs which need a <code>CLEAR_FEATURE(ENDPOINT_HALT)</code> to recover. <em>That's the entire teaching point of this request: STALL on EP0 is cheap and self-healing.</em></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 4. STATE MACHINE ─────────────────────────── -->
+
+<h2 id="state-machine">4. The EP0 control-transfer state machine</h2>
+
+<p>This is the conceptual heart of Ch 08. Pause here.</p>
+
+<p>USB control transfers are always <strong>two or three stages</strong>. Every control transfer begins with a SETUP transaction (the host sends an 8-byte Setup packet to EP0 OUT). What happens next depends on <code>wLength</code> and the direction bit in <code>bmRequestType</code>.</p>
+
+<h3>4a. Three shapes, side by side</h3>
+
+<pre><code>3-stage host-IN  (wLength &gt; 0, direction = 1)
+                                                          GET_UPTIME, GET_DESCRIPTOR
+   host                                  device
+    │  ── SETUP    ─────────────────────►  │   8-byte Setup packet
+    │  ◄──── DATA in (1..N packets) ─────  │   device fills, host receives
+    │  ── STATUS out (ZLP) ──────────────► │   host ACKs by sending ZLP
+
+3-stage host-OUT (wLength &gt; 0, direction = 0)
+                                                          SET_LOG_MSG, SET_CONFIGURATION
+   host                                  device
+    │  ── SETUP   ──────────────────────►  │   8-byte Setup packet
+    │  ── DATA out (1..N packets) ──────►  │   host sends, device consumes
+    │  ◄──── STATUS in (ZLP) ────────────  │   device ACKs by sending ZLP
+
+2-stage          (wLength = 0, direction is don't-care for the wire)
+                                                          SET_LED_BLINK, SET_ADDRESS
+   host                                  device
+    │  ── SETUP   ──────────────────────►  │   8-byte Setup packet (payload in wValue/wIndex)
+    │  ◄──── STATUS in (ZLP) ────────────  │   device ACKs by sending ZLP
+
+STALL (any shape)
+   host                                  device
+    │  ── SETUP   ──────────────────────►  │   8-byte Setup packet
+    │  ◄──── STALL ─────────────────────   │   device rejects with STALL handshake
+                                              (auto-clears on next SETUP — §8.5.3.4)
+</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">Why STATUS always flips direction</div>
+  <p>The STATUS stage exists to give the <em>recipient of the DATA stage</em> a chance to say "done." In a host-IN transfer, the host receives DATA, so the host sends the STATUS ZLP. In a host-OUT transfer, the device receives DATA, so the device sends the STATUS ZLP. In a 2-stage transfer, there's no DATA, so the host arbitrarily sends the STATUS ZLP (it always flows host → device). This isn't a Zephyr convention — it's USB 2.0 §8.5.3.</p>
+</div>
+
+<h3>4b. Where Zephyr's callbacks fit</h3>
+
+<p>The Zephyr USB-Device-Next core handles the wire-level state machine for you. Your job is to fill in two callbacks; the core invokes them at exactly one moment in the transfer:</p>
+
+<table>
+  <thead><tr><th>Callback</th><th>Fires when</th><th>What you do</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>control_to_host</code></td>
+      <td>After SETUP arrives, before the device-IN DATA packets go out</td>
+      <td>Inspect <code>setup-&gt;bRequest</code> / <code>wValue</code>; fill response bytes into <code>buf</code> via <code>net_buf_add_*</code>. Return <code>0</code> if handled, <code>-ENOTSUP</code> for STALL.</td>
+    </tr>
+    <tr>
+      <td><code>control_to_dev</code></td>
+      <td>After the host-OUT DATA stage completes (or after SETUP for 2-stage host-OUTs)</td>
+      <td>For 3-stage OUT: read payload from <code>buf-&gt;data[0..buf-&gt;len]</code>. For 2-stage: payload is in <code>setup-&gt;wValue</code> / <code>setup-&gt;wIndex</code>. Act on it. Return <code>0</code> or <code>-ENOTSUP</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Note what the core does <em>not</em> tell you about: SETUP arrival, individual DATA packets, STATUS completion. Those are the core's job. You only see the request after enough wire-level activity has happened to determine the request's payload — and you're done as soon as you've supplied (or consumed) that payload.</p>
+
+<h3>4c. Routing — how the core decides which class gets the request</h3>
+
+<p>From <code>$ZEPHYR_BASE/subsys/usb/device_next/usbd_ch9.c:976</code>:</p>
+
+<pre><code>switch (setup-&gt;RequestType.recipient) {
+    case USB_REQTYPE_RECIPIENT_ENDPOINT:
+        c_nd = usbd_class_get_by_ep   (uds_ctx, setup-&gt;wIndex);   // wIndex carries EP address
+        break;
+    case USB_REQTYPE_RECIPIENT_INTERFACE:
+        c_nd = usbd_class_get_by_iface(uds_ctx, setup-&gt;wIndex);   // wIndex carries iface number
+        break;
+    case USB_REQTYPE_RECIPIENT_DEVICE:
+        c_nd = usbd_class_get_by_req  (uds_ctx, setup-&gt;bRequest); // device-level vreq table
+        break;
+}
+if (c_nd != NULL) {
+    if (reqtype_is_to_device(setup))
+        ret = usbd_class_control_to_dev (c_nd-&gt;c_data, setup, dbuf);
+    else
+        ret = usbd_class_control_to_host(c_nd-&gt;c_data, setup, dbuf);
+}
+</code></pre>
+
+<p>Three consequences:</p>
+
+<ol>
+  <li><strong>Recipient determines routing, not type.</strong> A standard or class request with recipient = INTERFACE still lands in <code>control_to_*</code>. The class is expected to filter on <code>RequestType.type</code> itself. This is <strong>G16</strong>.</li>
+  <li><strong>wIndex semantics depend on recipient.</strong> For INTERFACE → iface number. For ENDPOINT → endpoint address. Get this wrong and the core routes your request to a different class (or no class).</li>
+  <li><strong>For recipient = DEVICE with type = VENDOR</strong>, the core checks a per-bRequest registration table (the 4th arg to <code>USBD_DEFINE_CLASS</code>, which we pass as <code>NULL</code>). Falls back to a device-level vendor handler if registered. usb_04 uses INTERFACE specifically to avoid this routing complexity.</li>
+</ol>
+
+<!-- ─────────────────────────── 5. DEFENSES ─────────────────────────── -->
+
+<h2 id="defenses">5. Carry-forward defenses + new (G1–G18)</h2>
+
+<p>Gotchas G1–G15 carry forward from <code>usb_01</code>, <code>usb_02</code>, and <code>usb_03</code>. usb_04 introduces three new gotchas specific to control transfers.</p>
+
+<h3>Carried over (re-state, re-defend)</h3>
+
+<table>
+  <thead><tr><th>#</th><th>Gotcha</th><th>Defense in usb_04</th></tr></thead>
+  <tbody>
+    <tr><td>G1–G14</td><td>Descriptor-tree and string-handling gotchas — already covered in <a href="/docs/firmware_sample_usb_02.html#defenses">usb_02 §4</a> and <a href="/docs/firmware_sample_usb_03.html#defenses">usb_03 §5</a>.</td><td>All carry through unchanged — usb_04's descriptor tree is byte-identical to usb_03's.</td></tr>
+    <tr><td>G15</td><td>Don't double-add the configuration-string descriptor.</td><td><code>main.c</code> does five explicit string adds (lang, mfr, product, serial, iface_str), then lets <code>usbd_add_configuration()</code> auto-register <code>cfg_str</code>. Same five-explicit-plus-one-implicit pattern as fixed usb_03.</td></tr>
+  </tbody>
+</table>
+
+<h3>New for usb_04 (control-transfer-specific)</h3>
+
+<table>
+  <thead><tr><th>#</th><th>Gotcha</th><th>Defense</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>G16</td>
+      <td><strong>Filter on <code>RequestType.type</code> inside <code>control_to_*</code>.</strong> The core routes by <em>recipient</em>, not by type. A vendor class with recipient = INTERFACE will get every interface-recipient request — standard (e.g., <code>GET_STATUS</code> for the interface), class-specific (e.g., HID <code>GET_REPORT</code> if we somehow declared HID), and vendor. Without an explicit type check, your class will respond to standard requests with vendor-shaped logic and confuse the host.</td>
+      <td>First line of every <code>control_to_*</code> handler in <code>control_demo.c</code>:
+        <pre><code>if (setup-&gt;RequestType.type != USB_REQTYPE_TYPE_VENDOR) {
+    return -ENOTSUP;
+}</code></pre>
+        The core takes <code>-ENOTSUP</code> as "let the standard machinery handle it." For interface recipient with standard type, that machinery returns sensible defaults (e.g., 16 bits of zero for <code>GET_STATUS</code>).
+      </td>
+    </tr>
+    <tr>
+      <td>G17</td>
+      <td><strong><code>wLength</code> is the host's upper bound, not the actual transfer size.</strong> For host-IN, you can return less data than <code>wLength</code> requested; the core sends a short packet (or a ZLP if your response length is an exact multiple of the EP0 max packet size, 64 for FS) to signal end-of-transfer. Treating <code>wLength</code> as the size to fill leads to two bugs: (a) leaking stack memory if your data is shorter and you pad to <code>wLength</code>, (b) failing to terminate if your data is longer and you stop reading at <code>wLength</code>.</td>
+      <td>For <code>GET_UPTIME</code>, the device unconditionally writes 8 bytes via <code>net_buf_add_le64</code> and returns. If host requests <code>wLength = 4</code>, the core truncates. If host requests <code>wLength = 16</code>, the core sees 8 bytes &lt; 16, sends a short packet, transfer ends. We <code>LOG_WRN</code> when the truncation case applies — useful during host-side debugging, no functional impact.
+      </td>
+    </tr>
+    <tr>
+      <td>G18</td>
+      <td><strong>For host-OUT data, check <code>buf-&gt;len</code>, not <code>setup-&gt;wLength</code>.</strong> The host <em>declares</em> wLength in the Setup packet, but the DATA stage can finish early — host stops sending after fewer bytes, the core delivers what arrived. <code>buf-&gt;len</code> is the actually-received count. Using <code>setup-&gt;wLength</code> reads uninitialised tail of <code>buf-&gt;data</code>.</td>
+      <td><code>SET_LOG_MSG</code> uses <code>MIN(buf-&gt;len, LOG_MSG_MAX)</code> for the <code>LOG_HEXDUMP_INF</code> length. <code>LOG_MSG_MAX</code> caps the log spam (defence in depth — a malicious or buggy host could lie about <code>wLength</code> too).
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 6. LAYOUT ─────────────────────────── -->
+
+<h2 id="layout">6. File layout</h2>
+
+<pre><code>firmware/samples/usb/usb_04/
+├── CMakeLists.txt          # adds main.c + control_demo.c
+├── prj.conf                # same Kconfig set as usb_03
+├── boards/
+│   └── rpi_pico2_rp2350a_m33.overlay   # &amp;usbd { status = "okay"; };
+└── src/
+    ├── main.c              # boot sequence (carries from usb_03)
+    └── control_demo.c      # vendor class + control_to_host / control_to_dev
+</code></pre>
+
+<!-- ─────────────────────────── 7. FLOW ─────────────────────────── -->
+
+<h2 id="flow">7. Boot &amp; runtime flow</h2>
+
+<p>BOOT is identical to usb_03 (with class name and PID bumped). RUNTIME is where the new behaviour lives.</p>
+
+<pre><code>BOOT (main thread, in order — order matters; see usb_03 §7 for the why)
+  0. serial_init()                            chip ID → serial_buf
+  1. usbd_add_descriptor(&amp;ctx, &amp;lang_desc)    idx 0
+  2. usbd_add_descriptor(&amp;ctx, &amp;mfr_desc)     idx 1
+  3. usbd_add_descriptor(&amp;ctx, &amp;product_desc) idx 2
+  4. usbd_add_descriptor(&amp;ctx, &amp;serial_node)  idx 3
+  5. usbd_add_descriptor(&amp;ctx, &amp;iface_str)    idx 4
+  5a. control_demo_set_iface_idx(usbd_str_desc_get_idx(&amp;iface_str))
+  6. usbd_add_configuration(&amp;ctx, USBD_SPEED_FS, &amp;cfg)
+                                              stack auto-adds cfg_str → idx 5
+  7. usbd_register_class(&amp;ctx, "control_demo", USBD_SPEED_FS, 1)
+  8. usbd_init(&amp;ctx)                          validates tree
+  9. usbd_enable(&amp;ctx)                        connects FS pull-up
+ 10. k_sleep(K_FOREVER)                       USB stack runs in its own queue
+
+RUNTIME (USB stack work queue, callback-driven)
+  Standard enumeration (unchanged):
+  A. host issues GET_DESCRIPTOR(Device)                   served from USBD_DEVICE_DEFINE
+  B. host issues GET_DESCRIPTOR(STRING, 0..5, 0x0409)     standard strings
+  C. host issues GET_DESCRIPTOR(Configuration)            32-byte cfg+iface+ep+ep
+  D. host issues SET_CONFIGURATION(1)                     triggers demo_enable()
+
+  Vendor requests (new — fire when host code runs):
+  E. host issues VENDOR | INTERFACE | IN  bRequest=0x01   GET_UPTIME
+       → core calls control_to_host(setup, buf)
+       → handler writes 8 bytes; returns 0
+       → core sends 8 bytes IN, then waits for STATUS OUT ZLP
+       → transfer completes; pyusb returns 8 bytes
+
+  F. host issues VENDOR | INTERFACE | OUT bRequest=0x02   SET_LOG_MSG
+       → core collects DATA OUT packets into buf
+       → core calls control_to_dev(setup, buf) once DATA stage done
+       → handler LOG_HEXDUMPs payload; returns 0
+       → core sends STATUS IN ZLP; transfer completes
+
+  G. host issues VENDOR | INTERFACE | OUT bRequest=0x03   SET_LED_BLINK
+       → wLength=0; no DATA stage
+       → core calls control_to_dev(setup, buf) directly after SETUP
+       → handler reads setup-&gt;wValue; logs count; returns 0
+       → core sends STATUS IN ZLP
+
+  H. host issues VENDOR | INTERFACE | (IN|OUT) bRequest=0x04   STALL_ME
+       → handler returns -ENOTSUP
+       → core sends STALL handshake on EP0
+       → STALL auto-clears on next SETUP (USB 2.0 §8.5.3.4)
+       → pyusb raises USBError; host code catches it
+
+  I. host attempts bulk read on EP 0x81                   NAK forever (still — carried over)
+</code></pre>
+
+<!-- ─────────────────────────── 8. CODE: MAIN ─────────────────────────── -->
+
+<h2 id="code-main">8. Code: <code>src/main.c</code></h2>
+
+<p>Byte-for-byte adaptation of usb_03's <code>main.c</code> — only the class name, product string, interface-name string, PID, and bcdDevice change. No new functions, no new control flow.</p>
+
+<div class="file-label">firmware/samples/usb/usb_04/src/main.c</div>
+<pre><code>/*
+ * usb_04 — control transfers in depth.
+ *
+ * Boot flow is byte-identical to usb_03 (5 explicit string adds → iface_str
+ * idx patch → usbd_add_configuration → register_class → init → enable). The
+ * new material is entirely inside control_demo.c, where control_to_host /
+ * control_to_dev handle four vendor requests on EP0.
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;zephyr/kernel.h&gt;
+#include &lt;zephyr/usb/usbd.h&gt;
+#include &lt;zephyr/drivers/hwinfo.h&gt;
+#include &lt;zephyr/logging/log.h&gt;
+
+LOG_MODULE_REGISTER(usb_04, LOG_LEVEL_INF);
+
+#define DEMO_CLASS_NAME "control_demo"
+
+extern void control_demo_set_iface_idx(uint8_t idx);
+
+USBD_DESC_LANG_DEFINE(lang_desc);
+USBD_DESC_MANUFACTURER_DEFINE(mfr_desc,     "edevkit");
+USBD_DESC_PRODUCT_DEFINE     (product_desc, "usb_04 - control_demo");
+USBD_DESC_CONFIG_DEFINE      (cfg_str,      "Default config");
+USBD_DESC_STRING_DEFINE      (iface_str,    "Vendor (control demo, 4 EP0 requests)",
+                              USBD_DUT_STRING_INTERFACE);
+
+#define SERIAL_TEMPLATE   "EDV-0000-0000-0000"
+#define SERIAL_BUF_SIZE   sizeof(SERIAL_TEMPLATE)
+
+static char serial_buf[SERIAL_BUF_SIZE] = SERIAL_TEMPLATE;
+
+static struct usbd_desc_node serial_node = {
+    .str = { .utype = USBD_DUT_STRING_SERIAL_NUMBER, .ascii7 = true },
+    .ptr             = serial_buf,
+    .bLength         = USB_STRING_DESCRIPTOR_LENGTH(SERIAL_TEMPLATE),
+    .bDescriptorType = USB_DESC_STRING,
+};
+
+static int serial_init(void)
+{
+    uint8_t id[8] = {0};
+    ssize_t n = hwinfo_get_device_id(id, sizeof(id));
+    if (n &lt; 6) {
+        LOG_ERR("hwinfo_get_device_id returned %d (need &gt;= 6)", (int)n);
+        return -EIO;
+    }
+    int written = snprintf(serial_buf, sizeof(serial_buf),
+                           "EDV-%02X%02X-%02X%02X-%02X%02X",
+                           id[0], id[1], id[2], id[3], id[4], id[5]);
+    if (written != (int)(sizeof(serial_buf) - 1)) return -ENOSPC;
+    LOG_INF("serial: %s", serial_buf);
+    return 0;
+}
+
+USBD_CONFIGURATION_DEFINE(cfg, USB_SCD_REMOTE_WAKEUP, 50, &amp;cfg_str);
+
+USBD_DEVICE_DEFINE(usbd_ctx, DEVICE_DT_GET(DT_NODELABEL(usbd)),
+                   0x1209, 0xede4);
+
+int main(void)
+{
+    int err;
+    (void)serial_init();
+
+    /* 5 explicit string adds — cfg_str stays for usbd_add_configuration (G15). */
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;lang_desc);    if (err) return -1;
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;mfr_desc);     if (err) return -1;
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;product_desc); if (err) return -1;
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;serial_node);  if (err) return -1;
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;iface_str);    if (err) return -1;
+
+    uint8_t iface_idx = usbd_str_desc_get_idx(&amp;iface_str);
+    LOG_INF("iface_str registered at idx %u", iface_idx);
+    control_demo_set_iface_idx(iface_idx);
+
+    err = usbd_add_configuration(&amp;usbd_ctx, USBD_SPEED_FS, &amp;cfg);
+    if (err) { LOG_ERR("add cfg: %d", err); return -1; }
+    err = usbd_register_class(&amp;usbd_ctx, DEMO_CLASS_NAME, USBD_SPEED_FS, 1);
+    if (err) { LOG_ERR("register class: %d", err); return -1; }
+    err = usbd_init(&amp;usbd_ctx);
+    if (err) { LOG_ERR("usbd_init: %d", err); return -1; }
+    err = usbd_enable(&amp;usbd_ctx);
+    if (err) { LOG_ERR("usbd_enable: %d", err); return -1; }
+
+    LOG_INF("usb_04 control_demo: enabled, waiting on EP0 vendor requests");
+    while (true) { k_sleep(K_FOREVER); }
+    return 0;
+}
+</code></pre>
+
+<!-- ─────────────────────────── 9. CODE: CLASS ─────────────────────────── -->
+
+<h2 id="code-class">9. Code: <code>src/control_demo.c</code></h2>
+
+<p>This is where every new line of usb_04 lives. The two control callbacks dispatch on <code>setup-&gt;bRequest</code> and implement the four request shapes from §3.</p>
+
+<div class="file-label">firmware/samples/usb/usb_04/src/control_demo.c</div>
+<pre><code>/* control_demo — vendor class, 1 interface, 4 vendor control requests on EP0. */
+
+#include &lt;zephyr/kernel.h&gt;
+#include &lt;zephyr/usb/usbd.h&gt;
+#include &lt;zephyr/usb/usb_ch9.h&gt;
+#include &lt;zephyr/sys/byteorder.h&gt;
+#include &lt;zephyr/net_buf.h&gt;
+#include &lt;zephyr/logging/log.h&gt;
+#include &lt;errno.h&gt;
+
+LOG_MODULE_REGISTER(control_demo, LOG_LEVEL_INF);
+
+#define DEMO_CLASS_NAME "control_demo"
+
+/* bRequest values — exposed for the host-side verification scripts in §12. */
+#define VREQ_GET_UPTIME       0x01
+#define VREQ_SET_LOG_MSG      0x02
+#define VREQ_SET_LED_BLINK    0x03
+#define VREQ_STALL_ME         0x04
+
+#define LOG_MSG_MAX           32U
+
+/* Descriptor tree — byte-identical to usb_03's strings_demo. */
+
+static struct usb_if_descriptor iface = {
+    .bLength            = sizeof(struct usb_if_descriptor),
+    .bDescriptorType    = USB_DESC_INTERFACE,
+    .bInterfaceNumber   = 0,
+    .bAlternateSetting  = 0,
+    .bNumEndpoints      = 2,
+    .bInterfaceClass    = USB_BCC_VENDOR,
+    .bInterfaceSubClass = 0xFF,
+    .bInterfaceProtocol = 0xFF,
+    .iInterface         = 0,                       /* patched at boot — G13 */
+};
+
+static struct usb_ep_descriptor ep_out = {
+    .bLength          = sizeof(struct usb_ep_descriptor),
+    .bDescriptorType  = USB_DESC_ENDPOINT,
+    .bEndpointAddress = USB_EP_DIR_OUT | 0x01,
+    .bmAttributes     = USB_EP_TYPE_BULK,
+    .wMaxPacketSize   = sys_cpu_to_le16(64U),
+    .bInterval        = 0,
+};
+static struct usb_ep_descriptor ep_in = {
+    .bLength          = sizeof(struct usb_ep_descriptor),
+    .bDescriptorType  = USB_DESC_ENDPOINT,
+    .bEndpointAddress = USB_EP_DIR_IN  | 0x01,
+    .bmAttributes     = USB_EP_TYPE_BULK,
+    .wMaxPacketSize   = sys_cpu_to_le16(64U),
+    .bInterval        = 0,
+};
+
+static struct usb_desc_header *fs_desc[] = {
+    (struct usb_desc_header *) &amp;iface,
+    (struct usb_desc_header *) &amp;ep_out,
+    (struct usb_desc_header *) &amp;ep_in,
+    NULL,
+};
+
+void control_demo_set_iface_idx(uint8_t idx) { iface.iInterface = idx; }
+
+/* ─── Vendor request handlers ──────────────────────────────────────────── */
+
+static int control_to_host(struct usbd_class_data *const c_data,
+                           const struct usb_setup_packet *const setup,
+                           struct net_buf *const buf)
+{
+    /* G16 — only vendor requests are ours. */
+    if (setup-&gt;RequestType.type != USB_REQTYPE_TYPE_VENDOR) {
+        return -ENOTSUP;
+    }
+
+    switch (setup-&gt;bRequest) {
+    case VREQ_GET_UPTIME: {
+        /* 3-stage IN. G17 — wLength is upper bound; we always write 8 B. */
+        if (setup-&gt;wLength &lt; sizeof(uint64_t)) {
+            LOG_WRN("GET_UPTIME: host wLength=%u &lt; 8 — will truncate",
+                    setup-&gt;wLength);
+        }
+        int64_t up = k_uptime_get();
+        net_buf_add_le64(buf, (uint64_t)up);
+        LOG_INF("GET_UPTIME → %lld ms", (long long)up);
+        return 0;
+    }
+
+    case VREQ_STALL_ME:
+        LOG_INF("STALL_ME (IN) → returning -ENOTSUP");
+        return -ENOTSUP;
+
+    default:
+        LOG_WRN("control_to_host: unknown vendor bRequest 0x%02x",
+                setup-&gt;bRequest);
+        return -ENOTSUP;
+    }
+}
+
+static int control_to_dev(struct usbd_class_data *const c_data,
+                          const struct usb_setup_packet *const setup,
+                          const struct net_buf *const buf)
+{
+    if (setup-&gt;RequestType.type != USB_REQTYPE_TYPE_VENDOR) {
+        return -ENOTSUP;
+    }
+
+    switch (setup-&gt;bRequest) {
+    case VREQ_SET_LOG_MSG: {
+        /* G18 — trust buf-&gt;len, not setup-&gt;wLength. */
+        size_t n = MIN(buf-&gt;len, LOG_MSG_MAX);
+        LOG_HEXDUMP_INF(buf-&gt;data, n, "SET_LOG_MSG payload:");
+        return 0;
+    }
+
+    case VREQ_SET_LED_BLINK: {
+        /* 2-stage. wValue carries the count; there is no DATA stage. */
+        LOG_INF("SET_LED_BLINK count=%u (2-stage; no DATA)", setup-&gt;wValue);
+        return 0;
+    }
+
+    case VREQ_STALL_ME:
+        LOG_INF("STALL_ME (OUT) → returning -ENOTSUP");
+        return -ENOTSUP;
+
+    default:
+        LOG_WRN("control_to_dev: unknown vendor bRequest 0x%02x",
+                setup-&gt;bRequest);
+        return -ENOTSUP;
+    }
+}
+
+/* ─── Class vtable + registration ──────────────────────────────────────── */
+
+static int  demo_init   (struct usbd_class_data *const c) { return 0; }
+static void demo_enable (struct usbd_class_data *const c) { LOG_INF("control_demo: enabled"); }
+static void demo_disable(struct usbd_class_data *const c) { LOG_INF("control_demo: disabled"); }
+
+static void *demo_get_desc(struct usbd_class_data *const c, const enum usbd_speed s)
+{
+    return (s == USBD_SPEED_FS) ? (void *)fs_desc : NULL;
+}
+
+static const struct usbd_class_api demo_api = {
+    .init             = demo_init,
+    .enable           = demo_enable,
+    .disable          = demo_disable,
+    .get_desc         = demo_get_desc,
+    .control_to_host  = control_to_host,    /* ← new in usb_04 */
+    .control_to_dev   = control_to_dev,     /* ← new in usb_04 */
+};
+
+USBD_DEFINE_CLASS(control_demo, &amp;demo_api, NULL, NULL);
+</code></pre>
+
+<!-- ─────────────────────────── 10. CODE: REST ─────────────────────────── -->
+
+<h2 id="code-rest">10. Code: <code>prj.conf</code> · <code>CMakeLists.txt</code> · <code>boards/*.overlay</code></h2>
+
+<div class="file-label">firmware/samples/usb/usb_04/prj.conf</div>
+<pre><code>CONFIG_USB_DEVICE_STACK_NEXT=y      # G5 — mandatory for USBD_* macros
+CONFIG_HWINFO=y                     # G14 — required for hwinfo_get_device_id()
+
+CONFIG_LOG=y
+CONFIG_USE_SEGGER_RTT=y
+CONFIG_RTT_CONSOLE=y
+CONFIG_UART_CONSOLE=n
+
+CONFIG_USBD_LOG_LEVEL_INF=y
+
+CONFIG_HEAP_MEM_POOL_SIZE=2048
+
+CONFIG_THREAD_NAME=y
+CONFIG_BOOT_BANNER=y
+</code></pre>
+
+<p>Identical to usb_03's prj.conf — no new Kconfig is needed for control transfers. The plumbing was already there; we just added two callback functions.</p>
+
+<div class="file-label">firmware/samples/usb/usb_04/CMakeLists.txt</div>
+<pre><code>cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(usb_04)
+
+target_sources(app PRIVATE
+    src/main.c
+    src/control_demo.c
+)
+</code></pre>
+
+<div class="file-label">firmware/samples/usb/usb_04/boards/rpi_pico2_rp2350a_m33.overlay</div>
+<pre><code>/* G6 — the RP2350 board exposes the UDC node as &amp;usbd. */
+&amp;usbd {
+    status = "okay";
+};
+</code></pre>
+
+<!-- ─────────────────────────── 11. BUILD ─────────────────────────── -->
+
+<h2 id="build">11. Build, flash, RTT</h2>
+
+<pre><code># from edevkit/firmware/samples/usb/usb_04/ — needs the (edev) venv active
+edev_build       # sysbuild: writes build-rpi_pico2_rp2350a_m33/usb_04/zephyr/zephyr.signed.bin
+
+# flash via Pi Debug Probe (SWD) and stream RTT in one shot
+edev_run         # = edev_flash + probe-rs attach. Ctrl-C to detach.
+</code></pre>
+
+<p>Expected RTT output on a clean boot (before any vendor requests are issued):</p>
+
+<pre><code>*** Booting Zephyr OS build v4.4.0-1126-... ***
+[00:00:00.001,000] &lt;inf&gt; usb_04: serial: EDV-AB12-CD34-EF56
+[00:00:00.002,000] &lt;inf&gt; usb_04: iface_str registered at idx 4
+[00:00:00.012,000] &lt;inf&gt; control_demo: enabled
+[00:00:00.012,000] &lt;inf&gt; usb_04: usb_04 control_demo: enabled, waiting on EP0 vendor requests
+</code></pre>
+
+<p>And when the host runs the verification script in §12, each request produces a log line:</p>
+
+<pre><code>[00:00:05.123,000] &lt;inf&gt; control_demo: GET_UPTIME → 5123 ms
+[00:00:05.124,000] &lt;inf&gt; control_demo: SET_LOG_MSG payload:
+                                       68 65 6C 6C 6F 20 75 73 62 5F 30 34       |hello us b_04
+[00:00:05.125,000] &lt;inf&gt; control_demo: SET_LED_BLINK count=3 (2-stage; no DATA)
+[00:00:05.126,000] &lt;inf&gt; control_demo: STALL_ME (IN) → returning -ENOTSUP
+</code></pre>
+
+<!-- ─────────────────────────── 12. VERIFY ─────────────────────────── -->
+
+<h2 id="verify">12. Verify on the host</h2>
+
+<p>Enumeration verification is identical to usb_03 (<code>lsusb -d 1209:ede4</code> shows the device, strings render correctly). The <em>new</em> verification is exercising the four vendor requests. We use <a href="https://pyusb.github.io/pyusb/">pyusb</a> because it works on all three OSes with a single script.</p>
+
+<h3>12a. Setup — install pyusb</h3>
+
+<pre><code>$ pip install pyusb
+$ python -c "import usb.core; print(usb.core.find(idVendor=0x1209, idProduct=0xede4))"
+DEVICE ID 1209:ede4 on Bus 003 Address 047  ← if visible, you're good
+</code></pre>
+
+<div class="callout warn">
+  <div class="callout-title">Linux only — udev permission</div>
+  <p>On Linux you may need to add a udev rule so non-root pyusb can claim the device:</p>
+  <pre><code>echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="ede4", MODE="0666"' \
+    | sudo tee /etc/udev/rules.d/99-edevkit.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+# unplug + replug the device</code></pre>
+  <p>macOS: no special permission needed (libusb claims via IOKit). Windows: install WinUSB driver via <a href="https://zadig.akeo.ie/">Zadig</a> against PID <code>0xede4</code>.</p>
+</div>
+
+<h3>12b. The verification script</h3>
+
+<div class="file-label">firmware/samples/usb/usb_04/verify.py — runs on Linux · macOS · Windows</div>
+<pre><code>#!/usr/bin/env python3
+"""Exercise all 4 usb_04 vendor requests."""
+import usb.core, usb.util, struct, sys
+
+VID, PID = 0x1209, 0xede4
+IFACE    = 0   # recipient = interface, wIndex = 0
+
+# bRequest values mirror src/control_demo.c
+VREQ_GET_UPTIME    = 0x01
+VREQ_SET_LOG_MSG   = 0x02
+VREQ_SET_LED_BLINK = 0x03
+VREQ_STALL_ME      = 0x04
+
+# bmRequestType bytes built from constants
+RT_IN  = usb.util.build_request_type(usb.util.CTRL_IN,
+                                     usb.util.CTRL_TYPE_VENDOR,
+                                     usb.util.CTRL_RECIPIENT_INTERFACE)  # 0xC1
+RT_OUT = usb.util.build_request_type(usb.util.CTRL_OUT,
+                                     usb.util.CTRL_TYPE_VENDOR,
+                                     usb.util.CTRL_RECIPIENT_INTERFACE)  # 0x41
+
+dev = usb.core.find(idVendor=VID, idProduct=PID)
+if dev is None: sys.exit("usb_04 not found — check VID:PID and udev/Zadig")
+
+dev.set_configuration()
+
+# (1) GET_UPTIME — 3-stage IN
+data = dev.ctrl_transfer(RT_IN, VREQ_GET_UPTIME, 0, IFACE, 8)
+uptime_ms = struct.unpack("&lt;Q", bytes(data))[0]
+print(f"GET_UPTIME      → {uptime_ms} ms ({len(data)} bytes)")
+
+# (2) SET_LOG_MSG — 3-stage OUT
+msg = b"hello usb_04"
+n = dev.ctrl_transfer(RT_OUT, VREQ_SET_LOG_MSG, 0, IFACE, msg)
+print(f"SET_LOG_MSG     → device accepted {n} bytes")
+
+# (3) SET_LED_BLINK — 2-stage (no DATA)
+dev.ctrl_transfer(RT_OUT, VREQ_SET_LED_BLINK, wValue=3, wIndex=IFACE, data_or_wLength=0)
+print(f"SET_LED_BLINK   → count=3 sent in wValue, no DATA stage")
+
+# (4) STALL_ME — expected to raise
+try:
+    dev.ctrl_transfer(RT_IN, VREQ_STALL_ME, 0, IFACE, 0)
+    print(f"STALL_ME        → UNEXPECTED success; device should have STALLed")
+except usb.core.USBError as e:
+    print(f"STALL_ME        → expected USBError (\"{e}\")")
+</code></pre>
+
+<p>Expected output on a working board:</p>
+
+<pre><code>$ python firmware/samples/usb/usb_04/verify.py
+GET_UPTIME      → 18342 ms (8 bytes)
+SET_LOG_MSG     → device accepted 12 bytes
+SET_LED_BLINK   → count=3 sent in wValue, no DATA stage
+STALL_ME        → expected USBError ("[Errno 32] Pipe error")
+</code></pre>
+
+<div class="callout good">
+  <div class="callout-title">Acceptance — usb_04 is "done" when</div>
+  <p><strong>(a)</strong> The verification script prints all four request lines without crashing;
+     <strong>(b)</strong> The RTT log shows one matching <code>&lt;inf&gt; control_demo</code> line per request;
+     <strong>(c)</strong> The uptime value increases monotonically across multiple runs (i.e., is actually <code>k_uptime_get()</code>, not a hard-coded constant);
+     <strong>(d)</strong> <code>STALL_ME</code> reliably produces a USBError on the host and an <code>&lt;inf&gt;</code> log line on the device, and the next <code>GET_UPTIME</code> still works (proving the STALL auto-cleared per §8.5.3.4);
+     <strong>(e)</strong> Bulk endpoints still NAK forever — that's <em>still</em> a future sample's problem.</p>
+</div>
+
+<h3>12c. Wireshark / usbmon capture</h3>
+
+<p>To see the actual wire-level Setup packets and data stages, capture with usbmon (Linux) or USBPcap (Windows). The verification script's four transfers produce eight visible URBs (Setup + completion for each), in this pattern:</p>
+
+<pre><code>URB  bmReqType  bReq  wValue  wIndex  wLength  Direction  Length on wire
+ 1     0xC1     0x01  0x0000  0x0000  0x0008   ─►          8 (Setup)
+ 2     0xC1     0x01  0x0000  0x0000  0x0008   ◄─          8 (DATA-in)        + STATUS-out ZLP
+ 3     0x41     0x02  0x0000  0x0000  0x000C   ─►          8 (Setup) + 12 DATA-out
+ 4     0x41     0x02  0x0000  0x0000  0x000C   ◄─          0 (STATUS-in ZLP)
+ 5     0x41     0x03  0x0003  0x0000  0x0000   ─►          8 (Setup)
+ 6     0x41     0x03  0x0003  0x0000  0x0000   ◄─          0 (STATUS-in ZLP)
+ 7     0xC1     0x04  0x0000  0x0000  0x0000   ─►          8 (Setup)
+ 8     0xC1     0x04  0x0000  0x0000  0x0000   ◄─          STALL handshake (no payload)
+</code></pre>
+
+<p>Compare against §3a's Setup table — the wire bytes match the firmware-declared shape exactly.</p>
+
+<!-- ─────────────────────────── 13. PITFALLS ─────────────────────────── -->
+
+<h2 id="pitfalls">13. Anticipated pitfalls</h2>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"pyusb gets <code>[Errno 13] Access denied (insufficient permissions)</code>."</strong> Linux udev rule not in place (see §12a), or another driver claimed the interface. Linux: install the udev rule and replug. macOS: rarely happens; if it does, no kernel extension is the cause — check that nothing else (a half-installed driver) is claiming PID 0xede4. Windows: install WinUSB via Zadig.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"<code>GET_UPTIME</code> returns fewer than 8 bytes."</strong> Host's <code>wLength</code> was less than 8 (G17). The device wrote 8 bytes but the core truncated. Either request <code>wLength=8</code> exactly or accept short reads. RTT shows <code>&lt;wrn&gt; control_demo: GET_UPTIME: host wLength=N &lt; 8 — will truncate</code> when this happens.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"<code>SET_LOG_MSG</code> hex-dump shows garbage past the intended message."</strong> Code is using <code>setup-&gt;wLength</code> instead of <code>buf-&gt;len</code> as the consumed-bytes count (G18). The buf was sized to accommodate <code>wLength</code> but only <code>buf-&gt;len</code> bytes are valid. The rest is uninitialised pool memory.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"<code>STALL_ME</code> succeeds instead of raising."</strong> The callback returned <code>0</code> instead of <code>-ENOTSUP</code> (the G4 / G16 hazard in reverse — saying "I handled it" when you didn't). Or the request hit a different class (recipient = INTERFACE with the wrong wIndex). Add a <code>LOG_INF</code> at handler entry to confirm dispatch.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"After <code>STALL_ME</code>, subsequent requests also fail."</strong> Shouldn't happen on EP0 — STALL auto-clears on the next SETUP per USB 2.0 §8.5.3.4. If it does happen, suspect (a) the host stack got confused (try unplugging and replugging), or (b) the request returning <code>-ENOTSUP</code> actually <em>panicked</em> the device. Check RTT for fault output.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"All four requests time out with <code>[Errno 110]</code>."</strong> The class isn't seeing the requests at all. Likely causes: (a) recipient mismatch — script used <code>CTRL_RECIPIENT_DEVICE</code> but device routes only INTERFACE; (b) <code>wIndex</code> mismatch — script used <code>IFACE=1</code> but device's interface is 0; (c) <code>bmRequestType.type</code> mismatch — script used <code>CTRL_TYPE_CLASS</code> instead of <code>CTRL_TYPE_VENDOR</code>. Capture with usbmon to see what the host actually sent.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Build warns 'unused variable c_data'."</strong> Harmless. Zephyr passes the class-data pointer to every callback even when the handler doesn't use it. Silence with <code>ARG_UNUSED(c_data)</code> or accept the warning — it has no functional impact.</p>
+</div>
+
+<!-- ─────────────────────────── 14. CREDITS ─────────────────────────── -->
+
+<h2 id="credits-section">14. Attribution</h2>
+
+<aside class="credits">
+  <p><strong>Pattern source.</strong> The <code>control_to_host</code> / <code>control_to_dev</code> callback contract and the <code>struct usb_setup_packet</code> layout used in §3, §9 are from Zephyr USB-Device-Next public API:</p>
+  <p><code>$ZEPHYR_BASE/include/zephyr/usb/usbd.h</code> (lines 330–375 for <code>struct usbd_class_api</code>) and <code>$ZEPHYR_BASE/include/zephyr/usb/usb_ch9.h</code> (lines 28–91 for the Setup packet and <code>USB_REQTYPE_*</code> constants) — © 2024 Nordic Semiconductor ASA, licensed Apache-2.0. Verified against Zephyr v4.4.99-ge2a556ff6417 on 2026-05-11.</p>
+  <p>The vendor-request routing logic shown in §4c is from <code>$ZEPHYR_BASE/subsys/usb/device_next/usbd_ch9.c</code> around line 976 (<code>nonstd_request</code> function). The DFU class at <code>$ZEPHYR_BASE/subsys/usb/device_next/class/usbd_dfu.c</code> was the reference for how to structure <code>control_to_*</code> implementations — in particular, the early <code>RequestType.type</code> filter pattern (G16) is the same defensive pattern DFU uses at line 499.</p>
+  <p>The carry-forward Zephyr USB-Device-Next gotchas (G1–G7) were captured during <code>usb_01</code> bring-up; the canonical reference is <a href="/docs/firmware_zephyr_usbd.html">firmware_zephyr_usbd.html</a>. Endpoint-specific gotchas G8–G10 were added in <a href="/docs/firmware_sample_usb_02.html#defenses">usb_02</a>. String-specific gotchas G11–G15 were added in <a href="/docs/firmware_sample_usb_03.html#defenses">usb_03</a>. Control-specific gotchas G16–G18 are introduced here for the first time.</p>
+  <p><strong>Spec citations</strong> are to Universal Serial Bus Specification, Revision 2.0 (USB Implementers Forum, April 2000) — sections 5.5 (Control Transfers — overview), 8.5.3 (Control Transfer Stages and protocol), 8.5.3.4 (STALL handshake auto-clear), 9.3 (USB Device Requests — Setup packet), 9.4 (Standard Device Requests). Spec available at <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a>.</p>
+  <p>pyusb (used in §12 host-side verification) is BSD-3-Clause licensed. Project: <a href="https://github.com/pyusb/pyusb">github.com/pyusb/pyusb</a>.</p>
+</aside>
+
+</div>
+
+</body>
+</html>

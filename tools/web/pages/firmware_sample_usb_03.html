@@ -1,0 +1,1053 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Design + code flow for usb_03_strings_demo — the third edevkit USB sample. Adds string descriptors and a per-unit chip-ID-derived serial (EDV-XXXX-YYYY-ZZZZ) on top of usb_02's descriptor tree, illustrating the late-binding nature of string-descriptor indices.">
+  <title>edevkit — Firmware · usb_03 design + code flow</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+<style>
+  /* tokens — match firmware_sample_usb_02.html */
+  :root {
+    color-scheme: light dark;
+    --brand: oklch(56% 0.16 215); --brand-2: oklch(50% 0.18 235);
+    --brand-soft: oklch(94% 0.04 215); --brand-fg: oklch(99% 0.005 215);
+    --accent: oklch(72% 0.15 70); --accent-soft: oklch(95% 0.05 70);
+    --good: oklch(58% 0.14 145); --good-soft: oklch(94% 0.05 145);
+    --warn: oklch(72% 0.16 80); --warn-soft: oklch(95% 0.07 80);
+    --danger: oklch(56% 0.20 28); --danger-soft: oklch(95% 0.05 28);
+
+    --bg: oklch(99.2% 0.003 240); --bg-soft: oklch(97% 0.005 240);
+    --bg-elev: oklch(100% 0 0);
+    --line: oklch(91% 0.012 240); --line-soft: oklch(94.5% 0.008 240);
+    --line-strong: oklch(85% 0.014 240);
+    --grid-dot: oklch(0% 0 0 / .055);
+    --code-bg: oklch(96.5% 0.007 240); --code-border: oklch(91% 0.012 240);
+    --fg: oklch(20% 0.02 240); --fg-2: oklch(36% 0.02 240);
+    --muted: oklch(50% 0.02 240); --faint: oklch(64% 0.015 240);
+
+    --r-2: 6px; --r-3: 10px; --r-pill: 999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --ease: cubic-bezier(.2, 0, 0, 1); --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+      --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+      --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+      --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+      --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+      --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+      --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+      --bg-elev: oklch(20% 0.018 240);
+      --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+      --line-strong: oklch(35% 0.022 240);
+      --grid-dot: oklch(100% 0 0 / .05);
+      --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+      --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+      --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+    --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+    --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+    --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+    --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+    --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+    --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+    --bg-elev: oklch(20% 0.018 240);
+    --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+    --line-strong: oklch(35% 0.022 240);
+    --grid-dot: oklch(100% 0 0 / .05);
+    --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+    --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+    --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-text); font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg); min-height: 100dvh;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px; background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1080px; margin: 0 auto; padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none; font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600; color: var(--fg-2);
+    padding: 6px 10px; border-radius: var(--r-2);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .doc-tag {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--faint); padding: 4px 10px;
+    border-radius: var(--r-pill); background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .grow { flex: 1; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 28px 96px; }
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px; margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted);
+    padding: 5px 11px; background: var(--bg-soft);
+    border: 1px solid var(--line); border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+  header.hero h1 {
+    font-family: var(--font-sans); font-size: 38px; line-height: 1.15;
+    margin: 18px 0 12px; letter-spacing: -0.02em; font-weight: 700;
+  }
+  header.hero .lede {
+    font-size: 18px; line-height: 1.55; color: var(--fg-2); max-width: 720px;
+  }
+
+  h2 {
+    font-family: var(--font-sans); font-size: 24px;
+    margin-top: 56px; margin-bottom: 14px;
+    letter-spacing: -0.018em; font-weight: 700;
+    padding-bottom: 6px; border-bottom: 1px solid var(--line-soft);
+  }
+  h3 {
+    font-family: var(--font-sans); font-size: 19px;
+    margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-family: var(--font-mono); font-size: 12px;
+    margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  strong { font-weight: 600; }
+
+  code, pre, .mono { font-family: var(--font-mono); }
+  :not(pre) > code {
+    background: var(--code-bg); padding: 1px 6px;
+    border-radius: 4px; font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--code-border);
+    border-radius: var(--r-3); padding: 14px 16px;
+    overflow-x: auto; font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+  .file-label {
+    display: inline-block; font-family: var(--font-mono); font-size: 11px;
+    font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--brand); background: var(--brand-soft);
+    padding: 4px 10px; border-radius: var(--r-pill);
+    border: 1px solid color-mix(in oklch, var(--brand) 30%, transparent);
+    margin: 18px 0 -6px;
+  }
+
+  .callout {
+    margin: 18px 0; padding: 14px 18px; border-radius: var(--r-3);
+    background: var(--bg-soft); border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.info    { background: var(--brand-soft);  border-left-color: var(--brand); }
+  .callout.warn    { background: var(--warn-soft);   border-left-color: var(--warn); }
+  .callout.good    { background: var(--good-soft);   border-left-color: var(--good); }
+  .callout.danger  { background: var(--danger-soft); border-left-color: var(--danger); }
+  .callout-title {
+    display: inline-block; font-family: var(--font-mono);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700; color: var(--muted); margin-bottom: 4px;
+  }
+  .callout.info .callout-title    { color: var(--brand); }
+  .callout.warn .callout-title    { color: oklch(45% 0.18 80); }
+  .callout.good .callout-title    { color: var(--good); }
+  .callout.danger .callout-title  { color: var(--danger); }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child  { margin-bottom: 0; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 18px 0; font-size: 14px;
+    background: var(--bg-elev); border: 1px solid var(--line);
+    border-radius: var(--r-3); overflow: hidden;
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 8px 12px; text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  thead th {
+    background: var(--bg-soft); font-family: var(--font-sans);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  td.field { font-family: var(--font-mono); font-weight: 600; color: var(--fg); }
+  td.hex   { font-family: var(--font-mono); color: var(--brand); }
+
+  .toc { margin: 24px 0 40px; padding: 18px 22px; background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--r-3); }
+  .toc-title { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { margin: 4px 0; color: var(--fg-2); }
+  .toc li a { color: var(--fg-2); text-decoration: none; font-weight: 500; }
+  .toc li a:hover { color: var(--brand); }
+
+  .credits {
+    margin: 32px 0 0; padding: 12px 14px;
+    background: var(--bg-soft); border: 1px solid var(--line-soft);
+    border-radius: var(--r-3); font-size: 12px; line-height: 1.55;
+    color: var(--fg-2);
+  }
+  .credits strong { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" title="Back to docs hub">
+      <span aria-hidden="true">←</span> edevkit
+    </a>
+    <span class="doc-tag">Firmware · usb_03 design</span>
+    <span class="grow"></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · firmware · USB sample design doc</div>
+  <h1>usb_03 — string descriptors and per-unit identity</h1>
+  <p class="lede">Design + code flow for the third sample in the USB Book series. Keeps <code>usb_02</code>'s descriptor tree (device → cfg → iface → 2 bulk EPs) byte-identical, but turns on every <em>string</em> descriptor and replaces the auto-generated chip-ID hex serial with a runtime-formatted <code>EDV-XXXX-YYYY-ZZZZ</code> per-unit identity. The teaching point: descriptor indices are <strong>late-bound</strong> — the iface descriptor declares <code>iInterface = N</code>, but the actual UTF-16LE bytes for index <code>N</code> are registered separately, at runtime, before <code>usbd_init</code>.</p>
+</header>
+
+<div class="callout good">
+  <div class="callout-title">Authoring status — sample built, doc revised post-bring-up</div>
+  <p>First written 2026-05-08 as a doc-first spec; sample scaffolded and flashed 2026-05-11. Bring-up surfaced one gotcha (G15, see §5) that this revision incorporates, along with the resulting index-assignment shift (<code>iInterface = 4</code>, <code>iConfiguration = 5</code>). The code listings in §8–§9 are the on-disk source at <code>firmware/samples/usb/usb_03/src/</code>; any drift is a bug to fix in <em>both</em> files.</p>
+</div>
+
+<div class="toc">
+  <div class="toc-title">Sections</div>
+  <ol>
+    <li><a href="#goal">Goal &amp; scope</a></li>
+    <li><a href="#delta">What changes vs usb_02</a></li>
+    <li><a href="#tree">The descriptor tree, byte-level (now with strings)</a></li>
+    <li><a href="#late-binding">The late-binding moment</a></li>
+    <li><a href="#defenses">Carry-forward defenses + new (G1–G14)</a></li>
+    <li><a href="#layout">File layout</a></li>
+    <li><a href="#flow">Boot &amp; runtime flow</a></li>
+    <li><a href="#code-main">Code: <code>src/main.c</code></a></li>
+    <li><a href="#code-class">Code: <code>src/strings_demo.c</code></a></li>
+    <li><a href="#code-rest">Code: <code>prj.conf</code> · <code>CMakeLists.txt</code> · <code>boards/*.overlay</code></a></li>
+    <li><a href="#build">Build, flash, RTT</a></li>
+    <li><a href="#verify">Verify on the host (Linux · macOS · Windows)</a></li>
+    <li><a href="#pitfalls">Anticipated pitfalls</a></li>
+    <li><a href="#credits-section">Attribution</a></li>
+  </ol>
+</div>
+
+<!-- ─────────────────────────── 1. GOAL ─────────────────────────── -->
+
+<h2 id="goal">1. Goal &amp; scope</h2>
+
+<p><strong>One sentence:</strong> turn on every standard string descriptor (LANGID, Manufacturer, Product, Serial, Configuration, Interface) so <code>lsusb -v</code> on the host renders human-readable text at every level — and replace the auto-generated chip-ID hex serial with a runtime-formatted <code>EDV-XXXX-YYYY-ZZZZ</code>, demonstrating that string descriptors are <em>data registered at boot, not code baked in</em>.</p>
+
+<p>Pairs with <a href="/docs/usb/partII/07_strings.html">USB Book Ch 07 — String descriptors &amp; per-unit identity</a> (chapter not yet written; this design doc is the source-of-truth until it is).</p>
+
+<div class="callout info">
+  <div class="callout-title">The two halves of the chapter</div>
+  <p><strong>String descriptors</strong> is the wire-protocol half: language IDs, UTF-16LE encoding, the <code>iManufacturer / iProduct / iSerialNumber / iConfiguration / iInterface</code> index slots, and the back-and-forth control transfers <code>GET_DESCRIPTOR(STRING, idx, langid)</code>. <strong>Per-unit identity</strong> is the firmware half: how to make every assembled board advertise a serial that is unique to <em>its</em> silicon, with zero per-unit production-line work. usb_03 is the smallest sample that teaches both.</p>
+</div>
+
+<h3>What usb_03 does <em>not</em> cover</h3>
+<ul>
+  <li><strong>Persisting the serial to flash / LittleFS</strong> — the chip ID is silicon-deterministic, so re-deriving on every boot gives the same value. Persistence only matters when you want to <em>mutate</em> the serial post-boot (provisioning, RMA swap), which is a separate concern. LittleFS belongs to a future "firmware infrastructure" sample where persistence is the topic, not a side dish.</li>
+  <li><strong>Multiple language IDs</strong> — we ship LANGID 0x0409 (English-US) only. Adding French, Japanese, etc., is a one-line change to the LANGID array; the more interesting work (selecting the right string at <code>GET_DESCRIPTOR</code> time, providing alternate bytes) is uncommon enough to defer.</li>
+  <li><strong>Bulk/interrupt data flow</strong> — still declared-but-not-implemented, same as usb_02. Host bulk reads on EP <code>0x81</code> still NAK forever. <code>usb_04</code> (Ch 08) implements EP0 control transfers in depth; the bulk endpoints get filled in later.</li>
+  <li><strong>BOS / MS OS 2.0 platform-capability descriptors</strong> — those live in <code>usb_25</code> (Ch 23 — modern driverless).</li>
+</ul>
+
+<h3>Locked decisions</h3>
+<table>
+  <thead><tr><th>Field</th><th>Value</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td class="field">VID</td><td class="hex">0x1209</td><td>pid.codes open-hardware umbrella — same across every sample.</td></tr>
+    <tr><td class="field">PID</td><td class="hex">0xede3</td><td>Scheme: <code>0xede0 + sample_number</code>. Lets you grep VID:PID in captures.</td></tr>
+    <tr><td class="field">Manufacturer</td><td>"edevkit"</td><td>Constant. Now actually visible in <code>lsusb -v</code>.</td></tr>
+    <tr><td class="field">Product</td><td>"usb_03 - strings_demo"</td><td>String now carries the sample's purpose, not just its number — easier to identify in a multi-device capture. ASCII hyphen, not em-dash, per G12.</td></tr>
+    <tr><td class="field">Configuration string</td><td>"Default config"</td><td>Filled in (was empty in usb_02) so <code>iConfiguration != 0</code>.</td></tr>
+    <tr><td class="field">Interface string</td><td>"Vendor (descriptor demo, no I/O)"</td><td>Honest about the interface being the same declared-not-implemented one as usb_02.</td></tr>
+    <tr><td class="field">Serial format</td><td><code>EDV-XXXX-YYYY-ZZZZ</code></td><td>Matches CLAUDE.md gotcha #8 — per-unit identity convention used by the production edevkit1 firmware.</td></tr>
+    <tr><td class="field">Serial source</td><td><code>hwinfo_get_device_id()</code></td><td>RP2350 unique 64-bit chip ID. First 6 bytes (12 hex chars) are formatted into the 4-4-4 groups; remaining bytes are unused for this sample.</td></tr>
+    <tr><td class="field">bcdDevice</td><td class="hex">0x0103</td><td>Bumped from usb_02's <code>0x0100</code>. Forces macOS to invalidate its descriptor cache and re-read all strings on first plug — without this, the "edevkit" / "usb_03" names from usb_02 may stick.</td></tr>
+    <tr><td class="field">Class triple</td><td>0xFF/0xFF/0xFF (vendor)</td><td>Carried over from usb_02. No host driver loads → no surprises while we focus on strings.</td></tr>
+    <tr><td class="field">Board</td><td><code>rpi_pico2/rp2350a/m33</code></td><td>Cortex-M33 cores, not Hazard3.</td></tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 2. DELTA ─────────────────────────── -->
+
+<h2 id="delta">2. What changes vs usb_02</h2>
+
+<table>
+  <thead><tr><th>Aspect</th><th>usb_02</th><th>usb_03</th></tr></thead>
+  <tbody>
+    <tr><td>PID</td><td class="hex">0xede2</td><td class="hex">0xede3</td></tr>
+    <tr><td>Product string</td><td>"usb_02"</td><td>"usb_03 - strings_demo"</td></tr>
+    <tr><td>Class registration name</td><td><code>"descriptors_demo"</code></td><td><code>"strings_demo"</code></td></tr>
+    <tr><td>Class file name</td><td><code>src/descriptors_demo.c</code></td><td><code>src/strings_demo.c</code></td></tr>
+    <tr><td>Configuration string</td><td>none (<code>iConfiguration = 0</code>)</td><td>"Default config" via <code>USBD_DESC_CONFIG_DEFINE</code></td></tr>
+    <tr><td>Interface string</td><td>none (<code>iInterface = 0</code>)</td><td>"Vendor (descriptor demo, no I/O)" via <code>USBD_DESC_STRING_DEFINE</code> + runtime <code>iInterface</code> patch</td></tr>
+    <tr><td>Serial generation</td><td>auto-from-HWINFO via <code>USBD_DESC_SERIAL_NUMBER_DEFINE</code> (ASCII hex of chip ID)</td><td>hand-rolled <code>struct usbd_desc_node</code> pointing at a writable <code>char[]</code>; populated at boot from <code>hwinfo_get_device_id()</code>; formatted as <code>EDV-XXXX-YYYY-ZZZZ</code></td></tr>
+    <tr><td>New header includes</td><td>—</td><td><code>&lt;zephyr/drivers/hwinfo.h&gt;</code> (chip ID); the existing <code>&lt;zephyr/usb/usbd.h&gt;</code> already exposes <code>struct usbd_desc_node</code> + <code>USB_STRING_DESCRIPTOR_LENGTH</code></td></tr>
+    <tr><td>New Kconfig requirement</td><td><code>CONFIG_USB_DEVICE_STACK_NEXT=y</code></td><td>same + <code>CONFIG_HWINFO=y</code> (was implicit through <code>USBD_DESC_SERIAL_NUMBER_DEFINE</code>'s <code>BUILD_ASSERT</code>; now explicit because we call <code>hwinfo_get_device_id()</code> directly)</td></tr>
+    <tr><td>Endpoint count / descriptor tree</td><td>1 iface, 2 bulk EPs, <code>wTotalLength = 0x0020</code></td><td><strong>identical</strong>. Strings are out-of-band of the configuration tree.</td></tr>
+    <tr><td>Number of registered string descriptors</td><td>4 (lang, mfr, product, serial)</td><td>6 total — 5 explicit (lang, mfr, product, serial, interface) + 1 implicit (config, added by <code>usbd_add_configuration()</code>; G15)</td></tr>
+    <tr><td>Class vtable callbacks</td><td>init, enable, disable, get_desc</td><td>same four — no class-level changes; strings are device-level concerns</td></tr>
+  </tbody>
+</table>
+
+<p>Notice how the change is asymmetric: <strong>most of the new code lives in <code>main.c</code></strong> (string definitions, chip-ID read, runtime serial-buffer formatting, <code>iInterface</code> index patch). The class file <code>strings_demo.c</code> is almost a verbatim copy of <code>descriptors_demo.c</code> — the only difference is exposing a one-line setter for <code>iface.iInterface</code>.</p>
+
+<!-- ─────────────────────────── 3. TREE ─────────────────────────── -->
+
+<h2 id="tree">3. The descriptor tree, byte-level (now with strings)</h2>
+
+<p>The configuration descriptor tree is byte-identical to usb_02 except for two <em>index references</em>: the configuration descriptor's <code>iConfiguration</code> field is no longer 0, and the interface descriptor's <code>iInterface</code> is no longer 0. Those bytes point at separately-registered string descriptors.</p>
+
+<h3>3a. The configuration tree (changes shown bold)</h3>
+
+<table>
+  <thead>
+    <tr><th>Offset</th><th>Bytes</th><th>Field</th><th>Value</th><th>Meaning</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="hex">0x00</td><td class="hex">9</td><td class="field">Configuration descriptor</td><td><code>09 02 20 00 01 01 <strong>05</strong> A0 32</code></td><td>byte 6 = <code>iConfiguration</code>: <strong>0x05</strong> in usb_03 (was 0x00). Written by the stack inside <code>usbd_add_configuration()</code> from the index it assigns to <code>cfg_str</code> — see G15.</td></tr>
+    <tr><td class="hex">0x09</td><td class="hex">9</td><td class="field">Interface descriptor</td><td><code>09 04 00 00 02 FF FF FF <strong>04</strong></code></td><td>byte 8 = <code>iInterface</code>: <strong>0x04</strong> in usb_03 (was 0x00). Written by us via <code>strings_demo_set_iface_idx()</code> from the index returned by <code>usbd_str_desc_get_idx(&amp;iface_str)</code>.</td></tr>
+    <tr><td class="hex">0x12</td><td class="hex">7</td><td class="field">Endpoint descriptor (OUT)</td><td><code>07 05 01 02 40 00 00</code></td><td>identical to usb_02.</td></tr>
+    <tr><td class="hex">0x19</td><td class="hex">7</td><td class="field">Endpoint descriptor (IN)</td><td><code>07 05 81 02 40 00 00</code></td><td>identical to usb_02.</td></tr>
+  </tbody>
+</table>
+
+<p><code>wTotalLength</code> is unchanged at <code>0x0020 = 32</code> bytes — strings are queried in <em>separate</em> control transfers, never inlined into the configuration response.</p>
+
+<h3>3b. The string descriptors</h3>
+
+<p>Six discrete USB descriptors, each fetched by the host with its own <code>GET_DESCRIPTOR(STRING, index, langid)</code> control request. Indices are assigned <strong>in registration order</strong> by the stack — the 1st <code>usbd_add_descriptor()</code> call gets index 0, the 2nd gets index 1, and so on. Index 0 is reserved for LANGID by spec (USB 2.0 §9.6.7), so we add LANGID first.</p>
+
+<p>One subtlety: only <strong>five</strong> of the six strings are added by us. <code>cfg_str</code> is added implicitly by <code>usbd_add_configuration()</code> because we passed <code>&amp;cfg_str</code> to <code>USBD_CONFIGURATION_DEFINE</code> — see G15. So in registration order: LANGID, Manufacturer, Product, Serial, Interface, then Configuration last.</p>
+
+<table>
+  <thead>
+    <tr><th>Index</th><th>Type</th><th>bLength</th><th>Wire bytes (head)</th><th>Decoded</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="hex">0x00</td><td class="field">LANGID</td><td class="hex">4</td><td><code>04 03 09 04</code></td><td>bLength=4, type=STRING (0x03), wLANGID[0] = 0x0409 (English-US), little-endian on the wire so the bytes are <code>09 04</code>.</td></tr>
+    <tr><td class="hex">0x01</td><td class="field">Manufacturer</td><td class="hex">16</td><td><code>10 03 65 00 64 00 65 00 76 00 6B 00 69 00 74 00</code></td><td>"edevkit" (7 chars), each char widened to UTF-16LE: <code>0x0065 0x0064 0x0065 0x0076 0x006B 0x0069 0x0074</code>. <code>bLength = 2 + 2*7 = 16</code>. Returned for any LANGID the device claims to support.</td></tr>
+    <tr><td class="hex">0x02</td><td class="field">Product</td><td class="hex">44</td><td><code>2C 03 75 00 73 00 62 00 5F 00 30 00 33 00 ...</code></td><td>"usb_03 - strings_demo" (21 chars; ASCII hyphen, not en-dash — see G12). <code>bLength = 2 + 2*21 = 44</code>.</td></tr>
+    <tr><td class="hex">0x03</td><td class="field">Serial Number</td><td class="hex">38</td><td><code>26 03 45 00 44 00 56 00 2D 00 ...</code></td><td>"EDV-XXXX-YYYY-ZZZZ" (18 chars), where each <code>X</code>/<code>Y</code>/<code>Z</code> is a uppercase hex digit derived from the chip ID. <code>bLength = sizeof("EDV-XXXX-YYYY-ZZZZ") * 2 = 19 * 2 = 38</code> per <code>USB_STRING_DESCRIPTOR_LENGTH</code>.</td></tr>
+    <tr><td class="hex">0x04</td><td class="field">Interface</td><td class="hex">66</td><td><code>42 03 56 00 65 00 6E 00 64 00 6F 00 72 00 ...</code></td><td>"Vendor (descriptor demo, no I/O)" (32 chars). Referenced by <code>iInterface = 4</code> in the interface descriptor.</td></tr>
+    <tr><td class="hex">0x05</td><td class="field">Configuration</td><td class="hex">30</td><td><code>1E 03 44 00 65 00 66 00 61 00 75 00 6C 00 74 00 ...</code></td><td>"Default config" (14 chars). Added <em>by the stack</em> inside <code>usbd_add_configuration()</code> — see G15. Referenced by <code>iConfiguration = 5</code> in the configuration descriptor.</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <div class="callout-title">Indices are runtime-assigned, not hard-coded</div>
+  <p>The <strong>0x04</strong> and <strong>0x05</strong> shown above come from the exact registration sequence in <code>main.c</code> (Interface explicit, then Configuration auto-added by <code>usbd_add_configuration()</code>). Add a string in a different order — or call <code>usbd_add_descriptor(&amp;cfg_str)</code> yourself before <code>usbd_add_configuration</code> — and the indices shift. <strong>Never hard-code an index</strong> in the iface or config descriptor — call <code>usbd_str_desc_get_idx()</code> after registration and patch the field. This is the late-binding moment §4 dwells on.</p>
+</div>
+
+<!-- ─────────────────────────── 4. LATE BINDING ─────────────────────────── -->
+
+<h2 id="late-binding">4. The late-binding moment</h2>
+
+<p>This is the conceptual heart of Ch 07. Pause here.</p>
+
+<p>In the byte-level descriptor blob, the interface descriptor advertises <code>iInterface = 4</code>. When the host wants the interface's name, it issues <code>GET_DESCRIPTOR(STRING, 4, langid)</code>. The stack walks its registered string descriptors, finds the one at index 4, returns its UTF-16LE bytes. <strong>What's registered at index 4 is decided by the firmware, at runtime, before <code>usbd_init()</code>.</strong></p>
+
+<p>Three consequences for how we write code:</p>
+
+<ol>
+  <li><strong>The descriptor blob in <code>strings_demo.c</code> cannot just write <code>.iInterface = 4</code> as a literal.</strong> If you reorder the <code>usbd_add_descriptor()</code> calls in <code>main.c</code>, the index shifts. You'd need to keep two files in sync by hand. <em>The defense:</em> initialize <code>.iInterface = 0</code> in <code>strings_demo.c</code>, then patch it from <code>main.c</code> after registering the interface-name string and querying its assigned index.</li>
+  <li><strong>The serial-number string buffer must exist in writable memory.</strong> The Zephyr <code>USBD_DESC_SERIAL_NUMBER_DEFINE</code> macro hands you an immutable struct that auto-formats from <code>hwinfo</code> at request time. We bypass that — we build a custom <code>EDV-XXXX-YYYY-ZZZZ</code> string at boot and write it into a buffer the descriptor node points at. The descriptor node is registered <em>once</em>, but the bytes it points at change between <code>main()</code> entry and the first host enumeration request.</li>
+  <li><strong>String registration must complete before <code>usbd_init()</code>.</strong> The init step walks the descriptor tree and validates every string-index reference. A late-bound <code>iInterface</code> patched <em>after</em> <code>usbd_init</code> would already have validated against the wrong (stale) index. Order is: add all strings → patch index references → <code>usbd_init</code> → <code>usbd_enable</code>.</li>
+</ol>
+
+<div class="callout info">
+  <div class="callout-title">Mental model</div>
+  <p>A <em>descriptor</em> is a static blob with index references. A <em>string descriptor</em> is a separate registration flow: each string gets an index slot at registration time. The index references in the descriptor blob are <strong>filled in by firmware</strong> after the strings are registered, before the stack validates the tree. This separation is what makes per-unit serials, localised product names, and dynamic interface naming all possible without rebuilding firmware.</p>
+</div>
+
+<!-- ─────────────────────────── 5. DEFENSES ─────────────────────────── -->
+
+<h2 id="defenses">5. Carry-forward defenses + new (G1–G15)</h2>
+
+<p>Gotchas G1–G10 carry forward from <code>usb_01</code> and <code>usb_02</code> (catalogued in <a href="/docs/firmware_zephyr_usbd.html">firmware_zephyr_usbd.html</a> and <a href="/docs/firmware_sample_usb_02.html#defenses">usb_02 §4</a>). usb_03 introduces <strong>five</strong> new gotchas specific to string descriptors — four anticipated (G11–G14) and a fifth (G15) caught during first bring-up.</p>
+
+<h3>Carried over (re-state, re-defend)</h3>
+
+<table>
+  <thead><tr><th>#</th><th>Gotcha</th><th>Defense in usb_03</th></tr></thead>
+  <tbody>
+    <tr><td>G1</td><td><code>get_desc</code> must return a <strong>NULL-terminated array</strong> of <code>struct usb_desc_header *</code>.</td><td>Same as usb_02: <code>fs_desc[]</code> in <code>strings_demo.c</code> ends with <code>NULL</code>.</td></tr>
+    <tr><td>G2</td><td>Don't <code>const</code> interface or endpoint descriptors. Stack writes to <code>bInterfaceNumber</code>, <code>bEndpointAddress</code>, <code>iInterface</code> at init.</td><td>All four descriptor structs (cfg, iface, ep_out, ep_in) remain non-<code>const</code>. <code>iface.iInterface</code> is now <em>also</em> written by us, post-registration but pre-<code>usbd_init</code> — same memory non-constness applies.</td></tr>
+    <tr><td>G3</td><td>Class-name string must match exactly between <code>USBD_DEFINE_CLASS</code> and <code>usbd_register_class</code>.</td><td>Single <code>#define DEMO_CLASS_NAME "strings_demo"</code> at the top of <code>strings_demo.c</code>; <code>main.c</code> uses the same literal.</td></tr>
+    <tr><td>G4</td><td>Return <code>-ENOTSUP</code> from unsupported <code>control_to_*</code> callbacks; never <code>0</code>.</td><td>Both control callbacks remain <code>NULL</code> in the vtable. Strings are handled by the core, not by class callbacks.</td></tr>
+    <tr><td>G5</td><td><code>CONFIG_USB_DEVICE_STACK_NEXT=y</code> is mandatory.</td><td>Carried verbatim in <code>prj.conf</code>.</td></tr>
+    <tr><td>G6</td><td>UDC node label must exist in board DTS.</td><td><code>DEVICE_DT_GET(DT_NODELABEL(usbd))</code>; <code>&amp;usbd { status = "okay"; };</code> in overlay.</td></tr>
+    <tr><td>G7</td><td>Boot sequence order matters.</td><td><code>main.c</code> follows the standard order with <strong>one extension</strong>: between "add descriptors" and "add configuration", we now also patch <code>iface.iInterface</code> with the runtime-assigned index. See §7.</td></tr>
+    <tr><td>G8</td><td><code>wMaxPacketSize</code> via <code>sys_cpu_to_le16()</code>.</td><td>Both endpoints carry over from usb_02 verbatim.</td></tr>
+    <tr><td>G9</td><td>Bulk <code>bInterval = 0</code> per USB 2.0 §9.6.6.</td><td>Carried over.</td></tr>
+    <tr><td>G10</td><td>Pair IN/OUT on same EP number to conserve UDC resources.</td><td>EP1 OUT (0x01) and EP1 IN (0x81) — same as usb_02.</td></tr>
+  </tbody>
+</table>
+
+<h3>New for usb_03 (string-specific)</h3>
+
+<table>
+  <thead><tr><th>#</th><th>Gotcha</th><th>Defense</th></tr></thead>
+  <tbody>
+    <tr><td>G11</td><td><strong>LANGID at index 0 is mandatory.</strong> Without it the host cannot resolve <em>any</em> other string — every <code>GET_DESCRIPTOR(STRING, n &gt; 0, langid)</code> request specifies a langid the device must claim to support, and the only way to advertise supported langids is the index-0 LANGID descriptor itself. Skip it and <code>iManufacturer = 1</code> is dead bytes the host will never resolve.</td><td><code>USBD_DESC_LANG_DEFINE(lang_desc)</code> defined at file scope; <strong>first</strong> <code>usbd_add_descriptor()</code> call in <code>main()</code>, before any other string. The Zephyr default is English-US (<code>0x0409</code>), which every host accepts.</td></tr>
+    <tr><td>G12</td><td><strong>Wire bytes are UTF-16LE, source code is ASCII7.</strong> The <code>USBD_DESC_*_DEFINE</code> macros widen each ASCII byte to a 2-byte UTF-16LE code unit at request time (driven by <code>.ascii7 = true</code> on the <code>usbd_desc_node</code>). Non-ASCII characters in the literal — em dashes, accented letters, emoji — produce wrong-on-the-wire bytes silently. Use plain ASCII or pre-encode UTF-16LE bytes manually with <code>.ascii7 = false</code>.</td><td>Every string literal in <code>main.c</code> is checked to be ASCII7 (0x20–0x7E). The product string deliberately uses a hyphen <code>-</code>, not an en-dash <code>—</code>. The <code>EDV-XXXX-YYYY-ZZZZ</code> serial uses <code>%02X</code> formatting, which only emits 0–9 and A–F.</td></tr>
+    <tr><td>G13</td><td><strong>Index-reference fields must be patched after string registration, before <code>usbd_init</code>.</strong> Hard-coding <code>.iInterface = 4</code> in the descriptor struct at file scope assumes a specific registration order — fragile. Setting it before <code>usbd_init</code> from the result of <code>usbd_str_desc_get_idx()</code> is robust. (<code>iConfiguration</code> is the easier sibling: the stack patches it for us inside <code>usbd_add_configuration()</code> — see G15.)</td><td><code>main.c</code> calls <code>strings_demo_set_iface_idx(usbd_str_desc_get_idx(&amp;iface_str))</code> immediately after adding <code>iface_str</code> and immediately before <code>usbd_add_configuration()</code>. The setter is a one-line export from <code>strings_demo.c</code>.</td></tr>
+    <tr><td>G14</td><td><strong>Custom-formatted serial requires bypassing <code>USBD_DESC_SERIAL_NUMBER_DEFINE</code>.</strong> That macro hard-codes <code>.use_hwinfo = true</code>, which makes the stack call <code>hwinfo_get_device_id()</code> and emit raw uppercase-hex of every returned byte at request time. There's no hook to format the bytes. Hand-roll a <code>struct usbd_desc_node</code> with <code>.utype = USBD_DUT_STRING_SERIAL_NUMBER</code> and <code>.ascii7 = true</code>, point it at a writable buffer, populate the buffer at boot.</td><td>See <code>main.c</code> §7 — <code>serial_buf[]</code> is pre-initialised to a placeholder ("EDV-0000-0000-0000") so <code>USB_STRING_DESCRIPTOR_LENGTH</code> evaluates correctly at compile time, then overwritten at boot with the chip-ID-derived value before <code>usbd_add_descriptor(&amp;serial_node)</code>.</td></tr>
+    <tr><td>G15</td><td><strong>Don't double-add the configuration-string descriptor.</strong> <code>USBD_CONFIGURATION_DEFINE(cfg, ..., &amp;cfg_str)</code> stores the pointer in <code>cfg.str_desc_nd</code>; later, <code>usbd_add_configuration()</code> calls <code>usbd_add_descriptor(uds_ctx, cfg.str_desc_nd)</code> on your behalf and writes <code>iConfiguration</code> into the cfg descriptor. If you <em>also</em> call <code>usbd_add_descriptor(&amp;cfg_str)</code> in <code>main()</code>, the node ends up on the descriptors dlist twice — the second add hits the <code>sys_dnode_is_linked()</code> guard at <code>usbd_desc.c:146</code> and returns <code>-EALREADY</code> (= <strong>-120</strong> in Zephyr's minimal libc, where <code>EALREADY = 120</code>; not the Linux glibc value of 114). Surfaced at boot as <code>&lt;err&gt; usbd_cfg: Failed to add configuration string descriptor</code> + <code>&lt;err&gt; usb_03: add cfg: -120</code>. First hit during bring-up 2026-05-11.</td><td>Register only the strings the stack <em>can't</em> add for you — LANGID, Manufacturer, Product, Serial, Interface. Leave <code>cfg_str</code> to <code>usbd_add_configuration()</code>. With our five explicit adds before it, <code>cfg_str</code> lands at index 5 and <code>iConfiguration</code> is auto-patched to <code>5</code>.</td></tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 6. LAYOUT ─────────────────────────── -->
+
+<h2 id="layout">6. File layout</h2>
+
+<pre><code>firmware/samples/usb/usb_03/
+├── CMakeLists.txt          # adds main.c + strings_demo.c
+├── prj.conf                # CONFIG_USB_DEVICE_STACK_NEXT + CONFIG_HWINFO + RTT
+├── README.md               # what / how / verification (auto-from this doc)
+├── boards/
+│   └── rpi_pico2_rp2350a_m33.overlay   # &amp;usbd { status = "okay"; };
+└── src/
+    ├── main.c              # boot sequence, string defs, chip-ID serial, idx patch
+    └── strings_demo.c      # iface + 2 bulk EPs (same shape as descriptors_demo.c)
+                            #   plus one exported strings_demo_set_iface_idx()
+</code></pre>
+
+<!-- ─────────────────────────── 7. FLOW ─────────────────────────── -->
+
+<h2 id="flow">7. Boot &amp; runtime flow</h2>
+
+<p>Differences from usb_02 are in <strong>bold</strong>.</p>
+
+<pre><code>BOOT (main thread, in order — order matters)
+  0. <strong>serial_init()</strong>                          read RP2350 chip ID via
+                                                hwinfo_get_device_id(), format
+                                                EDV-XXXX-YYYY-ZZZZ into
+                                                serial_buf[]. Must run BEFORE
+                                                usbd_add_descriptor(&amp;serial_node).
+
+  1. usbd_add_descriptor(&amp;ctx, &amp;lang_desc)    (idx 0, by spec)
+  2. usbd_add_descriptor(&amp;ctx, &amp;mfr_desc)     (idx 1)
+  3. usbd_add_descriptor(&amp;ctx, &amp;product_desc) (idx 2)
+  4. usbd_add_descriptor(&amp;ctx, &amp;serial_node)  (idx 3) — runtime-populated
+  5. usbd_add_descriptor(&amp;ctx, &amp;iface_str)    (idx 4 in our ordering)
+                                                <strong>cfg_str NOT added here — see G15;
+                                                 the stack adds it in step 6.</strong>
+  <strong>5a. strings_demo_set_iface_idx(usbd_str_desc_get_idx(&amp;iface_str))</strong>
+                                                writes 4 (or whatever was assigned)
+                                                back into iface.iInterface.
+
+  6. usbd_add_configuration(&amp;ctx, USBD_SPEED_FS, &amp;cfg)
+                                                stack internally:
+                                                  - usbd_add_descriptor(&amp;cfg_str)  → idx 5
+                                                  - cfg_desc.iConfiguration = 5
+  7. usbd_register_class(&amp;ctx, "strings_demo", USBD_SPEED_FS, 1)
+  8. usbd_init(&amp;ctx)                          validates the descriptor tree
+                                                AFTER our index patches landed
+  9. usbd_enable(&amp;ctx)                        connects FS pull-up
+ 10. k_sleep(K_FOREVER)                       USB stack runs in its own queue
+
+RUNTIME (USB stack work queue, callback-driven)
+  A. host issues GET_DESCRIPTOR(Device)            served from USBD_DEVICE_DEFINE
+  B. host issues GET_DESCRIPTOR(STRING, 0, 0)      langid query — returns 0x0409
+  C. host issues GET_DESCRIPTOR(STRING, 1, 0x0409) "edevkit"
+  D. host issues GET_DESCRIPTOR(STRING, 2, 0x0409) "usb_03 - strings_demo"
+  E. host issues GET_DESCRIPTOR(STRING, 3, 0x0409) "EDV-XXXX-YYYY-ZZZZ"
+  F. host issues GET_DESCRIPTOR(Configuration)     32-byte cfg+iface+ep+ep
+  G. host issues GET_DESCRIPTOR(STRING, 4, 0x0409) "Vendor (descriptor demo...)"
+  H. host issues GET_DESCRIPTOR(STRING, 5, 0x0409) "Default config"
+  I. host issues SET_CONFIGURATION(1)              triggers our enable() cb
+  J. host attempts bulk read on EP 0x81            NAK forever (carried over)
+</code></pre>
+
+<!-- ─────────────────────────── 8. CODE: MAIN ─────────────────────────── -->
+
+<h2 id="code-main">8. Code: <code>src/main.c</code></h2>
+
+<p>This is where most of the new work lives. Listing is annotated heavily — every block ties back to a numbered step in §7 and a gotcha defense in §5.</p>
+
+<div class="file-label">firmware/samples/usb/usb_03/src/main.c</div>
+<pre><code>/*
+ * usb_03 — string descriptors and per-unit identity.
+ *
+ * Builds on usb_02's descriptor tree with a complete set of standard string
+ * descriptors (LANGID, Manufacturer, Product, Serial, Configuration, Interface)
+ * and a runtime-formatted EDV-XXXX-YYYY-ZZZZ serial derived from the RP2350
+ * 64-bit chip ID. Demonstrates that descriptor-index references are late-bound:
+ * the iface descriptor's iInterface field is patched after string registration,
+ * before usbd_init() validates the tree.
+ *
+ * See firmware_sample_usb_03.html for the design narrative + byte-level layout.
+ */
+
+#include &lt;stdio.h&gt;                      /* snprintf */
+#include &lt;errno.h&gt;
+#include &lt;zephyr/kernel.h&gt;
+#include &lt;zephyr/usb/usbd.h&gt;
+#include &lt;zephyr/drivers/hwinfo.h&gt;       /* hwinfo_get_device_id (G14) */
+#include &lt;zephyr/logging/log.h&gt;
+
+LOG_MODULE_REGISTER(usb_03, LOG_LEVEL_INF);
+
+/* G3 defense: single source of truth for the class-registration string. */
+#define DEMO_CLASS_NAME "strings_demo"
+
+/* Exported by strings_demo.c — patches iface.iInterface (G13). */
+extern void strings_demo_set_iface_idx(uint8_t idx);
+
+/* ===========================================================================
+ * Static string descriptors (compile-time literals).
+ * Order of registration in main() determines index assignment.
+ * =========================================================================*/
+
+USBD_DESC_LANG_DEFINE(lang_desc);                                          /* G11 */
+USBD_DESC_MANUFACTURER_DEFINE(mfr_desc,     "edevkit");
+USBD_DESC_PRODUCT_DEFINE     (product_desc, "usb_03 - strings_demo");      /* G12: ASCII7 only */
+USBD_DESC_CONFIG_DEFINE      (cfg_str,      "Default config");
+USBD_DESC_STRING_DEFINE      (iface_str,    "Vendor (descriptor demo, no I/O)",
+                              USBD_DUT_STRING_INTERFACE);
+
+/* ===========================================================================
+ * Custom serial-number string descriptor (G14).
+ *
+ * Hand-rolled struct usbd_desc_node + writable buffer. The descriptor's
+ * .ptr is initialised once at file scope to point at serial_buf; the buffer
+ * itself is overwritten at boot with the chip-ID-derived value.
+ *
+ * USB_STRING_DESCRIPTOR_LENGTH(s) = sizeof(s) * 2  (verified in usbd.h:56).
+ * For "EDV-XXXX-YYYY-ZZZZ" sizeof = 19, bLength = 38, layout: 2-byte header
+ * + 18 UTF-16LE code units.
+ * =========================================================================*/
+
+#define SERIAL_TEMPLATE   "EDV-0000-0000-0000"        /* placeholder, same length as runtime value */
+#define SERIAL_BUF_SIZE   sizeof(SERIAL_TEMPLATE)     /* 19 incl. NUL */
+
+static char serial_buf[SERIAL_BUF_SIZE] = SERIAL_TEMPLATE;
+
+static struct usbd_desc_node serial_node = {
+    .str = {
+        .utype  = USBD_DUT_STRING_SERIAL_NUMBER,
+        .ascii7 = true,                               /* G12 */
+    },
+    .ptr             = serial_buf,
+    .bLength         = USB_STRING_DESCRIPTOR_LENGTH(SERIAL_TEMPLATE),
+    .bDescriptorType = USB_DESC_STRING,
+};
+
+/* Read the RP2350 64-bit chip ID and format the first 6 bytes (12 hex chars)
+ * into the serial_buf. Same sizeof, same bLength — only the bytes change. */
+static int serial_init(void)
+{
+    uint8_t id[8] = {0};
+    ssize_t n = hwinfo_get_device_id(id, sizeof(id));
+
+    if (n &lt; 6) {
+        LOG_ERR("hwinfo_get_device_id returned %d (need &gt;= 6)", (int)n);
+        /* Don't fail boot — the placeholder "EDV-0000-0000-0000" is still a
+         * valid string. Useful in CI / emulator where HWINFO might be stub. */
+        return -EIO;
+    }
+
+    int written = snprintf(serial_buf, sizeof(serial_buf),
+                           "EDV-%02X%02X-%02X%02X-%02X%02X",
+                           id[0], id[1], id[2], id[3], id[4], id[5]);
+    if (written != (int)(sizeof(serial_buf) - 1)) {
+        LOG_ERR("serial format truncated (wrote %d, expected %d)",
+                written, (int)(sizeof(serial_buf) - 1));
+        return -ENOSPC;
+    }
+
+    LOG_INF("serial: %s", serial_buf);
+    return 0;
+}
+
+/* ===========================================================================
+ * Configuration descriptor.
+ *
+ * Third arg is now &amp;cfg_str (was NULL in usb_02). It is stored as
+ * cfg.str_desc_nd; usbd_add_configuration() will register cfg_str for us and
+ * write back iConfiguration with the resulting index.
+ *
+ * G15 — do NOT also call usbd_add_descriptor(&amp;cfg_str) yourself. The stack
+ * does it inside usbd_add_configuration(); a manual pre-add lands cfg_str on
+ * the descriptors dlist, and the stack's second add returns -EALREADY (-120
+ * in Zephyr's minimal libc) — surfaced as "Failed to add configuration
+ * string descriptor" + "add cfg: -120".
+ * =========================================================================*/
+
+USBD_CONFIGURATION_DEFINE(cfg, USB_SCD_REMOTE_WAKEUP, 50, &amp;cfg_str);
+
+/* ===========================================================================
+ * Device-level identity. PID bumped to 0xede3; bcdDevice bumped to 0x0103
+ * to invalidate the macOS descriptor cache after coming from usb_02.
+ * =========================================================================*/
+
+USBD_DEVICE_DEFINE(usbd_ctx, DEVICE_DT_GET(DT_NODELABEL(usbd)),
+                   0x1209, 0xede3);
+
+int main(void)
+{
+    int err;
+
+    /* (0) Generate the per-unit serial BEFORE registering the descriptor. */
+    (void)serial_init();        /* placeholder is a valid fallback if this errors */
+
+    /* (1)–(5) Register string descriptors that have no auto-add path.
+     *         Order assigns indices. G7 — order matters; G11 — LANGID first.
+     *         cfg_str is intentionally NOT added here: usbd_add_configuration()
+     *         registers it on our behalf (see G15 next to USBD_CONFIGURATION_DEFINE). */
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;lang_desc);
+    if (err) { LOG_ERR("add lang: %d", err);          return -1; }
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;mfr_desc);
+    if (err) { LOG_ERR("add mfr: %d", err);           return -1; }
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;product_desc);
+    if (err) { LOG_ERR("add product: %d", err);       return -1; }
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;serial_node);
+    if (err) { LOG_ERR("add serial: %d", err);        return -1; }
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;iface_str);
+    if (err) { LOG_ERR("add iface_str: %d", err);     return -1; }
+
+    /* (5a) G13 — patch the iface descriptor's iInterface field to whatever
+     *      index the stack just assigned to iface_str. MUST happen before
+     *      usbd_init() validates the tree.                                   */
+    uint8_t iface_idx = usbd_str_desc_get_idx(&amp;iface_str);
+    LOG_INF("iface_str registered at idx %u", iface_idx);
+    strings_demo_set_iface_idx(iface_idx);
+
+    /* (6) Add the configuration. The stack auto-registers cfg_str (next idx)
+     *     and writes back iConfiguration in cfg_desc — we never touch either. */
+    err = usbd_add_configuration(&amp;usbd_ctx, USBD_SPEED_FS, &amp;cfg);
+    if (err) { LOG_ERR("add cfg: %d", err); return -1; }
+
+    /* (7) Attach the strings_demo class instance to configuration 1. */
+    err = usbd_register_class(&amp;usbd_ctx, DEMO_CLASS_NAME,
+                              USBD_SPEED_FS, 1);
+    if (err) { LOG_ERR("register class: %d", err); return -1; }
+
+    /* (8) Validate + finalize. The stack walks every class's fs_desc[] AND
+     *     re-validates every iInterface / iConfiguration index reference now. */
+    err = usbd_init(&amp;usbd_ctx);
+    if (err) { LOG_ERR("usbd_init: %d", err); return -1; }
+
+    /* (9) Connect the pull-up. Host can now see us. */
+    err = usbd_enable(&amp;usbd_ctx);
+    if (err) { LOG_ERR("usbd_enable: %d", err); return -1; }
+
+    LOG_INF("usb_03 strings_demo: enabled, idle on EP0");
+
+    while (true) {
+        k_sleep(K_FOREVER);
+    }
+    return 0;
+}
+</code></pre>
+
+<!-- ─────────────────────────── 9. CODE: CLASS ─────────────────────────── -->
+
+<h2 id="code-class">9. Code: <code>src/strings_demo.c</code></h2>
+
+<p>Almost identical to usb_02's <code>descriptors_demo.c</code> — same iface, same two bulk endpoints, same vtable. The only addition is a single exported setter for <code>iface.iInterface</code>.</p>
+
+<div class="file-label">firmware/samples/usb/usb_03/src/strings_demo.c</div>
+<pre><code>/*
+ * strings_demo — vendor class, 1 interface (now named), 2 bulk endpoints.
+ *
+ * Identical wire shape to usb_02's descriptors_demo. The only difference is
+ * iface.iInterface is settable from main.c via strings_demo_set_iface_idx()
+ * after the interface-name string has been registered (G13).
+ */
+
+#include &lt;zephyr/kernel.h&gt;
+#include &lt;zephyr/usb/usbd.h&gt;
+#include &lt;zephyr/usb/usb_ch9.h&gt;
+#include &lt;zephyr/sys/byteorder.h&gt;
+#include &lt;zephyr/logging/log.h&gt;
+
+LOG_MODULE_REGISTER(strings_demo, LOG_LEVEL_INF);
+
+/* G3 defense: same string as DEMO_CLASS_NAME in main.c. */
+#define DEMO_CLASS_NAME "strings_demo"
+
+/* ===========================================================================
+ * Descriptor structs — non-const (G2). iface.iInterface is patched at boot.
+ * =========================================================================*/
+
+static struct usb_if_descriptor iface = {
+    .bLength            = sizeof(struct usb_if_descriptor),
+    .bDescriptorType    = USB_DESC_INTERFACE,
+    .bInterfaceNumber   = 0,                       /* written by stack */
+    .bAlternateSetting  = 0,
+    .bNumEndpoints      = 2,
+    .bInterfaceClass    = USB_BCC_VENDOR,
+    .bInterfaceSubClass = 0xFF,
+    .bInterfaceProtocol = 0xFF,
+    .iInterface         = 0,                       /* patched at boot — G13 */
+};
+
+static struct usb_ep_descriptor ep_out = {
+    .bLength          = sizeof(struct usb_ep_descriptor),
+    .bDescriptorType  = USB_DESC_ENDPOINT,
+    .bEndpointAddress = USB_EP_DIR_OUT | 0x01,     /* G10 */
+    .bmAttributes     = USB_EP_TYPE_BULK,
+    .wMaxPacketSize   = sys_cpu_to_le16(64U),      /* G8 */
+    .bInterval        = 0,                          /* G9 */
+};
+
+static struct usb_ep_descriptor ep_in = {
+    .bLength          = sizeof(struct usb_ep_descriptor),
+    .bDescriptorType  = USB_DESC_ENDPOINT,
+    .bEndpointAddress = USB_EP_DIR_IN  | 0x01,
+    .bmAttributes     = USB_EP_TYPE_BULK,
+    .wMaxPacketSize   = sys_cpu_to_le16(64U),
+    .bInterval        = 0,
+};
+
+/* G1 defense: NULL-terminated array of struct usb_desc_header *. */
+static struct usb_desc_header *fs_desc[] = {
+    (struct usb_desc_header *) &amp;iface,
+    (struct usb_desc_header *) &amp;ep_out,
+    (struct usb_desc_header *) &amp;ep_in,
+    NULL,
+};
+
+/* ===========================================================================
+ * G13 — exported so main.c can patch iface.iInterface AFTER the
+ * interface-name string has been registered, BEFORE usbd_init validates.
+ * =========================================================================*/
+void strings_demo_set_iface_idx(uint8_t idx)
+{
+    iface.iInterface = idx;
+}
+
+/* ===========================================================================
+ * Class API callbacks. Identical to usb_02 — strings are out-of-band.
+ * =========================================================================*/
+
+static int demo_init(struct usbd_class_data *const c_data)
+{
+    LOG_DBG("strings_demo: init");
+    return 0;
+}
+
+static void demo_enable(struct usbd_class_data *const c_data)
+{
+    LOG_INF("strings_demo: configured (enabled)");
+}
+
+static void demo_disable(struct usbd_class_data *const c_data)
+{
+    LOG_INF("strings_demo: deconfigured (disabled)");
+}
+
+static void *demo_get_desc(struct usbd_class_data *const c_data,
+                           const enum usbd_speed speed)
+{
+    if (speed == USBD_SPEED_FS) {
+        return fs_desc;
+    }
+    return NULL;
+}
+
+static const struct usbd_class_api demo_api = {
+    .init     = demo_init,
+    .enable   = demo_enable,
+    .disable  = demo_disable,
+    .get_desc = demo_get_desc,
+};
+
+/* G3 — must match DEMO_CLASS_NAME in main.c. */
+USBD_DEFINE_CLASS(strings_demo, &amp;demo_api, NULL, NULL);
+</code></pre>
+
+<!-- ─────────────────────────── 10. CODE: REST ─────────────────────────── -->
+
+<h2 id="code-rest">10. Code: <code>prj.conf</code> · <code>CMakeLists.txt</code> · <code>boards/*.overlay</code></h2>
+
+<div class="file-label">firmware/samples/usb/usb_03/prj.conf</div>
+<pre><code>CONFIG_USB_DEVICE_STACK_NEXT=y      # G5 — mandatory for USBD_* macros
+CONFIG_HWINFO=y                     # G14 — required for hwinfo_get_device_id()
+
+CONFIG_LOG=y
+CONFIG_USE_SEGGER_RTT=y
+CONFIG_RTT_CONSOLE=y
+CONFIG_UART_CONSOLE=n
+
+CONFIG_USBD_LOG_LEVEL_INF=y
+
+CONFIG_HEAP_MEM_POOL_SIZE=2048
+
+CONFIG_THREAD_NAME=y
+CONFIG_BOOT_BANNER=y
+</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">Why <code>CONFIG_HWINFO=y</code> is now explicit</div>
+  <p>In usb_02, <code>USBD_DESC_SERIAL_NUMBER_DEFINE</code>'s <code>BUILD_ASSERT(IS_ENABLED(CONFIG_HWINFO), ...)</code> would have failed the build if HWINFO weren't already enabled by some upstream default. usb_03 doesn't use that macro — it calls <code>hwinfo_get_device_id()</code> directly — so the dependency is now ours to declare. Linker would still resolve the symbol, but a board without a registered HWINFO driver would have <code>hwinfo_get_device_id()</code> return <code>-ENOSYS</code>; with explicit Kconfig the build configuration system tells you upfront.</p>
+</div>
+
+<div class="file-label">firmware/samples/usb/usb_03/CMakeLists.txt</div>
+<pre><code>cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(usb_03)
+
+target_sources(app PRIVATE
+    src/main.c
+    src/strings_demo.c
+)
+</code></pre>
+
+<div class="file-label">firmware/samples/usb/usb_03/boards/rpi_pico2_rp2350a_m33.overlay</div>
+<pre><code>/* G6 — the RP2350 board exposes the UDC node as &amp;usbd. */
+&amp;usbd {
+    status = "okay";
+};
+</code></pre>
+
+<!-- ─────────────────────────── 11. BUILD ─────────────────────────── -->
+
+<h2 id="build">11. Build, flash, RTT</h2>
+
+<pre><code># from edevkit/firmware/samples/usb/usb_03/ — needs the (edev) venv active
+edev_build       # sysbuild: writes build-rpi_pico2_rp2350a_m33/usb_03/zephyr/zephyr.signed.bin
+
+# flash via Pi Debug Probe (SWD) and stream RTT in one shot
+edev_run         # = edev_flash + probe-rs attach. Ctrl-C to detach.
+
+# Or, if you only want to flash without watching RTT:
+#   edev_flash
+# Or attach to an already-running target without re-flashing:
+#   edev_rtt_monit
+</code></pre>
+
+<p>If the flash step succeeds but the firmware doesn't start (no boot banner, RTT attach reports "no control block"), do a cold-boot (USB unplug/replug, or pulse the RP2350 RUN pin to GND) — see the <a href="/docs/shell_helpers.html">shell helpers doc</a> on the RP2350 SYSRESETREQ quirk.</p>
+
+<p>Expected RTT output on a clean boot:</p>
+
+<pre><code>*** Booting Zephyr OS build v4.4.0-1126-... ***
+[00:00:00.001,000] &lt;inf&gt; usb_03: serial: EDV-AB12-CD34-EF56          ← unique per board
+[00:00:00.002,000] &lt;inf&gt; usb_03: iface_str registered at idx 4
+[00:00:00.012,000] &lt;inf&gt; strings_demo: configured (enabled)
+[00:00:00.012,000] &lt;inf&gt; usb_03: usb_03 strings_demo: enabled, idle on EP0
+</code></pre>
+
+<p>The <code>serial: EDV-...</code> line is your evidence that the chip-ID read worked; the bytes will be different on every physical board. The <code>iface_str registered at idx 4</code> line confirms the late-binding patch happened with a sensible index value.</p>
+
+<!-- ─────────────────────────── 12. VERIFY ─────────────────────────── -->
+
+<h2 id="verify">12. Verify on the host</h2>
+
+<h3>Linux</h3>
+<pre><code>$ lsusb -d 1209:ede3
+Bus 003 Device 047: ID 1209:ede3 edevkit usb_03 - strings_demo
+
+$ lsusb -v -d 1209:ede3 | head -50
+Bus 003 Device 047: ID 1209:ede3 edevkit usb_03 - strings_demo
+Device Descriptor:
+  bLength                18
+  bDescriptorType         1
+  bcdUSB               2.00
+  bDeviceClass            0
+  bDeviceSubClass         0
+  bDeviceProtocol         0
+  bMaxPacketSize0        64
+  idVendor           0x1209
+  idProduct          0xede3
+  bcdDevice            1.03
+  iManufacturer           1 edevkit
+  iProduct                2 usb_03 - strings_demo
+  iSerial                 3 EDV-AB12-CD34-EF56            ← per-unit
+  bNumConfigurations      1
+  Configuration Descriptor:
+    bLength                 9
+    bDescriptorType         2
+    wTotalLength       0x0020
+    bNumInterfaces          1
+    bConfigurationValue     1
+    iConfiguration          5 Default config              ← was 0 in usb_02
+    bmAttributes         0xa0
+      (Bus Powered)
+      Remote Wakeup
+    MaxPower              100mA
+    Interface Descriptor:
+      bLength               9
+      bInterfaceNumber      0
+      bAlternateSetting     0
+      bNumEndpoints         2
+      bInterfaceClass     255 Vendor Specific
+      bInterfaceSubClass  255
+      bInterfaceProtocol  255
+      iInterface            4 Vendor (descriptor demo, no I/O)   ← was 0 in usb_02
+      Endpoint Descriptor: ...
+</code></pre>
+
+<div class="callout good">
+  <div class="callout-title">Cause-and-effect to internalise</div>
+  <p>The <code>iInterface = 4</code> field <em>in the binary descriptor blob</em> came from the runtime patch in <code>main.c</code> step (5a). The string <code>"Vendor (descriptor demo, no I/O)"</code> was fetched separately, in a follow-up <code>GET_DESCRIPTOR(STRING, 4, 0x0409)</code> control transfer. lsusb merges them into one line, but on the wire they are independent transactions. Capture USB traffic with <a href="https://en.wikipedia.org/wiki/Usbmon"><code>usbmon</code></a> + Wireshark to see the two transfers.</p>
+</div>
+
+<h3>macOS</h3>
+<pre><code># ioreg is preferred over system_profiler — system_profiler caches USB
+# tree results aggressively and lags 10-30s behind reality.
+$ ioreg -p IOUSB -l -w 0 | grep -A 30 'usb_03'
+  | +-o usb_03 - strings_demo@01100000  &lt;class IOUSBHostDevice, ...
+  | |   "USB Product Name" = "usb_03 - strings_demo"
+  | |   "USB Vendor Name" = "edevkit"
+  | |   "idVendor" = 4617          ← 0x1209
+  | |   "idProduct" = 60899        ← 0xede3
+  | |   "USB Serial Number" = "EDV-AB12-CD34-EF56"   ← per-unit
+  | |   "bcdDevice" = 259          ← 0x0103
+  | |   "bNumConfigurations" = 1
+</code></pre>
+
+<div class="callout warn">
+  <div class="callout-title">macOS string cache</div>
+  <p>If <code>ioreg</code> shows usb_02's old strings ("usb_02") even after re-flashing usb_03, macOS is serving cached descriptors keyed on <code>{VID, PID, bcdDevice}</code>. Bumping <code>bcdDevice</code> from <code>0x0100</code> (usb_02) to <code>0x0103</code> (usb_03) is what forces the re-read. If you ever build a usb_03_v2 that <em>changes</em> a string but keeps the same <code>bcdDevice</code>, you'll see this exact symptom.</p>
+</div>
+
+<h3>Windows (PowerShell)</h3>
+<pre><code>PS&gt; Get-PnpDevice -PresentOnly | Where-Object { $_.HardwareID -like '*VID_1209*PID_EDE3*' }
+
+Status     Class           FriendlyName
+------     -----           ------------
+OK         USB             usb_03 - strings_demo
+
+# Detailed string descriptor inspection requires Zadig (https://zadig.akeo.ie/)
+# or USBDeview (NirSoft). Both render iSerial, iManufacturer, iProduct,
+# iConfiguration, and iInterface as resolved strings, not raw indices.
+</code></pre>
+
+<div class="callout good">
+  <div class="callout-title">Acceptance — usb_03 is "done" when</div>
+  <p><strong>(a)</strong> All three OS verification commands show the device with VID:PID <code>1209:ede3</code> and product/manufacturer strings rendered as text;
+     <strong>(b)</strong> <code>iSerial</code> is <code>EDV-XXXX-YYYY-ZZZZ</code> with hex digits that change between physical boards but are stable across reboots of the same board;
+     <strong>(c)</strong> <code>iConfiguration</code> resolves to <code>"Default config"</code> and <code>iInterface</code> resolves to <code>"Vendor (descriptor demo, no I/O)"</code>;
+     <strong>(d)</strong> RTT shows the <code>serial: EDV-...</code> line, the <code>iface_str registered at idx N</code> line (with N typically 4 given the registration order in §7), and the <code>configured (enabled)</code> line — all within ~50 ms of plug-in.
+     Bulk reads/writes still NAK forever — that's still <code>usb_04</code>'s problem.</p>
+</div>
+
+<!-- ─────────────────────────── 13. PITFALLS ─────────────────────────── -->
+
+<h2 id="pitfalls">13. Anticipated pitfalls</h2>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Boot logs show <code>&lt;err&gt; usbd_cfg: Failed to add configuration string descriptor</code> followed by <code>add cfg: -120</code>, and the device never enumerates."</strong> G15: you're double-adding <code>cfg_str</code>. Either remove the explicit <code>usbd_add_descriptor(&amp;usbd_ctx, &amp;cfg_str)</code> in <code>main()</code> (the stack adds it inside <code>usbd_add_configuration()</code> because you passed <code>&amp;cfg_str</code> to <code>USBD_CONFIGURATION_DEFINE</code>), or pass <code>NULL</code> as the fourth macro arg if you really want to manage the registration yourself. <em>Note:</em> -120 is <code>-EALREADY</code> in Zephyr's minimal libc, not <code>-ENOMSG</code> — Zephyr's <code>errno.h</code> values diverge from Linux glibc.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Manufacturer / Product / Serial all show up as empty strings or as <code>(error)</code> in lsusb."</strong> The LANGID descriptor at index 0 is missing, malformed, or registered AFTER another string (G11). The host requested <code>GET_DESCRIPTOR(STRING, 0, 0)</code> first, got nothing useful, and now refuses to issue any further string requests. Confirm <code>USBD_DESC_LANG_DEFINE(lang_desc)</code> exists and is the <strong>first</strong> <code>usbd_add_descriptor()</code> call in <code>main()</code>.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"<code>iInterface = 0</code> on the host even though we registered the interface string."</strong> The patch in step (5a) didn't run, or ran <em>after</em> <code>usbd_init()</code> (G13). Check the call order in <code>main.c</code>: <code>usbd_str_desc_get_idx(&amp;iface_str)</code> + <code>strings_demo_set_iface_idx(...)</code> must come before <code>usbd_add_configuration()</code>. Add a <code>LOG_INF("iface_idx = %u", idx)</code> to confirm.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Serial shows as <code>EDV-0000-0000-0000</code> on the host."</strong> The <code>serial_init()</code> call ran but <code>hwinfo_get_device_id()</code> returned <code>-ENOSYS</code> (no driver) or fewer than 6 bytes. RTT will show the corresponding <code>LOG_ERR</code> from <code>serial_init</code>. Verify <code>CONFIG_HWINFO=y</code> in <code>prj.conf</code> and that the active board has a registered hwinfo driver. RP2350's hwinfo driver lives in <code>$ZEPHYR_BASE/drivers/hwinfo/hwinfo_rpi_pico.c</code>; if you've ported usb_03 to a different board, check that target.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Build error: <code>BUILD_ASSERT</code> failed: HWINFO not enabled."</strong> You left <code>USBD_DESC_SERIAL_NUMBER_DEFINE</code> in <code>main.c</code> from a copy-paste of usb_02 in addition to the new hand-rolled <code>serial_node</code> — and forgot the <code>CONFIG_HWINFO=y</code>. Either remove the macro use (we replaced it deliberately for G14) or add <code>CONFIG_HWINFO=y</code>. Don't keep both.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Product string ends mid-word in lsusb (truncation)."</strong> The string literal contains a non-ASCII character (em dash, accented letter) and the <code>.ascii7 = true</code> path widened it to a wrong UTF-16LE code unit (G12). lsusb may render the truncation as a stray glyph or stop printing partway through. Replace non-ASCII characters with ASCII7 substitutes (<code>—</code> → <code>-</code>, <code>é</code> → <code>e</code>) or pre-encode UTF-16LE bytes manually with <code>.ascii7 = false</code>.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Two boards on the same host show identical serials."</strong> Either (a) <code>hwinfo_get_device_id()</code> returned a board-default constant on both (driver bug, very rare on RP2350), or (b) you're running on an emulator where the chip ID is stubbed. On real RP2350B silicon the 64-bit unique ID is laser-fused and globally unique. Compare the chip IDs in RTT (<code>id[0..7]</code>) before formatting — if those differ but the formatted serials match, you have a <code>snprintf</code> formatting bug.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"<code>usbd_init: -22</code> (-EINVAL) at boot, but everything compiled."</strong> Most likely cause specific to usb_03: the <code>iInterface</code> value patched in step (5a) is out of range — for instance, <code>strings_demo_set_iface_idx(0)</code> got called by accident, or <code>usbd_str_desc_get_idx(&amp;iface_str)</code> returned 0 because <code>iface_str</code> wasn't actually added. Add <code>LOG_INF</code> on the returned index and re-flash.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"After flashing usb_03, <code>lsusb -v</code> still shows usb_02's strings."</strong> Host descriptor cache. Hosts cache descriptors keyed by <code>{VID, PID, bcdDevice}</code>; if any one of those didn't change, the OS will not re-read. usb_03 bumps <code>bcdDevice</code> to <code>0x0103</code> precisely to invalidate the cache after coming from usb_02's <code>0x0100</code>. If you're iterating <em>within</em> usb_03 and changed a string without bumping <code>bcdDevice</code>, increment <code>bcdDevice</code> by one (e.g., <code>0x0103</code> → <code>0x0104</code>) for that build.</p>
+</div>
+
+<!-- ─────────────────────────── 14. CREDITS ─────────────────────────── -->
+
+<h2 id="credits-section">14. Attribution</h2>
+
+<aside class="credits">
+  <p><strong>Pattern source.</strong> The <code>USBD_DESC_*</code> macro family and <code>struct usbd_desc_node</code> layout used in §8 are from Zephyr USB-Device-Next public API:</p>
+  <p><code>$ZEPHYR_BASE/include/zephyr/usb/usbd.h</code> — © 2024 Nordic Semiconductor ASA, licensed Apache-2.0. Source: <a href="https://github.com/zephyrproject-rtos/zephyr/blob/main/include/zephyr/usb/usbd.h">zephyrproject-rtos/zephyr · usbd.h</a>. Specifically: <code>USBD_DESC_LANG_DEFINE</code> (line 568), <code>USBD_DESC_STRING_DEFINE</code> (line 591), <code>USBD_DESC_SERIAL_NUMBER_DEFINE</code> (line 644), <code>USBD_DESC_CONFIG_DEFINE</code> (line 664), <code>usbd_str_desc_get_idx</code> (line 812), <code>USB_STRING_DESCRIPTOR_LENGTH</code> (line 56) — all verified against Zephyr v4.4.99-ge2a556ff6417 on 2026-05-08.</p>
+  <p>The hwinfo API used to read the RP2350 chip ID is at <code>$ZEPHYR_BASE/include/zephyr/drivers/hwinfo.h</code> with the RP2350 driver implementation at <code>$ZEPHYR_BASE/drivers/hwinfo/hwinfo_rpi_pico.c</code>.</p>
+  <p>The <code>EDV-XXXX-YYYY-ZZZZ</code> serial format is the convention used by the production edevkit1 firmware — see CLAUDE.md gotcha #8 in the project memory. usb_03 implements the runtime-derivation step; the production firmware additionally persists the result to <code>/lfs/serial.txt</code>, which is out of scope here.</p>
+  <p>The Zephyr USB-Device-Next API gotchas (G1–G7 in §5) were captured during <code>usb_01</code> bring-up; the canonical reference is <a href="/docs/firmware_zephyr_usbd.html">firmware_zephyr_usbd.html</a>. Endpoint-specific gotchas G8–G10 were added in <a href="/docs/firmware_sample_usb_02.html#defenses">usb_02</a>. String-specific gotchas G11–G14 are introduced here for the first time, and G15 was added 2026-05-11 after first usb_03 bring-up surfaced the cfg_str double-add path inside <code>$ZEPHYR_BASE/subsys/usb/device_next/usbd_config.c</code> (the implicit-add lives at line 329; the <code>sys_dnode_is_linked()</code> rejection lives at <code>usbd_desc.c</code> line 146).</p>
+  <p><strong>Spec citations</strong> are to Universal Serial Bus Specification, Revision 2.0 (USB Implementers Forum, April 2000) — sections 9.5 (descriptor types), 9.6.7 (string descriptors), 9.6.5 (LANGID at index 0). Spec available at <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a>.</p>
+</aside>
+
+</div>
+
+</body>
+</html>

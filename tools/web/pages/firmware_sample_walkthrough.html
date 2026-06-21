@@ -1,0 +1,844 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Step-by-step walkthrough of writing a USB sample for edevkit on Zephyr USB-Device-Next, using usb_01_hello_enum as the worked example. Reusable as a template for samples 02-04.">
+  <title>edevkit — Firmware · How to write a USB sample (walkthrough)</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<style>
+  /* ── tokens ───────────────────────────────────────────────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand: oklch(56% 0.16 215); --brand-2: oklch(50% 0.18 235);
+    --brand-soft: oklch(94% 0.04 215); --brand-fg: oklch(99% 0.005 215);
+    --accent: oklch(72% 0.15 70); --accent-soft: oklch(95% 0.05 70);
+    --good: oklch(58% 0.14 145); --good-soft: oklch(94% 0.05 145);
+    --warn: oklch(72% 0.16 80); --warn-soft: oklch(95% 0.07 80);
+    --danger: oklch(56% 0.20 28); --danger-soft: oklch(95% 0.05 28);
+
+    --bg: oklch(99.2% 0.003 240); --bg-soft: oklch(97% 0.005 240);
+    --bg-elev: oklch(100% 0 0);
+    --line: oklch(91% 0.012 240); --line-soft: oklch(94.5% 0.008 240);
+    --line-strong: oklch(85% 0.014 240);
+    --grid-dot: oklch(0% 0 0 / .055);
+    --code-bg: oklch(96.5% 0.007 240); --code-border: oklch(91% 0.012 240);
+    --fg: oklch(20% 0.02 240); --fg-2: oklch(36% 0.02 240);
+    --muted: oklch(50% 0.02 240); --faint: oklch(64% 0.015 240);
+
+    --r-2: 6px; --r-3: 10px; --r-pill: 999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --ease: cubic-bezier(.2, 0, 0, 1); --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+      --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+      --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+      --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+      --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+      --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+      --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+      --bg-elev: oklch(20% 0.018 240);
+      --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+      --line-strong: oklch(35% 0.022 240);
+      --grid-dot: oklch(100% 0 0 / .05);
+      --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+      --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+      --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+    --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+    --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+    --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+    --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+    --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+    --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+    --bg-elev: oklch(20% 0.018 240);
+    --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+    --line-strong: oklch(35% 0.022 240);
+    --grid-dot: oklch(100% 0 0 / .05);
+    --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+    --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+    --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-text); font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg); min-height: 100dvh;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px; background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1080px; margin: 0 auto; padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none; font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600; color: var(--fg-2);
+    padding: 6px 10px; border-radius: var(--r-2);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .doc-tag {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--faint); padding: 4px 10px;
+    border-radius: var(--r-pill); background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .grow { flex: 1; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 28px 96px; }
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px; margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted);
+    padding: 5px 11px; background: var(--bg-soft);
+    border: 1px solid var(--line); border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+  header.hero h1 {
+    font-family: var(--font-sans);
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  header.hero .lede {
+    font-size: 17px; color: var(--fg-2); line-height: 1.6;
+    margin: 0; max-width: 70ch;
+  }
+
+  /* phase headings — numbered + ribbon */
+  h2.phase {
+    font-family: var(--font-sans);
+    font-size: 26px; line-height: 1.2;
+    letter-spacing: -0.018em; font-weight: 700;
+    margin: 64px 0 14px;
+    padding: 0;
+    border: 0;
+    display: flex; align-items: center; gap: 14px;
+  }
+  h2.phase .num {
+    flex-shrink: 0;
+    width: 44px; height: 44px;
+    border-radius: var(--r-3);
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    color: var(--brand-fg);
+    font-family: var(--font-mono);
+    font-size: 18px; font-weight: 700;
+    display: grid; place-items: center;
+    box-shadow: var(--shadow-1);
+  }
+  h2.phase + .phase-meta {
+    display: flex; gap: 14px; flex-wrap: wrap;
+    font-size: 13px; color: var(--muted);
+    margin: 0 0 18px 58px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  h2.phase + .phase-meta strong { color: var(--fg-2); }
+  h3 {
+    font-family: var(--font-sans); font-size: 19px;
+    margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-family: var(--font-mono); font-size: 12px;
+    margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  strong { font-weight: 600; }
+
+  code, pre, .mono { font-family: var(--font-mono); }
+  :not(pre) > code {
+    background: var(--code-bg); padding: 1px 6px;
+    border-radius: 4px; font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--code-border);
+    border-radius: var(--r-3); padding: 14px 16px;
+    overflow-x: auto; font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  .callout {
+    margin: 18px 0; padding: 14px 18px; border-radius: var(--r-3);
+    background: var(--bg-soft); border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.info    { background: var(--brand-soft);  border-left-color: var(--brand); }
+  .callout.warn    { background: var(--warn-soft);   border-left-color: var(--warn); }
+  .callout.good    { background: var(--good-soft);   border-left-color: var(--good); }
+  .callout.danger  { background: var(--danger-soft); border-left-color: var(--danger); }
+  .callout-title {
+    display: inline-block; font-family: var(--font-mono);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700; color: var(--muted); margin-bottom: 4px;
+  }
+  .callout.info .callout-title    { color: var(--brand); }
+  .callout.warn .callout-title    { color: oklch(45% 0.18 80); }
+  .callout.good .callout-title    { color: var(--good); }
+  .callout.danger .callout-title  { color: var(--danger); }
+
+  /* "what success looks like" green block at the end of each phase */
+  .success {
+    margin: 24px 0; padding: 16px 20px;
+    border: 1px solid var(--good);
+    background: var(--good-soft);
+    border-radius: var(--r-3);
+  }
+  .success-title {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--good); margin-bottom: 6px;
+  }
+
+  /* ToC at the top */
+  .toc {
+    margin: 24px 0 40px;
+    padding: 18px 22px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+  }
+  .toc-title {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 10px;
+  }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { margin: 4px 0; color: var(--fg-2); }
+  .toc li a { color: var(--fg-2); text-decoration: none; font-weight: 500; }
+  .toc li a:hover { color: var(--brand); }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 18px 0; font-size: 14px;
+    background: var(--bg-elev); border: 1px solid var(--line);
+    border-radius: var(--r-3); overflow: hidden;
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 8px 12px; text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  thead th {
+    background: var(--bg-soft); font-family: var(--font-sans);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" title="Back to docs hub">
+      <span aria-hidden="true">←</span> edevkit
+    </a>
+    <span class="doc-tag">Firmware · Sample walkthrough</span>
+    <span class="grow"></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · firmware · USB sample walkthrough</div>
+  <h1>How to write a USB sample, end-to-end</h1>
+  <p class="lede">A step-by-step walkthrough that takes you from "empty directory" to "device enumerates on the host". Worked example throughout is <code>usb_01_hello_enum</code>; the same eight phases apply to every USB sample in the series.</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Eight phases</div>
+  <ol>
+    <li><a href="#phase-0">Plan the sample</a> — what capability, which book chapter, what descriptor footprint</li>
+    <li><a href="#phase-1">Read the right Zephyr code first</a> — verify API surface before writing any line</li>
+    <li><a href="#phase-2">Scaffold the directory</a> — five files in the sample folder</li>
+    <li><a href="#phase-3">Write the class</a> — descriptors, vtable, registration</li>
+    <li><a href="#phase-4">Wire main()</a> — boot sequence in eight calls</li>
+    <li><a href="#phase-5">First build</a> — expect failures; they're informative</li>
+    <li><a href="#phase-6">Flash + RTT</a> — boot banner, fault dump if any</li>
+    <li><a href="#phase-7">Verify on the host</a> — ioreg / lsusb / Get-PnpDevice</li>
+    <li><a href="#phase-8">Document + commit</a> — README, memory, ship</li>
+  </ol>
+</div>
+
+<div class="callout info">
+  <div class="callout-title">Estimated total time, from cold start</div>
+  <p>First sample (you've never done this before): <strong>4–6 hours</strong>, of which 1–2 hours is reading Zephyr internals and the rest is debug cycles. From <code>usb_02</code> onward, with the workflow internalized: <strong>1–2 hours per sample</strong>.</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────── -->
+
+<h2 class="phase" id="phase-0"><span class="num">0</span>Plan the sample</h2>
+<div class="phase-meta">
+  <span><strong>Time:</strong> 15 min</span>
+  <span><strong>Output:</strong> a one-page plan in your head (or a sticky note)</span>
+  <span><strong>Tools:</strong> book chapter, this doc</span>
+</div>
+
+<p>Before opening an editor, answer these four questions out loud:</p>
+
+<table>
+  <thead><tr><th>Question</th><th>For usb_01</th></tr></thead>
+  <tbody>
+    <tr><td>What ONE USB capability does this sample teach?</td><td>Bare enumeration — the device shows up in the OS USB tree and does nothing else.</td></tr>
+    <tr><td>Which book chapter does it pair with?</td><td><a href="/docs/usb/partI/05_enumeration.html">Ch 05 — Enumeration walkthrough</a>.</td></tr>
+    <tr><td>What's the minimum descriptor footprint?</td><td>1 config + 1 interface + 0 endpoints → <code>wTotalLength = 18</code> bytes.</td></tr>
+    <tr><td>What VID/PID?</td><td>VID <code>0x1209</code> (pid.codes umbrella), PID <code>0xede0 + sample_number</code> → <code>0xede1</code>.</td></tr>
+  </tbody>
+</table>
+
+<p>Pin those answers. Every later decision flows from them. If you can't answer them yet, the sample isn't designed yet — go back to the <a href="/docs/usb_book.html">USB Book</a> and find the matching chapter.</p>
+
+<div class="success">
+  <div class="success-title">Phase 0 done when</div>
+  <p>You can say in one sentence what the sample does and why it exists, and you know which PID it'll claim.</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────── -->
+
+<h2 class="phase" id="phase-1"><span class="num">1</span>Read the right Zephyr code first</h2>
+<div class="phase-meta">
+  <span><strong>Time:</strong> 30 min</span>
+  <span><strong>Output:</strong> verified knowledge of the actual API spellings</span>
+  <span><strong>Tools:</strong> <code>grep</code>, your editor</span>
+</div>
+
+<p>This is the step that, when skipped, costs you hours later. Verify three things <em>before</em> writing a single line of sample code.</p>
+
+<h3>1a. The class API surface</h3>
+
+<pre><code>sed -n '/^struct usbd_class_api/,/^};/p' \
+  $ZEPHYR_BASE/include/zephyr/usb/usbd.h</code></pre>
+
+<p>Read every callback's signature. The signatures evolve between Zephyr versions and rarely match what training-data recall says. Note which ones return <code>void</code> (most) vs <code>int</code> (only <code>init</code>, <code>request</code>, <code>control_to_*</code>). The cheat sheet from the bring-up is in the <a href="/docs/firmware_zephyr_usbd.html#usbd_class_api">Zephyr USBD reference</a>.</p>
+
+<h3>1b. The closest existing class — your template</h3>
+
+<pre><code># For a 0-endpoint vendor class like usb_01, copy from DFU's runtime mode:
+ls $ZEPHYR_BASE/subsys/usb/device_next/class/
+
+# Open and skim — do NOT copy verbatim, just learn the structure:
+$ZEPHYR_BASE/subsys/usb/device_next/class/usbd_dfu.c</code></pre>
+
+<p>Look for: how they declare <code>USBD_DEFINE_CLASS</code>, how their vtable is shaped, how <code>get_desc</code> assembles its return value, what they do in <code>init</code>/<code>enable</code>/<code>disable</code>.</p>
+
+<h3>1c. The right UDC devicetree node label</h3>
+
+<pre><code>grep -i "compatible.*pico-usbd\|usbd:" \
+  $ZEPHYR_BASE/boards/raspberrypi/rpi_pico2/*.dts</code></pre>
+
+<p>Find the node label (the identifier before the <code>:</code> in <code>label: name@addr</code>). For RP2350 it's typically <code>usbd</code>. You'll need the exact spelling for both <code>app.overlay</code> and <code>main.c</code>.</p>
+
+<div class="success">
+  <div class="success-title">Phase 1 done when</div>
+  <p>You have three things written down: (a) the actual <code>usbd_class_api</code> field signatures, (b) the path to the existing class you'll copy patterns from, (c) the exact UDC node label.</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────── -->
+
+<h2 class="phase" id="phase-2"><span class="num">2</span>Scaffold the directory</h2>
+<div class="phase-meta">
+  <span><strong>Time:</strong> 10 min</span>
+  <span><strong>Output:</strong> five empty/skeleton files</span>
+  <span><strong>Tools:</strong> shell, editor</span>
+</div>
+
+<pre><code>cd $EDEVKIT_REPO/firmware/samples/usb
+mkdir -p usb_01/src
+cd usb_01
+
+# create the five files (empty for now; we'll fill them next)
+touch CMakeLists.txt prj.conf app.overlay README.md
+touch src/main.c src/hello_enum.c</code></pre>
+
+<p>What each file is for:</p>
+
+<table>
+  <thead><tr><th>File</th><th>Purpose</th><th>Approx. size when done</th></tr></thead>
+  <tbody>
+    <tr><td><code>CMakeLists.txt</code></td><td>Standard Zephyr boilerplate; just declares the app target and source files</td><td>~10 lines</td></tr>
+    <tr><td><code>prj.conf</code></td><td>Kconfig switches: USB-Device-Next stack, RTT console, log levels</td><td>~15 lines</td></tr>
+    <tr><td><code>app.overlay</code></td><td>Devicetree fragment that enables the RP2350 USB controller</td><td>~5 lines</td></tr>
+    <tr><td><code>README.md</code></td><td>Sample-local doc — what it does, build/flash, expected output</td><td>~150 lines (write last)</td></tr>
+    <tr><td><code>src/main.c</code></td><td>USB context init, runs <code>usbd_enable</code>, idles forever</td><td>~80 lines</td></tr>
+    <tr><td><code>src/&lt;class_name&gt;.c</code></td><td>The class implementation — descriptors, vtable, registration</td><td>~100 lines</td></tr>
+  </tbody>
+</table>
+
+<h3>2a. CMakeLists.txt</h3>
+<p>Six lines of substance. Copy from any sample under <code>$ZEPHYR_BASE/samples/subsys/usb/</code>:</p>
+
+<pre><code>cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(usb_01_hello_enum)
+
+target_sources(app PRIVATE
+  src/main.c
+  src/hello_enum.c
+)</code></pre>
+
+<h3>2b. prj.conf</h3>
+<p>The Kconfigs that matter, with comments explaining why:</p>
+
+<pre><code># --- USB stack ---
+# Use the new device stack, NOT the legacy one.  Forgetting this leaves
+# every USBD_* macro undefined.  This is the most common build failure.
+CONFIG_USB_DEVICE_STACK_NEXT=y
+
+# --- Console via RTT (no UART pins burned) ---
+CONFIG_LOG=y
+CONFIG_USE_SEGGER_RTT=y
+CONFIG_RTT_CONSOLE=y
+CONFIG_UART_CONSOLE=n
+CONFIG_USBD_LOG_LEVEL_INF=y
+
+# --- USB stack uses some heap ---
+CONFIG_HEAP_MEM_POOL_SIZE=2048</code></pre>
+
+<h3>2c. app.overlay</h3>
+<p>Enables the USB controller node you found in Phase 1c:</p>
+
+<pre><code>&amp;usbd {           /* the actual node label from your board's .dts */
+    status = "okay";
+};</code></pre>
+
+<div class="success">
+  <div class="success-title">Phase 2 done when</div>
+  <p>The directory exists with all five files; CMakeLists/prj.conf/app.overlay are filled in. <code>main.c</code> and the class file are still empty stubs — that's the next phase.</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────── -->
+
+<h2 class="phase" id="phase-3"><span class="num">3</span>Write the class implementation</h2>
+<div class="phase-meta">
+  <span><strong>Time:</strong> 60 min (first time)</span>
+  <span><strong>Output:</strong> <code>src/&lt;class_name&gt;.c</code> compiles standalone</span>
+  <span><strong>Tools:</strong> editor, the existing class you cited in 1b</span>
+</div>
+
+<p>Three pieces, in this order:</p>
+
+<h3>3a. The descriptor blob</h3>
+<p>For usb_01 — one interface descriptor, vendor-specific, zero endpoints:</p>
+
+<pre><code>static struct usb_if_descriptor hello_enum_iface = {
+    .bLength            = sizeof(struct usb_if_descriptor),
+    .bDescriptorType    = USB_DESC_INTERFACE,    /* 0x04 */
+    .bInterfaceNumber   = 0,                     /* assigned at init */
+    .bAlternateSetting  = 0,
+    .bNumEndpoints      = 0,                     /* the whole point */
+    .bInterfaceClass    = USB_BCC_VENDOR,        /* 0xFF */
+    .bInterfaceSubClass = 0xFF,
+    .bInterfaceProtocol = 0xFF,
+    .iInterface         = 0,
+};</code></pre>
+
+<div class="callout warn">
+  <div class="callout-title">Don't const this</div>
+  <p>Zephyr writes <code>bInterfaceNumber</code> at <code>usbd_init</code> time. If you mark the descriptor <code>const</code>, the linker may place it in flash and the write either silently fails or hard-faults. Leave it mutable.</p>
+</div>
+
+<h3>3b. The NULL-terminated descriptor pointer array</h3>
+<p>This is the gotcha that costs people the most time. <code>get_desc</code> returns an array, not a single pointer:</p>
+
+<pre><code>static struct usb_desc_header *hello_enum_fs_desc[] = {
+    (struct usb_desc_header *) &amp;hello_enum_iface,
+    NULL,    /* terminator — REQUIRED */
+};</code></pre>
+
+<h3>3c. The vtable + class registration</h3>
+<p>Only four real callbacks for a 0-endpoint vendor class. Everything else is <code>NULL</code> and the core handles that.</p>
+
+<pre><code>static int hello_enum_init(struct usbd_class_data *const c)
+{
+    LOG_DBG("hello_enum: init");
+    return 0;
+}
+
+static void hello_enum_enable(struct usbd_class_data *const c)
+{
+    /* Fired on host SET_CONFIGURATION(1) — the milestone log line. */
+    LOG_INF("hello_enum: configured (enabled)");
+}
+
+static void hello_enum_disable(struct usbd_class_data *const c)
+{
+    LOG_INF("hello_enum: deconfigured (disabled)");
+}
+
+static void *hello_enum_get_desc(struct usbd_class_data *const c,
+                                 const enum usbd_speed speed)
+{
+    if (speed == USBD_SPEED_FS) {
+        return hello_enum_fs_desc;   /* decays to struct usb_desc_header ** */
+    }
+    return NULL;
+}
+
+static const struct usbd_class_api hello_enum_api = {
+    .init     = hello_enum_init,
+    .enable   = hello_enum_enable,    /* void(c) — NOT int */
+    .disable  = hello_enum_disable,   /* void(c) */
+    .get_desc = hello_enum_get_desc,
+    /* feature_halt, update, control_to_dev, control_to_host, request,
+       suspended, resumed, sof, shutdown — all NULL */
+};
+
+USBD_DEFINE_CLASS(hello_enum, &amp;hello_enum_api, NULL, NULL);</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">Two silent killers</div>
+  <p><strong>(a)</strong> The string in <code>USBD_DEFINE_CLASS(hello_enum, ...)</code> MUST exactly match the string passed to <code>usbd_register_class(&amp;ctx, "hello_enum", ...)</code> in <code>main.c</code>. Mismatch → silent <code>-ENOENT</code> at registration, no enumeration, no error log. Defend with a single <code>#define</code>.<br><strong>(b)</strong> Returning <code>0</code> from <code>control_to_*</code> for unsupported requests claims you handled it, and the host waits forever for data. Always return <code>-ENOTSUP</code> for unsupported control requests.</p>
+</div>
+
+<div class="success">
+  <div class="success-title">Phase 3 done when</div>
+  <p>The class file compiles standalone (you can <code>arm-zephyr-eabi-gcc -c</code> it with appropriate include paths and get an object file). Doesn't matter that nothing calls it yet.</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────── -->
+
+<h2 class="phase" id="phase-4"><span class="num">4</span>Wire <code>main()</code></h2>
+<div class="phase-meta">
+  <span><strong>Time:</strong> 30 min</span>
+  <span><strong>Output:</strong> <code>src/main.c</code> with the eight-call boot sequence</span>
+</div>
+
+<p>Two parts: file-scope descriptor declarations, then <code>main()</code> wires them up in a fixed order.</p>
+
+<h3>4a. File-scope declarations</h3>
+
+<pre><code>USBD_DESC_LANG_DEFINE(lang);                           /* US English */
+USBD_DESC_MANUFACTURER_DEFINE(mfr,    "edevkit");
+USBD_DESC_PRODUCT_DEFINE(product,     "usb_01");
+USBD_DESC_SERIAL_NUMBER_DEFINE(serial);                /* one arg only! */
+
+USBD_CONFIGURATION_DEFINE(cfg, USB_SCD_REMOTE_WAKEUP, 50, NULL);
+
+USBD_DEVICE_DEFINE(usbd_ctx,
+                   DEVICE_DT_GET(DT_NODELABEL(usbd)),  /* from Phase 1c */
+                   0x1209, 0xede1);</code></pre>
+
+<div class="callout warn">
+  <div class="callout-title">The serial macro takes ONE argument</div>
+  <p><code>USBD_DESC_SERIAL_NUMBER_DEFINE(name)</code> auto-generates the serial from <code>hwinfo_get_device_id()</code>. Passing a string literal as the second argument is a build error. (See <a href="/docs/firmware_zephyr_usbd.html#gotcha-1">gotcha #1</a> in the Zephyr USBD reference.)</p>
+</div>
+
+<h3>4b. The eight-call boot sequence</h3>
+
+<pre><code>int main(void)
+{
+    int err;
+
+    /* (1-4) Add string descriptors in language order: lang first, then
+     *       manufacturer (index 1), product (2), serial (3). */
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;lang);     if (err) goto fail;
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;mfr);      if (err) goto fail;
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;product);  if (err) goto fail;
+    err = usbd_add_descriptor(&amp;usbd_ctx, &amp;serial);   if (err) goto fail;
+
+    /* (5) Add the configuration scoped to FS speed. */
+    err = usbd_add_configuration(&amp;usbd_ctx, USBD_SPEED_FS, &amp;cfg);
+    if (err) goto fail;
+
+    /* (6) Register the class instance.  String must match
+     *     USBD_DEFINE_CLASS in hello_enum.c.  "1" = config index. */
+    err = usbd_register_class(&amp;usbd_ctx, "hello_enum",
+                              USBD_SPEED_FS, 1);
+    if (err) goto fail;
+
+    /* (7) Finalize the descriptor tree (validates, computes wTotalLength). */
+    err = usbd_init(&amp;usbd_ctx);
+    if (err) goto fail;
+
+    /* (8) Connect the D+ pull-up — host can now see us. */
+    err = usbd_enable(&amp;usbd_ctx);
+    if (err) goto fail;
+
+    LOG_INF("usb_01 hello_enum: USB enabled, idle");
+    while (true) k_sleep(K_FOREVER);
+
+fail:
+    LOG_ERR("usb_01 init failed at step: %d", err);
+    return err;
+}</code></pre>
+
+<p>The <code>goto fail</code> is for clean error reporting — when something fails you'll see the exact <code>errno</code> in RTT instead of a silent halt.</p>
+
+<div class="success">
+  <div class="success-title">Phase 4 done when</div>
+  <p>Both source files exist and (you think) compile. Time to find out for real.</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────── -->
+
+<h2 class="phase" id="phase-5"><span class="num">5</span>First build — expect failures, they're informative</h2>
+<div class="phase-meta">
+  <span><strong>Time:</strong> 20–60 min</span>
+  <span><strong>Output:</strong> <code>build-rpi_pico2_rp2350a_m33/.../zephyr.elf</code></span>
+  <span><strong>Tools:</strong> <code>edev_build</code></span>
+</div>
+
+<pre><code>cd $EDEVKIT_REPO/firmware/samples/usb/usb_01
+edev_build      # = west build -b rpi_pico2/rp2350a/m33 .</code></pre>
+
+<p>First build almost never works. The errors you're most likely to see, in order:</p>
+
+<table>
+  <thead><tr><th>Error</th><th>Cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>USBD_* undefined</code></td>
+      <td>Wrong USB stack Kconfig</td>
+      <td>Add <code>CONFIG_USB_DEVICE_STACK_NEXT=y</code> to <code>prj.conf</code></td>
+    </tr>
+    <tr>
+      <td><code>'__device_dts_ord_DT_N_NODELABEL_xxx_ORD' undeclared</code></td>
+      <td>Wrong UDC node label</td>
+      <td>Re-grep board <code>.dts</code>, fix <code>app.overlay</code> + <code>main.c</code></td>
+    </tr>
+    <tr>
+      <td><code>macro takes N args but passed M</code></td>
+      <td>Wrong macro arity (e.g. <code>USBD_DESC_SERIAL_NUMBER_DEFINE</code> with 2 args)</td>
+      <td><code>grep</code> the macro definition in <code>usbd.h</code>, fix call site</td>
+    </tr>
+    <tr>
+      <td><code>incompatible pointer types</code> on a vtable field</td>
+      <td>Callback signature mismatch (typically <code>int</code> vs <code>void</code>)</td>
+      <td>Check the actual <code>struct usbd_class_api</code> field; align your function signature</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Fix one error at a time. Don't try to "improve" code you didn't write yet — make it compile clean first, then iterate.</p>
+
+<div class="success">
+  <div class="success-title">Phase 5 done when</div>
+  <p>You see <code>FW: built [size info]</code> and the ELF exists at <code>build-*/usb_01/zephyr/zephyr.elf</code>. Compiler warnings are OK; errors are not.</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────── -->
+
+<h2 class="phase" id="phase-6"><span class="num">6</span>Flash + RTT — boot banner or fault dump</h2>
+<div class="phase-meta">
+  <span><strong>Time:</strong> 30–90 min depending on bugs</span>
+  <span><strong>Output:</strong> RTT log showing successful enumeration</span>
+  <span><strong>Tools:</strong> <code>edev_run</code>, <code>addr2line</code> if it crashes</span>
+</div>
+
+<pre><code>edev_run        # = edev_flash + probe-rs attach (RTT). Ctrl-C to detach.
+                # If the boot banner doesn't appear, cold-boot (unplug USB or pulse RUN→GND) — see the RP2350 SYSRESETREQ quirk.</code></pre>
+
+<h3>Outcome A — clean boot + enumeration</h3>
+
+<pre><code>*** Booting Zephyr OS build v4.4.0-... ***
+[00:00:00.001,000] &lt;inf&gt; usbd_init: bNumInterfaces 1 wTotalLength 18
+[00:00:00.001,000] &lt;inf&gt; usb_01: usb_01 hello_enum: USB enabled, idle
+[00:00:00.323,000] &lt;inf&gt; usbd_core: Actual device speed 1
+[00:00:00.405,000] &lt;inf&gt; hello_enum: configured (enabled)</code></pre>
+
+<p>If you see this — congratulations. The <code>wTotalLength = 18</code> line is the byte-level milestone (matches Book Ch 05). The <code>configured (enabled)</code> line means <code>SET_CONFIGURATION(1)</code> arrived from the host. Skip to Phase 7.</p>
+
+<h3>Outcome B — fault dump</h3>
+
+<pre><code>***** BUS FAULT *****
+  Precise data bus error
+  BFAR Address: 0xffffff00
+  PC: 0x10003a3e
+  LR: 0x10003a25
+&gt;&gt;&gt; ZEPHYR FATAL ERROR 25</code></pre>
+
+<p>Don't panic. The PC and LR addresses are your map. Decode them:</p>
+
+<pre><code>TOOL=$ZEPHYR_SDK_INSTALL_DIR/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-addr2line
+ELF=build-rpi_pico2_rp2350a_m33/usb_01/zephyr/zephyr.elf
+
+$TOOL -e $ELF -fpC 0x10003a3e 0x10003a25</code></pre>
+
+<p>Output looks like:</p>
+
+<pre><code>init_configuration_inst at .../usbd_init.c:135
+init_configuration_inst at .../usbd_init.c:127</code></pre>
+
+<p>Open that file at that line, read the surrounding code, figure out what your code is feeding it that it doesn't like. The <strong>BFAR address</strong> is the value the kernel tried to dereference — read its byte pattern for clues:</p>
+
+<table>
+  <thead><tr><th>BFAR pattern</th><th>Likely cause</th></tr></thead>
+  <tbody>
+    <tr><td><code>0x00000000</code></td><td>NULL pointer — uninitialized struct or function pointer</td></tr>
+    <tr><td><code>0xFFFFFFXX</code></td><td>Negative <code>errno</code> being treated as a pointer</td></tr>
+    <tr><td>Some flash address</td><td>Writing to a <code>const</code> object placed in flash (e.g., constified interface descriptor)</td></tr>
+    <tr><td>Looks like part of your descriptor bytes</td><td><code>get_desc</code> returned a single descriptor instead of a NULL-terminated array (gotcha #4)</td></tr>
+  </tbody>
+</table>
+
+<p>Full coredump catalogue + addr2line recipe is in the <a href="/docs/firmware_workflow.html#coredump">firmware workflow doc</a>.</p>
+
+<h3>Outcome C — silence</h3>
+<p>RTT shows no output, not even the boot banner. Most likely:</p>
+<ul>
+  <li><code>CONFIG_USE_SEGGER_RTT=y</code> + <code>CONFIG_RTT_CONSOLE=y</code> not set in <code>prj.conf</code> → no RTT to read</li>
+  <li>Probe wiring wrong → SWD never connects → probe-rs would say "no probe" though</li>
+  <li>Target hard-faulted on early boot before logs flushed → <code>probe-rs run</code> would print exception info first</li>
+</ul>
+
+<div class="success">
+  <div class="success-title">Phase 6 done when</div>
+  <p>RTT shows <code>configured (enabled)</code>. The host completed enumeration. Time to confirm from the host side.</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────── -->
+
+<h2 class="phase" id="phase-7"><span class="num">7</span>Verify on the host</h2>
+<div class="phase-meta">
+  <span><strong>Time:</strong> 5 min</span>
+  <span><strong>Output:</strong> device descriptor matches design from Phase 0</span>
+</div>
+
+<p>Use the OS-native tool. <strong>On macOS, prefer <code>ioreg</code>; <code>system_profiler</code> caches and lags.</strong></p>
+
+<pre><code># macOS — primary
+ioreg -p IOUSB -l -w 0 | grep -B 2 -A 25 "edevkit"
+
+# Linux
+lsusb -v -d 1209:ede1
+
+# Windows (PowerShell)
+Get-PnpDevice -PresentOnly |
+  Where-Object { $_.InstanceId -like "*VID_1209&amp;PID_EDE1*" }</code></pre>
+
+<p>Cross-check what you see against your Phase 0 plan:</p>
+
+<table>
+  <thead><tr><th>Field</th><th>Should be</th></tr></thead>
+  <tbody>
+    <tr><td>idVendor</td><td>0x1209 (= 4617 decimal)</td></tr>
+    <tr><td>idProduct</td><td>0xede1 (= 60897 decimal)</td></tr>
+    <tr><td>USB Vendor Name</td><td>edevkit</td></tr>
+    <tr><td>USB Product Name</td><td>usb_01</td></tr>
+    <tr><td>USB Serial Number</td><td>some hex string from chip ID</td></tr>
+    <tr><td>bcdUSB</td><td>512 (= 0x0200, USB 2.0)</td></tr>
+    <tr><td>bNumConfigurations</td><td>1</td></tr>
+  </tbody>
+</table>
+
+<p>Full per-OS verification recipes (including PacketLogger / Wireshark / USBPcap) live in the <a href="/docs/firmware_workflow.html#usb-verify">firmware workflow doc</a>.</p>
+
+<div class="success">
+  <div class="success-title">Phase 7 done when</div>
+  <p>The host's USB tool reports your device with the VID/PID/strings you designed in Phase 0. The sample is functionally complete.</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────── -->
+
+<h2 class="phase" id="phase-8"><span class="num">8</span>Document and commit</h2>
+<div class="phase-meta">
+  <span><strong>Time:</strong> 30 min</span>
+  <span><strong>Output:</strong> <code>README.md</code>, optional memory update, commit</span>
+</div>
+
+<h3>8a. Sample-local README</h3>
+<p>Mirror the structure of <code>usb_01/README.md</code>:</p>
+<ul>
+  <li>One-paragraph intro: what the sample teaches, which book chapter it pairs with</li>
+  <li>"What you'll see when it works" — the expected RTT log + ioreg snippet</li>
+  <li>Build/flash/monitor commands</li>
+  <li>File layout</li>
+  <li>Descriptor design choices (VID/PID/strings/bcdDevice) — why each value</li>
+  <li>Bugs you hit, in order, with fixes (helps the next person who clones this sample)</li>
+  <li>Cross-references to the book chapter and the workflow docs</li>
+</ul>
+
+<h3>8b. Memory update (only if curriculum changed)</h3>
+<p>If the sample taught us something that revises the plan — like "this sample's purpose changed" or "this Zephyr API gotcha turned out different than expected" — update memory at:</p>
+<ul>
+  <li><code>~/.claude/.../memory/project_usb_book_plan.md</code> for status changes</li>
+  <li><code>~/.claude/.../memory/reference_zephyr_usbd_api.md</code> for new API gotchas</li>
+</ul>
+
+<h3>8c. Commit (when you're ready)</h3>
+<pre><code>cd $EDEVKIT_REPO
+git status
+git add firmware/samples/usb/usb_01
+git commit -m "feat(firmware): usb_01_hello_enum — bare USB enumeration sample
+
+Smallest possible Zephyr USB-Device-Next device: vendor class
+(0xFF/0xFF/0xFF), one interface, zero data endpoints.
+wTotalLength=18 matches Book Ch 05.  VID 0x1209 / PID 0xede1.
+
+Pairs with: tools/web/pages/usb/partI/05_enumeration.html
+Walkthrough: tools/web/pages/firmware_sample_walkthrough.html"</code></pre>
+
+<div class="success">
+  <div class="success-title">Phase 8 done when</div>
+  <p>The sample is committed, README is in place, memory reflects current state. The next person can clone the directory as a starting point for their sample with confidence.</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────── -->
+
+<h2 class="phase"><span class="num">∞</span>Cheat sheet — eight phases at a glance</h2>
+
+<table>
+  <thead><tr><th>Phase</th><th>Time</th><th>Output</th><th>Key gotcha</th></tr></thead>
+  <tbody>
+    <tr><td>0. Plan</td><td>15 min</td><td>1-sentence purpose + VID/PID</td><td>Don't skip — every later decision depends on this</td></tr>
+    <tr><td>1. Read Zephyr</td><td>30 min</td><td>Verified API signatures + UDC node label</td><td>Training-data recall is wrong often enough that grepping wins</td></tr>
+    <tr><td>2. Scaffold</td><td>10 min</td><td>5 files, 3 filled in</td><td><code>CONFIG_USB_DEVICE_STACK_NEXT=y</code> mandatory</td></tr>
+    <tr><td>3. Class</td><td>60 min</td><td>Class compiles standalone</td><td><code>get_desc</code> returns NULL-terminated array; don't <code>const</code> the iface</td></tr>
+    <tr><td>4. main()</td><td>30 min</td><td>8-call boot sequence</td><td>Order matters; class name string must match exactly</td></tr>
+    <tr><td>5. Build</td><td>20–60 min</td><td>zephyr.elf</td><td>Fix one error at a time; resist refactoring</td></tr>
+    <tr><td>6. Flash + RTT</td><td>30–90 min</td><td>"configured (enabled)" log line</td><td>If fault → addr2line PC + LR is your map</td></tr>
+    <tr><td>7. Host verify</td><td>5 min</td><td>VID/PID/strings match Phase 0</td><td>macOS: use <code>ioreg</code>, NOT <code>system_profiler</code></td></tr>
+    <tr><td>8. Document</td><td>30 min</td><td>README + commit</td><td>Capture the bugs you hit — the next person is you in 6 months</td></tr>
+  </tbody>
+</table>
+
+<h2>Related docs</h2>
+<ul>
+  <li><a href="/docs/firmware_zephyr_usbd.html">Zephyr USB-Device-Next reference</a> — API surface + the seven gotchas catalogue</li>
+  <li><a href="/docs/firmware_workflow.html">Firmware workflow</a> — env vars, <code>edev_*</code> shell helpers, RTT, coredump, USB verification per-OS</li>
+  <li><a href="/docs/usb_book.html">USB Book</a> — Part I covers the protocol foundations the samples rest on</li>
+  <li><a href="/docs/installation.html">Installation guide</a> — how to set up the workspace from scratch</li>
+</ul>
+
+</div>
+</body>
+</html>
