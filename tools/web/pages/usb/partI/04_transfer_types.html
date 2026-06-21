@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Control, bulk, interrupt, isochronous — what each is designed for, the bandwidth math, and how to pick the right one.">
+  <title>edevkit USB Book — Part I · Ch 04: Transfer types</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Part I · Ch 04</span>
+      <span class="grow"></span>
+      <span class="last-verified">Theory · 2026-05-06</span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · part I · ch 04</div>
+    <h1>Transfer types</h1>
+    <p class="lede">Four ways to move bytes across USB. Pick the right one and the design problem goes away.</p>
+  </header>
+
+<section class="chapter-meta" aria-label="Chapter metadata">
+      <div class="meta-row">
+        <div class="meta-label">You'll learn</div>
+        <div>
+          <ul>
+            <li>What each of the four transfer types — control, bulk, interrupt, isochronous — is designed for.</li>
+            <li>Why bulk transfers are the throughput champion but have no latency guarantee.</li>
+            <li>What <code>bInterval</code> actually means, and how the host interprets it for each transfer type.</li>
+            <li>Real-world bandwidth math: why you can never get the full 12 Mbps out of FS bulk.</li>
+            <li>A decision flowchart for picking the right transfer type.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Prereqs</div>
+        <div>Chapters 01–03. You're comfortable with the host-led model and packet vocabulary.</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Sample</div>
+        <div>None — theory only. Tier 1 samples (<code class="sample-link">usb_10..15</code>) explore each type in isolation.</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Verified</div>
+        <div>2026-05-06 · USB 2.0 spec §5 (Data Flow Model).</div>
+      </div>
+    </section>
+
+    <h2>Four transfer types — overview</h2>
+
+    <p>USB defines exactly four transfer types. Every endpoint on every device must be exactly one of them. Each was designed to solve a specific class of data-flow problem, and the host's bandwidth allocator treats them differently.</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Type</th><th>Use case</th><th>Error-checked</th><th>Time guarantee</th><th>Bandwidth</th><th>Where you meet it</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">Control</td><td class="meaning">Setup, configuration, descriptors, occasional commands</td><td class="hex">Yes</td><td class="hex">No (best-effort)</td><td class="meaning">Shares non-periodic ≥10% (FS) / ≥20% (HS) with bulk</td><td class="meaning">Endpoint 0 always; class commands sometimes</td></tr>
+        <tr><td class="field">Bulk</td><td class="meaning">Large blob transfers where bandwidth matters more than latency</td><td class="hex">Yes</td><td class="hex">No</td><td class="meaning">Whatever's left over</td><td class="meaning">CDC, MSC, vendor-specific (CMSIS-DAP)</td></tr>
+        <tr><td class="field">Interrupt</td><td class="meaning">Small, time-bounded data: input events, status pings</td><td class="hex">Yes</td><td class="hex">Bounded latency</td><td class="meaning">Reserved per-interval</td><td class="meaning">HID, CDC notification, status endpoints</td></tr>
+        <tr><td class="field">Isochronous</td><td class="meaning">Streaming data tolerant to occasional loss: audio, video</td><td class="hex"><strong>No</strong></td><td class="hex">Reserved bandwidth</td><td class="meaning">Reserved per-microframe</td><td class="meaning">UAC audio class, UVC video class</td></tr>
+      </tbody>
+    </table>
+
+    <p>Three of the four (control, bulk, interrupt) are functionally identical in their error handling — they CRC, ACK, and retransmit. They differ in <em>scheduling</em>: how much bandwidth the host reserves for them, and how often it polls. Isochronous is the odd one out — no retries, no ACKs, no NAKs.</p>
+
+    <h2>Control transfers</h2>
+
+    <p>Endpoint 0 is always a control endpoint. It's the only one guaranteed to exist on every USB device. Almost every standard interaction — enumeration, descriptor reads, configuration changes — happens here.</p>
+
+    <p>A control transfer is structured, not freeform:</p>
+
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+  participant H as Host
+  participant D as Device
+  Note over H,D: Setup stage (always)
+  H->>D: SETUP token + 8-byte SETUP packet
+  D-->>H: ACK
+  Note over H,D: Data stage (optional, IN or OUT)
+  H->>D: IN/OUT tokens + DATA0/1 packets
+  D-->>H: ACK (per packet)
+  Note over H,D: Status stage (always, opposite direction of data)
+  H->>D: OUT/IN token + zero-length DATA1
+  D-->>H: ACK
+      </pre>
+    </div>
+
+    <p>Three stages — setup, optional data, status — make up one logical operation. The data stage carries the descriptor bytes or the request payload. The status stage is a zero-length packet in the opposite direction; its purpose is for the receiver to confirm "yes I'm done with this transfer." If the data stage was OUT, status is IN, and vice versa.</p>
+
+    <p>The spec caps periodic transfers (iso + interrupt) at <strong>90% of each FS frame</strong> and <strong>80% of each HS microframe</strong> (USB 2.0 §5.6.4 / §5.7.4). The remaining ≥10% (FS) / ≥20% (HS) is shared between control and bulk, with control prioritized — so control transfers always make progress even when bulk traffic is saturating the leftover. This is what makes control the right choice for "configure the device": it's never fully starved.</p>
+
+    <p>Limitations: max packet size on EP0 is 8 (LS), 8/16/32/64 (FS), 64 (HS). For practical purposes a control transfer caps at one descriptor's worth of bytes — a few hundred. They're not for moving data.</p>
+
+    <h2>Bulk transfers</h2>
+
+    <p>Bulk endpoints carry the largest payloads USB supports and are error-checked, but the host gives them no scheduling guarantees. They occupy whatever bandwidth is left after control, interrupt, and isochronous transfers have had their turn.</p>
+
+    <p>Properties:</p>
+    <ul>
+      <li>Max packet size: 8/16/32/<strong>64</strong> for FS, 512 for HS, 1024 for SS.</li>
+      <li>Error-checked (CRC + retransmit).</li>
+      <li>NAK on no-data; the host reschedules.</li>
+      <li>Half-duplex per endpoint (one direction per endpoint number).</li>
+      <li>Latency is whatever the host decides, which depends on bus contention.</li>
+    </ul>
+
+    <p>Bulk is the workhorse of high-throughput classes: CDC ACM data pipes, mass storage, debug probes (CMSIS-DAP), printer class, and any vendor-specific high-volume transport. It is what edevkit1's CMSIS-DAP and SWO trace endpoints will use.</p>
+
+    <h3>The bandwidth math</h3>
+    <p>On full-speed (12 Mbps), the theoretical maximum bulk throughput is around <strong>1216 KB/s per endpoint, per direction</strong> — that is, 19 packets × 64 bytes per 1 ms frame (USB 2.0 §5.8.4 table 5-9). IN and OUT count as separate endpoints; each one gets its own 1216 KB/s budget independently. In practice you see 800–1200 KB/s in any one direction depending on the host's scheduler, the other endpoints sharing the bus, and your USB stack's per-transfer overhead. <strong>~10 Mbps usable</strong> total is the rule-of-thumb most edevkit firmware should plan against.</p>
+
+    <p>HS (480 Mbps) bulk routinely hits 35–40 MB/s, but RP2350's PHY is FS-only.</p>
+
+    <div class="callout info">
+      <div class="callout-title">RP2350 MPS limits — silicon-level</div>
+      <p>The RP2350 datasheet §12.7.1.1.1 bounds these per-endpoint: control 8 / 16 / 32 / 64 bytes, bulk and interrupt up to 64 bytes, isochronous up to 1023 bytes per packet. Each non-iso endpoint occupies a 64-byte buffer in the 4 KB DPRAM; iso endpoints can be 128 / 256 / 512 / 1024 bytes via the buffer-control register's offset field. <a href="../partIII/14_rp2350_usb.html#piece-dpram">Ch 14 §3c</a> opens up the DPRAM layout.</p>
+    </div>
+
+    <h2>Interrupt transfers</h2>
+
+    <p>"Interrupt" here is misleading — there's no actual interrupt mechanism. It's just a polled endpoint where <em>the host promises to poll at least every N frames</em>. That's what makes it good for low-latency event delivery: a button press, a HID mouse move, a CDC ring-state notification.</p>
+
+    <p>Properties:</p>
+    <ul>
+      <li>Max packet size: any value <strong>1..8</strong> (LS), <strong>1..64</strong> (FS), <strong>1..1024</strong> (HS) — interrupt endpoints can choose <em>any</em> size in range, not just powers of two (USB 2.0 §5.7.3).</li>
+      <li>Error-checked (CRC + retransmit).</li>
+      <li>Polled at <code>bInterval</code> frames (FS/LS) or <code>2^(bInterval-1)</code> microframes (HS).</li>
+      <li>Reserved bandwidth — the host won't let bulk traffic crowd it out.</li>
+      <li>Half-duplex per endpoint.</li>
+      <li><strong>HS high-bandwidth mode</strong> (§5.9.1): an HS interrupt endpoint can declare 2 or 3 transactions per microframe, raising its peak to 24 Mbps. Rare; only used by very-high-rate input devices.</li>
+    </ul>
+
+    <p><code>bInterval</code> semantics differ by speed and transfer type. For FS interrupt endpoints, <code>bInterval</code> is in <strong>frames (1 ms units)</strong> and may be 1..255. For HS interrupt endpoints, it's <strong>2^(bInterval-1) microframes</strong>, so <code>bInterval=1</code> means 125 µs, <code>bInterval=4</code> means 1 ms, etc. This trips up everyone the first time.</p>
+
+    <p>Interrupt endpoints aren't for high throughput — at FS with <code>bInterval=1</code> and 64-byte MPS, you're capped at ~64 KB/s. They're for "this short message must arrive within Δt of being ready."</p>
+
+    <h2>Isochronous transfers</h2>
+
+    <p>Isochronous is the only USB transfer type with <strong>guaranteed bandwidth</strong> and <strong>no error correction</strong>. It's designed for real-time streaming where missing a deadline is worse than missing a byte: audio, video, USB-Audio (UAC), USB-Video (UVC).</p>
+
+    <p>Properties:</p>
+    <ul>
+      <li>Max packet size: up to 1023 bytes (FS), 1024 (HS), 3 × 1024 with high-bandwidth (HS).</li>
+      <li><strong>No CRC verification at the application layer</strong> — packets arrive even if corrupted. (CRC16 is still on the wire; the host signals corruption but doesn't retransmit.)</li>
+      <li><strong>No ACK/NAK</strong> — packets are fire-and-forget.</li>
+      <li>Reserved bandwidth — slot is held even if you don't fill it.</li>
+      <li>One iso packet per (micro)frame typically, though HS supports up to 3.</li>
+    </ul>
+
+    <p>Iso reservations bite: an iso endpoint with a 1024-byte MPS reserves 1024 bytes of bandwidth every microframe whether or not you have data. Don't open one unless you're going to keep it fed. We touch on iso briefly in <code>usb_26_iso_audio_lite</code> for completeness; it's not part of the CMSIS-DAP / OTA path.</p>
+
+    <h2>Endpoint zero — a special case</h2>
+
+    <p>Endpoint 0 is bidirectional (both IN and OUT) and always control. Every device has exactly one EP0. It's where descriptors come from, where standard requests arrive, and where stalls clear automatically. Other endpoint numbers are unidirectional — endpoint 1 IN and endpoint 1 OUT are two separate logical endpoints.</p>
+
+    <p>The maximum packet size of EP0 is in the device descriptor (<code>bMaxPacketSize0</code>), and you must answer <code>GET_DESCRIPTOR(device)</code> with the first 8 bytes of that descriptor before the host has any other context — making EP0's MPS field one of the few that actually matters at the byte level. We meet that wrinkle in Chapter 05.</p>
+
+    <h2>Pipes — the host-side abstraction</h2>
+    <p>One piece of vocabulary the spec uses heavily: a <strong>pipe</strong> is a logical connection between host software and one device endpoint. Each device endpoint, once configured, exposes a pipe. There are two flavors (USB 2.0 §5.3.2):</p>
+    <ul>
+      <li><strong>Message pipe</strong> — bidirectional, structured, used <em>only</em> for control transfers. The default control pipe on EP0 is the one every device has.</li>
+      <li><strong>Stream pipe</strong> — unidirectional, unstructured. Bulk, interrupt, and isochronous endpoints expose stream pipes. Bytes flow through them with no protocol-level framing.</li>
+    </ul>
+    <p>Endpoint = the device-side resource (buffer + handler). Pipe = the host-side handle that talks to it. They're often used interchangeably, but the spec is precise; if a tutorial says "stream pipe" you now know it means "any non-control endpoint."</p>
+
+    <h2>Bandwidth budgeting</h2>
+
+    <p>The host's scheduler allocates bandwidth in this priority order, every (micro)frame:</p>
+    <ol>
+      <li><strong>Isochronous + interrupt</strong> (the "periodic" group) — up to <strong>90% per FS frame</strong> or <strong>80% per HS microframe</strong>. Each iso/int endpoint reserves its required bytes per its <code>bInterval</code>.</li>
+      <li><strong>Control transfers</strong> — share the remaining ≥10% (FS) / ≥20% (HS) with bulk; control is prioritized so it never starves.</li>
+      <li><strong>Bulk transfers</strong> — whatever's left after #1 and #2.</li>
+    </ol>
+
+    <p>If you stuff a device with a bunch of iso/interrupt endpoints with aggressive intervals, bulk can starve. Conversely, if you only have bulk endpoints, you'll get the full 80–90% of bandwidth. edevkit1's plan — two CDC bulk pairs + two vendor bulk endpoints — is bandwidth-friendly precisely because nothing reserves bandwidth.</p>
+
+    <h2>Split transactions — when LS/FS lives behind an HS hub</h2>
+    <p>USB 2.0 §5.10 defines <strong>split transactions</strong>: when an HS host wants to talk to a low- or full-speed device that is plugged into an HS hub, the HS host sends a <code>SSPLIT</code> token at HS to the hub, the hub does the real LS/FS transaction with the device at slow speed, and the host later issues <code>CSPLIT</code> at HS to collect the result. The hub's Transaction Translator (TT) hides the speed mismatch.</p>
+    <p>From the device's perspective, this is invisible — the device just sees normal LS/FS traffic. From the firmware-author's perspective, it matters in two cases: (a) Wireshark captures behind a TT include extra <code>SSPLIT</code>/<code>CSPLIT</code> packets that look unfamiliar; (b) some hubs have buggy TTs that mishandle iso splits — if your iso endpoint works through one host but not another, suspect the hub. edevkit1 (FS-only) will encounter this whenever it's plugged into a USB-C hub with HS uplink.</p>
+
+    <h2>The decision flowchart</h2>
+
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+flowchart TD
+  start([Need to move bytes over USB]) --> q1{Is this enumeration<br/>or device configuration?}
+  q1 -- yes --> ctrl[Use control on EP0]
+  q1 -- no --> q2{Streaming media that<br/>tolerates byte loss?}
+  q2 -- yes --> iso[Use isochronous]
+  q2 -- no --> q3{Need bounded latency<br/>(button press, status)?}
+  q3 -- yes --> intr[Use interrupt]
+  q3 -- no --> q4{Bulk data,<br/>throughput matters?}
+  q4 -- yes --> bulk[Use bulk]
+  q4 -- no --> bulk2[Probably bulk anyway]
+
+  classDef ans fill:#e8f4ff,stroke:#5b9bd5,stroke-width:2px;
+  class ctrl,iso,intr,bulk,bulk2 ans;
+      </pre>
+    </div>
+
+    <p>For 90% of devices, the answer is "control on EP0 for setup, bulk for data." That's CDC, MSC, CMSIS-DAP, and most vendor classes. Reach for interrupt only when you have a specific latency requirement (HID input, CDC notification endpoint). Reach for isochronous only when you're doing audio or video.</p>
+
+    <h2>NAK semantics by transfer type</h2>
+
+    <p>How the host reacts to a NAK varies, and it's worth knowing because it explains observed throughput:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Type</th><th>NAK reaction</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">Control</td><td class="meaning">Host retries the same transaction within the current transfer. Many NAKs ⇒ stall the transfer eventually.</td></tr>
+        <tr><td class="field">Bulk</td><td class="meaning">Host reschedules the transaction in a future frame. Sustained NAK = no progress, but no error.</td></tr>
+        <tr><td class="field">Interrupt</td><td class="meaning">Host waits until the next polling interval, then asks again.</td></tr>
+        <tr><td class="field">Isochronous</td><td class="meaning">N/A — iso has no ACK/NAK.</td></tr>
+      </tbody>
+    </table>
+
+    <p>NAK does not consume bandwidth wastefully on bulk endpoints — the host learns quickly to back off. This is why a NAK-y bulk endpoint mostly hurts <em>itself</em>, not the rest of the device.</p>
+
+    <h2>Worked example: edevkit1's planned topology</h2>
+
+    <p>Looking ahead to Tier 3 (sample <code>usb_30_dap_skeleton</code> in spirit, before we descope), edevkit1's USB shape will be:</p>
+
+    <ul>
+      <li><strong>EP 0 IN/OUT</strong> — control, MPS 64. Standard.</li>
+      <li><strong>EP 1 OUT, EP 1 IN</strong> — vendor bulk, MPS 64. CMSIS-DAP command/response (later, not in the USB book).</li>
+      <li><strong>EP 2 IN</strong> — vendor bulk, MPS 64. SWO trace stream.</li>
+      <li><strong>EP 3 OUT, EP 3 IN, EP 3 INT</strong> — CDC ACM. Target log UART.</li>
+      <li><strong>EP 4 OUT, EP 4 IN, EP 4 INT</strong> — CDC ACM. Test UART.</li>
+    </ul>
+
+    <p>Five bulk endpoints, two interrupt endpoints (CDC notify), no iso. Worst-case interrupt reservation: 2 × 64 bytes per polling interval. With <code>bInterval = 16</code> (typical for CDC notify), that's 8 bytes/ms reserved — negligible. Everything else competes for bulk bandwidth, and we'll engineer back-pressure so SWO can't starve CMSIS-DAP commands. That's a Part VI / Tier 3 problem.</p>
+
+    <h2>Common pitfalls</h2>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"My HS interrupt endpoint polls at 1 ms but I asked for <code>bInterval=1</code>."</strong> HS interpretation is <code>2^(bInterval-1) × 125 µs</code>, so <code>bInterval=1</code> means 125 µs. Use <code>bInterval=4</code> for 1 ms on HS.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"I declared an iso endpoint but my bulk throughput tanked."</strong> Iso reserves bandwidth even when idle. The host preallocates the slot you asked for. Drop unused iso endpoints from the configuration.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"Used interrupt for high-throughput because I needed low latency, but my throughput is terrible."</strong> Interrupt is throughput-poor by design — it's there for periodic small messages, not bulk pipes with low latency. If you need both, the answer is to use bulk and make sure your firmware writes to the IN buffer eagerly so the host's first poll succeeds.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"Two bulk endpoints, one is hot, one is starved."</strong> Linux's xHCI driver in particular interleaves polls by endpoint, but some hosts walk endpoints in numeric order. If endpoint 1 always has data, endpoint 2 may rarely be polled. Solution: don't oversubscribe; make your firmware NAK quickly when EP1 has nothing, so the host moves on.</p>
+    </div>
+
+    <h2>Going deeper</h2>
+    <ul>
+      <li>USB 2.0 Specification §5 (Data Flow Model) — the canonical text on transfer types and bandwidth allocation. <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a>.</li>
+      <li>Linux kernel docs — <a href="https://docs.kernel.org/driver-api/usb/URB.html">URB (USB Request Block)</a> — host-side per-transfer-type semantics, the most readable summary outside the spec.</li>
+      <li>Beagle / Cynthion analyzer captures of a real CDC + HID composite device — observe how the host actually interleaves transfers across types.</li>
+    </ul>
+
+    <nav class="chapter-nav" aria-label="Chapter navigation">
+      <a class="prev" href="03_packets.html">
+        <div class="nav-label">← Previous</div>
+        <div class="nav-title">Ch 03: Packets &amp; framing</div>
+      </a>
+      <a class="next" href="05_enumeration.html">
+        <div class="nav-label">Next →</div>
+        <div class="nav-title">Ch 05: Enumeration walkthrough</div>
+      </a>
+    </nav>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

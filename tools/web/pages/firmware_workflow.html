@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="edevkit firmware development workflow — env vars, edev_* shell helpers, RTT via Pico debug probe, coredump fault analysis, and USB device verification.">
+  <title>edevkit — Firmware · Development workflow</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<style>
+  /* ── tokens (same as docs hub) ───────────────────────────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand: oklch(56% 0.16 215); --brand-2: oklch(50% 0.18 235);
+    --brand-soft: oklch(94% 0.04 215); --brand-fg: oklch(99% 0.005 215);
+    --accent: oklch(72% 0.15 70); --accent-soft: oklch(95% 0.05 70);
+    --good: oklch(58% 0.14 145); --good-soft: oklch(94% 0.05 145);
+    --warn: oklch(72% 0.16 80); --warn-soft: oklch(95% 0.07 80);
+    --danger: oklch(56% 0.20 28); --danger-soft: oklch(95% 0.05 28);
+
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290); --win-soft: oklch(94% 0.04 290);
+
+    --bg: oklch(99.2% 0.003 240); --bg-soft: oklch(97% 0.005 240);
+    --bg-elev: oklch(100% 0 0);
+    --line: oklch(91% 0.012 240); --line-soft: oklch(94.5% 0.008 240);
+    --line-strong: oklch(85% 0.014 240);
+    --grid-dot: oklch(0% 0 0 / .055);
+    --code-bg: oklch(96.5% 0.007 240); --code-border: oklch(91% 0.012 240);
+
+    --fg: oklch(20% 0.02 240); --fg-2: oklch(36% 0.02 240);
+    --muted: oklch(50% 0.02 240); --faint: oklch(64% 0.015 240);
+
+    --r-2: 6px; --r-3: 10px; --r-pill: 999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --ease: cubic-bezier(.2, 0, 0, 1); --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+      --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+      --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+      --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+      --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+      --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac: var(--brand); --mac-soft: var(--brand-soft);
+      --win: oklch(74% 0.16 290); --win-soft: oklch(28% 0.07 290);
+      --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+      --bg-elev: oklch(20% 0.018 240);
+      --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+      --line-strong: oklch(35% 0.022 240);
+      --grid-dot: oklch(100% 0 0 / .05);
+      --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+      --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+      --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+    --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+    --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+    --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+    --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+    --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac: var(--brand); --mac-soft: var(--brand-soft);
+    --win: oklch(74% 0.16 290); --win-soft: oklch(28% 0.07 290);
+    --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+    --bg-elev: oklch(20% 0.018 240);
+    --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+    --line-strong: oklch(35% 0.022 240);
+    --grid-dot: oklch(100% 0 0 / .05);
+    --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+    --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+    --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+  }
+
+  /* ── reset / base ────────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-text); font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg); min-height: 100dvh;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px; background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto; padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none; font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600; color: var(--fg-2);
+    padding: 6px 10px; border-radius: var(--r-2);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .doc-tag {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--faint); padding: 4px 10px;
+    border-radius: var(--r-pill); background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .grow { flex: 1; }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px; margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted);
+    padding: 5px 11px; background: var(--bg-soft);
+    border: 1px solid var(--line); border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+  header.hero h1 {
+    font-family: var(--font-sans);
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  header.hero .lede {
+    font-size: 17px; color: var(--fg-2); line-height: 1.6;
+    margin: 0; max-width: 70ch;
+  }
+
+  h2 {
+    font-family: var(--font-sans); font-size: 26px;
+    margin-top: 56px; margin-bottom: 14px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-family: var(--font-sans); font-size: 19px;
+    margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-family: var(--font-mono); font-size: 12px;
+    margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  strong { font-weight: 600; }
+
+  code, pre, .mono { font-family: var(--font-mono); }
+  :not(pre) > code {
+    background: var(--code-bg); padding: 1px 6px;
+    border-radius: 4px; font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--code-border);
+    border-radius: var(--r-3); padding: 14px 16px;
+    overflow-x: auto; font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  .callout {
+    margin: 18px 0; padding: 14px 18px; border-radius: var(--r-3);
+    background: var(--bg-soft); border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.info    { background: var(--brand-soft);  border-left-color: var(--brand); }
+  .callout.warn    { background: var(--warn-soft);   border-left-color: var(--warn); }
+  .callout.good    { background: var(--good-soft);   border-left-color: var(--good); }
+  .callout.danger  { background: var(--danger-soft); border-left-color: var(--danger); }
+  .callout-title {
+    display: inline-block; font-family: var(--font-mono);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700; color: var(--muted); margin-bottom: 4px;
+  }
+  .callout.info .callout-title    { color: var(--brand); }
+  .callout.warn .callout-title    { color: oklch(45% 0.18 80); }
+  .callout.danger .callout-title  { color: var(--danger); }
+  .callout.good .callout-title    { color: var(--good); }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 18px 0; font-size: 14px;
+    background: var(--bg-elev); border: 1px solid var(--line);
+    border-radius: var(--r-3); overflow: hidden;
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 8px 12px; text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  thead th {
+    background: var(--bg-soft); font-family: var(--font-sans);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted);
+  }
+
+  .os-card {
+    border: 1px solid var(--line); border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3); padding: 16px 20px 12px;
+    margin: 14px 0; background: var(--bg-elev);
+  }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    padding: 3px 10px; border-radius: var(--r-pill);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    background: var(--bg-soft); border: 1px solid var(--line);
+    margin-bottom: 8px;
+  }
+  .os-card .os-tag::before {
+    content: ""; width: 6px; height: 6px;
+    border-radius: 50%; background: currentColor;
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card pre { margin: 8px 0 0; }
+
+  .future-block {
+    margin: 24px 0; padding: 18px 22px;
+    border: 1px dashed var(--line-strong); border-radius: var(--r-3);
+    background: color-mix(in oklch, var(--brand-soft) 40%, var(--bg-elev));
+  }
+  .future-block .future-title {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--brand); margin-bottom: 6px;
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" title="Back to docs hub">
+      <span aria-hidden="true">←</span> edevkit
+    </a>
+    <span class="doc-tag">Firmware · Workflow</span>
+    <span class="grow"></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · firmware · daily workflow</div>
+  <h1>Firmware development workflow</h1>
+  <p class="lede">Everything you do dozens of times a day while iterating on edevkit firmware: build, flash, watch RTT logs, decode crashes, and confirm the device enumerated. Set up once, then it's a three-line cycle.</p>
+</header>
+
+<h2>One-time setup</h2>
+
+<h3>Required environment variables</h3>
+<p>Add these to <code>~/.zshrc</code> if they're not already there. Pin them to your actual paths:</p>
+
+<pre><code># edevkit — Layout A (wrapper-dir at ~/projects/temp/edevkit/)
+export EDEVKIT_REPO="$HOME/projects/temp/edevkit/edevkit"
+export EDEV_VENV="$HOME/projects/temp/edevkit/edev"
+export ZEPHYR_WORKSPACE="$HOME/projects/temp/zephyrproject"
+export ZEPHYR_SDK_INSTALL_DIR="$HOME/zephyr-sdk-1.0.1"
+
+# Override stale launchctl value (some Nordic/SEGGER installers set this
+# to literal '${HOME}/zephyrproject/zephyr' which never expands).
+export ZEPHYR_BASE="$ZEPHYR_WORKSPACE/zephyr"</code></pre>
+
+<div class="callout warn">
+  <div class="callout-title">macOS launchctl quirk — read this</div>
+  <p>Several SDK installers (Nordic Connect for VS Code, SEGGER tools) run <code>launchctl setenv ZEPHYR_BASE '${HOME}/zephyrproject/zephyr'</code> with single quotes. macOS stores the literal string <em>without</em> expanding <code>${HOME}</code>, and inherits it into every shell. <code>west build</code> then can't find your workspace and reports the misleading <em>"unknown command 'build'; do you need to run this inside a workspace?"</em>. The <code>export ZEPHYR_BASE</code> line above overrides it. To remove the bad value at its source: <code>launchctl unsetenv ZEPHYR_BASE</code>.</p>
+</div>
+
+<h3>Install probe-rs</h3>
+<p>Used for both flashing and RTT streaming. One install covers all three OSes:</p>
+
+<pre><code>cargo install probe-rs-tools --locked
+# or grab a binary release from https://probe.rs/</code></pre>
+
+<h3>The <code>edev_*</code> shell helpers</h3>
+<p>The edevkit project provides convenience wrappers for <code>west</code>, <code>probe-rs</code>, and other tools. See <a href="/docs/shell_helpers.html"><strong>shell_helpers.html</strong></a> for the full reference (function signatures, defaults, examples). The helpers are sourced automatically when you activate the Python venv — no manual shell-rc edits needed.</p>
+
+<table>
+  <thead><tr><th>Helper</th><th>What it does</th><th>Needs <code>(edev)</code> venv?</th></tr></thead>
+  <tbody>
+    <tr><td><code>edev_build</code></td><td><code>west build -b $EDEV_BOARD .</code></td><td><strong>Yes</strong> (west is Python in venv)</td></tr>
+    <tr><td><code>edev_rebuild</code></td><td>Pristine rebuild (sysbuild + signing)</td><td>Yes</td></tr>
+    <tr><td><code>edev_flash</code></td><td>Flash via probe-rs over SWD</td><td>No</td></tr>
+    <tr><td><code>edev_flash_uf2</code></td><td>Flash via BOOTSEL UF2 drag-and-drop</td><td>No</td></tr>
+    <tr><td><code>edev_console</code></td><td>Open serial console to kit</td><td>No</td></tr>
+    <tr><td><code>edev_ota</code></td><td>Push signed image via mcumgr (OTA)</td><td>No</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <div class="callout-title">Stale helper definitions on macOS?</div>
+  <p>If you see unexpected <code>edev_*</code> behavior (e.g., old function signatures, missing error checks), run <code>type -a edev_flash</code> to find shadow definitions lurking in <code>~/.zshrc</code>, <code>~/.bashrc</code>, or the venv's <code>activate</code> script. Remove any stale blocks — they're incompatible with the current canonical version in <code>$EDEVKIT_REPO/tools/env_helpers.sh</code>. This trap bit us on 2026-05-08 when we unified helper sourcing.</p>
+</div>
+
+<h2>Daily cycle</h2>
+
+<p>From any sample directory after a code edit:</p>
+
+<pre><code>cd firmware/samples/usb/usb_01      # or whichever sample
+edev_build && edev_run              # flash + stream RTT
+# Ctrl-C to detach RTT</code></pre>
+
+<p>If you only want to peek at logs without reflashing:</p>
+
+<pre><code>edev_rtt_monit</code></pre>
+
+<p>If you only want to flash without watching logs:</p>
+
+<pre><code>edev_flash</code></pre>
+
+<h2>RTT — log monitoring via Pico debug probe</h2>
+
+<h3>What RTT is</h3>
+<p>Real-Time Transfer (Segger). The MCU writes log messages into a small ring buffer in SRAM; a host-side tool reads that buffer over SWD via the debug probe. No UART pins burned, no host serial driver needed, no impact on the device under test. Standard Zephyr support — flip three Kconfigs and you have it.</p>
+
+<h3>Per-sample <code>prj.conf</code> requirements</h3>
+
+<pre><code>CONFIG_LOG=y
+CONFIG_USE_SEGGER_RTT=y
+CONFIG_RTT_CONSOLE=y
+CONFIG_UART_CONSOLE=n
+CONFIG_USBD_LOG_LEVEL_INF=y      # if you want USB-stack logs
+</code></pre>
+
+<h3>Wiring</h3>
+<p>The Pico debug probe (Raspberry Pi Debug Probe, or a second Pico flashed with the <code>debugprobe</code> firmware) needs:</p>
+<ul>
+  <li><strong>Probe GND ↔ Target GND</strong></li>
+  <li><strong>Probe SC ↔ Target SWCLK</strong></li>
+  <li><strong>Probe SD ↔ Target SWDIO</strong></li>
+</ul>
+<p>RTT goes over SWD — you do NOT need to wire the probe's UART pins for RTT to work.</p>
+
+<h3>Reading the stream</h3>
+
+<table>
+  <thead><tr><th>Command</th><th>Behavior</th></tr></thead>
+  <tbody>
+    <tr><td><code>probe-rs run --chip RP2350 path/to/zephyr.elf</code></td><td>Halt + program flash + reset + stream RTT (= <code>edev_run</code>, which goes through <code>edev_flash</code> for the proper MCUboot+app split rather than <code>probe-rs run</code>'s single-ELF flash).</td></tr>
+    <tr><td><code>probe-rs attach --chip RP2350 path/to/zephyr.elf</code></td><td>Connect to running target, stream RTT only — no reset, no reprogram (= <code>edev_rtt_monit</code>).</td></tr>
+    <tr><td><code>probe-rs reset --chip RP2350</code></td><td>Reset the target without doing anything else</td></tr>
+    <tr><td><code>probe-rs list</code></td><td>List detected probes; useful when multiple probes are connected</td></tr>
+  </tbody>
+</table>
+
+<h3>What healthy RTT output looks like</h3>
+
+<pre><code>Available Probes:
+0: Debug Probe (CMSIS-DAP) -- 2e8a:000c-0:E663AC91D3675432 (CMSIS-DAP)
+Selection: 0
+ WARN probe_rs::config::registry: Matching RP2350 based on wildcard. Consider specifying the chip as RP235x instead.
+      Erasing ✔ 100% [####################]  56.00 KiB @ 116.69 KiB/s (took 0s)
+  Programming ✔ 100% [####################]  56.00 KiB @  38.72 KiB/s (took 1s)
+     Finished in 2.05s
+ WARN probe_rs::rtt: Buffer for up channel 1 not initialized      ← benign
+ WARN probe_rs::rtt: Buffer for up channel 2 not initialized      ← benign
+ WARN probe_rs::rtt: Buffer for down channel 1 not initialized    ← benign
+ WARN probe_rs::rtt: Buffer for down channel 2 not initialized    ← benign
+*** Booting Zephyr OS build v4.4.0-... ***
+[00:00:00.001,000] &lt;inf&gt; usbd_init: bNumInterfaces 1 wTotalLength 18
+[00:00:00.001,000] &lt;inf&gt; usb_01: usb_01 hello_enum: USB enabled, idle
+[00:00:00.323,000] &lt;inf&gt; usbd_core: Actual device speed 1
+[00:00:00.405,000] &lt;inf&gt; hello_enum: configured (enabled)
+</code></pre>
+
+<p>The four "Buffer for up/down channel X not initialized" warnings are benign — probe-rs probes for four RTT channels by default, but Zephyr's <code>RTT_CONSOLE</code> only sets up one. Ignore.</p>
+
+<h2>Coredump — analyzing a Zephyr fault dump</h2>
+
+<p>When the firmware faults (bus error, hard fault, undefined instruction, etc.), Zephyr prints a register dump and halts. Example from the <code>usb_01</code> bring-up:</p>
+
+<pre><code>[00:00:00.001,000] &lt;err&gt; os: ***** BUS FAULT *****
+[00:00:00.001,000] &lt;err&gt; os:   Precise data bus error
+[00:00:00.001,000] &lt;err&gt; os:   BFAR Address: 0xffffff00
+[00:00:00.001,000] &lt;err&gt; os: r0/a1:  0x1000ca75  r1/a2:  0x00000000  r2/a3:  0x1000ca79
+[00:00:00.001,000] &lt;err&gt; os: r3/a4:  0xffffff00 r12/ip:  0x00000001 r14/lr:  0x10003a25
+[00:00:00.001,000] &lt;err&gt; os:  xpsr:  0x29000000
+[00:00:00.001,000] &lt;err&gt; os: Faulting instruction address (r15/pc): 0x10003a3e
+[00:00:00.001,000] &lt;err&gt; os: &gt;&gt;&gt; ZEPHYR FATAL ERROR 25: Unknown error on CPU 0
+[00:00:00.001,000] &lt;err&gt; os: Current thread: 0x20001248 (main)</code></pre>
+
+<h3>What the fields mean</h3>
+
+<table>
+  <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>BFAR Address</code></td><td>Bus Fault Address Register — the address being dereferenced when the fault hit. Often the smoking gun.</td></tr>
+    <tr><td><code>PC (r15)</code></td><td>Faulting instruction's address. <code>addr2line</code> this to find the source line.</td></tr>
+    <tr><td><code>LR (r14)</code></td><td>Link register — return address of the function that called the faulting one. <code>addr2line</code> to find the caller.</td></tr>
+    <tr><td><code>r0..r3</code></td><td>First four function arguments + scratch. Often contain the offending pointer or value.</td></tr>
+    <tr><td><code>xpsr</code></td><td>Program status register; mostly useful for confirming Thumb mode (bit 24) and active exception number.</td></tr>
+    <tr><td><code>Current thread</code></td><td>Which thread was running. <code>main</code> = boot-time crash; other names = a runtime issue in that thread.</td></tr>
+    <tr><td><code>FATAL ERROR 25</code></td><td>Zephyr fatal-error code. 25 = "unknown / unhandled" — the actual cause is in the BFAR/PC fields above, not the code.</td></tr>
+  </tbody>
+</table>
+
+<h3>Recipe — find the source line</h3>
+<p>Map PC (and LR) to source file:line using the SDK toolchain's <code>addr2line</code>:</p>
+
+<pre><code>TOOL=$ZEPHYR_SDK_INSTALL_DIR/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-addr2line
+ELF=build-rpi_pico2_rp2350a_m33/&lt;sample-name&gt;/zephyr/zephyr.elf
+
+$TOOL -e $ELF -fpC 0x10003a3e 0x10003a25
+# -f: show function name
+# -p: pretty single-line format
+# -C: demangle C++ symbols (harmless on plain C)</code></pre>
+
+<p>Output:</p>
+
+<pre><code>init_configuration_inst at .../subsys/usb/device_next/usbd_init.c:135
+init_configuration_inst at .../subsys/usb/device_next/usbd_init.c:127</code></pre>
+
+<p>The first line is where it crashed; the second is the caller.</p>
+
+<h3>Disassembly around the crash</h3>
+<p>If <code>addr2line</code> doesn't pinpoint enough (inlining, optimization), drop to objdump:</p>
+
+<pre><code>OBJDUMP=$ZEPHYR_SDK_INSTALL_DIR/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-objdump
+$OBJDUMP -d --start-address=0x10003a30 --stop-address=0x10003a60 $ELF</code></pre>
+
+<h3>Common bus-fault patterns</h3>
+
+<table>
+  <thead><tr><th>BFAR value</th><th>Likely cause</th></tr></thead>
+  <tbody>
+    <tr><td><code>0x00000000</code></td><td>NULL pointer dereference — uninitialized struct or function pointer</td></tr>
+    <tr><td><code>0xFFFFFFXX</code></td><td>Negative <code>errno</code> being treated as a pointer (e.g., <code>-22</code> = <code>0xFFFFFFEA</code>)</td></tr>
+    <tr><td>Some flash address</td><td>Writing to a <code>const</code> object that the linker placed in flash (a real cause of <code>usb_01</code>'s second crash)</td></tr>
+    <tr><td>Some RAM address that looks structured</td><td>Walking off the end of an array or following a corrupted pointer</td></tr>
+    <tr><td>Peripheral MMIO address</td><td>Touching a clock/peripheral that isn't enabled in devicetree</td></tr>
+  </tbody>
+</table>
+
+<h2>USB device verification</h2>
+
+<p>After the firmware boots, confirm the host actually enumerated it.</p>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux</span>
+  <pre><code>lsusb -v -d 1209:ede1            # full descriptor dump
+sudo dmesg -w | grep -i usb      # live kernel events
+sudo wireshark -i usbmon0        # packet capture (loaded modprobe usbmon)</code></pre>
+</div>
+
+<div class="os-card mac">
+  <span class="os-tag">macOS</span>
+  <pre><code># PRIMARY (always reliable, reads kernel I/O Registry live):
+ioreg -p IOUSB -l -w 0 | grep -B 2 -A 25 "edevkit"
+
+# system_profiler is more readable but CACHES — sometimes lags by minutes
+# on Apple Silicon.  Force refresh and re-query:
+sudo killall -HUP USBHostBSDClient
+system_profiler SPUSBDataType | grep -B 1 -A 12 "usb_01"
+
+# packet capture: Apple's PacketLogger from "Additional Tools for Xcode"</code></pre>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows</span>
+  <pre><code>:: Device Manager-style listing (PowerShell)
+Get-PnpDevice -PresentOnly |
+  Where-Object { $_.InstanceId -like "*VID_1209*" }
+
+:: Graphical descriptor view (Windows SDK)
+usbview.exe
+
+:: Packet capture: install USBPcap, then capture via Wireshark</code></pre>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">macOS gotchas</div>
+  <p>On Apple Silicon Macs with Sonoma/Sequoia, <code>system_profiler SPUSBDataType</code> often shows stale or missing devices for several minutes after a re-plug. <strong>Always cross-check with <code>ioreg</code></strong> — it reads the kernel I/O Registry live and is the source of truth. <code>system_profiler</code> also reports <code>idProduct</code> as decimal in some output paths, so grepping for <code>0xede1</code> can miss devices that ARE enumerated. Grep by manufacturer or product string instead.</p>
+</div>
+
+<h3>Useful alias</h3>
+
+<pre><code>alias edev_lsusb='ioreg -p IOUSB -l -w 0 | grep -B 2 -A 25 "edevkit"'</code></pre>
+
+<h2>Sanity-check checklist</h2>
+<p>When something doesn't work, walk this list top-to-bottom:</p>
+
+<ol>
+  <li><code>echo $ZEPHYR_BASE</code> — must print a path that exists; not literal <code>${HOME}/...</code></li>
+  <li><code>which west</code> — must be inside the <code>(edev)</code> venv</li>
+  <li><code>probe-rs list</code> — your probe must show up</li>
+  <li><code>edev_build</code> — exits 0</li>
+  <li><code>edev_run</code> — flashes; you see the Zephyr boot banner in RTT (the helper surfaces probe-rs reset failures, see <a href="/docs/shell_helpers.html">shell_helpers.html</a>)</li>
+  <li><code>ioreg -p IOUSB ... | grep edevkit</code> — device shows up on host</li>
+</ol>
+
+<p>If step N fails, the bug is between step N-1 and step N — that's where to focus.</p>
+
+<h2>Roadmap — desktop GUI for the workflow</h2>
+
+<div class="future-block">
+  <div class="future-title">Planned · not yet implemented</div>
+  <p>The shell helpers above are the bare-minimum daily loop. They work, but a real desktop GUI would:</p>
+  <ul>
+    <li><strong>Sample browser</strong> — list every sample under <code>firmware/samples/usb/</code> with build status and last-flashed-when timestamp</li>
+    <li><strong>Build button</strong> per sample — wraps <code>west build</code>, shows progress + warnings + errors inline (clickable to source)</li>
+    <li><strong>Flash button</strong> — wraps <code>probe-rs download</code>, shows progress, validates against connected probe</li>
+    <li><strong>RTT pane</strong> — live log streaming with timestamp + level filtering, search, save-to-file, log-color per module</li>
+    <li><strong>Coredump analyzer</strong> — when a fault appears in RTT, automatically run <code>addr2line</code> on the PC/LR and link to the source</li>
+    <li><strong>USB device tree</strong> — live view of <code>ioreg</code>/<code>lsusb</code> filtered to edevkit VID, with descriptor decode</li>
+    <li><strong>Probe selector</strong> — when multiple probes are connected, pick which one is which target</li>
+  </ul>
+  <p>Implementation will likely live in <code>edevkit/host/gui/</code> as a Tauri app (Rust + web frontend) — same shell as the planned probe/protocol-tester GUI from the v1 design. Until that exists, the <code>edev_*</code> shell helpers above are the canonical workflow.</p>
+</div>
+
+<h2>Related docs</h2>
+<ul>
+  <li><a href="/docs/firmware_zephyr_usbd.html">Zephyr USB-Device-Next reference</a> — class API + the seven gotchas catalogue</li>
+  <li><a href="/docs/usb_book.html">USB Book</a> — full-depth explanation of every USB sample</li>
+  <li><a href="/docs/installation.html">Installation guide</a> — how to set up the workspace from scratch (Linux/mac/Win)</li>
+  <li><a href="/docs/shell_helpers.html">Shell helpers (general)</a> — non-firmware shell utilities for the project</li>
+</ul>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,4 @@
+/* G6 — the RP2350 board exposes the UDC node as &usbd. */
+&usbd {
+    status = "okay";
+};

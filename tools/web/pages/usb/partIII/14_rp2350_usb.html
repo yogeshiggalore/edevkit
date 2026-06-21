@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Inside RP2350 — the USB hardware subsystem. The four blocks (controller, PHY, DPRAM, PLL_USB), the three CPU↔USB channels (MMIO + DPRAM + IRQ), and what's new vs RP2040. Datasheet-anchored.">
+  <title>edevkit USB Book — Part III · Ch 14: Inside RP2350 — the USB hardware subsystem</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Part III · Ch 14</span>
+      <span class="grow"></span>
+      <span class="last-verified">Verified · RP2350 datasheet build d126e9e (2025-07-29) · 2026-05-08</span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · Part III · Chapter 14</div>
+    <h1>Inside RP2350 — the USB hardware subsystem</h1>
+    <p class="lede">Eight chapters of generic USB land on a chip. This chapter opens the chip and shows what's actually there — the four hardware blocks that together implement everything Parts I and II describe, plus the three channels by which a Cortex-M33 core talks to them.</p>
+  </header>
+
+  <section class="chapter-meta" aria-label="Chapter metadata">
+    <div class="meta-row">
+      <div class="meta-label">You'll learn</div>
+      <div>
+        <ul>
+          <li>The four hardware blocks: controller, PHY, DPRAM, PLL_USB — and exactly what each one does.</li>
+          <li>The three CPU↔USB channels (MMIO, shared DPRAM, IRQ) — including why there's no DMA path on RP2350.</li>
+          <li>The register map: <code>USBCTRL_REGS_BASE = 0x50110000</code>, <code>USBCTRL_DPRAM_BASE = 0x50100000</code>, <code>USBCTRL_IRQ = 14</code>, the bit layouts you actually touch.</li>
+          <li>What's new in RP2350's USB block vs RP2040 — including the one bit that bites every port (<code>MAIN_CTRL.PHY_ISO</code>).</li>
+          <li>The single RP2350 USB errata (<code>RP2350-E12</code>) — and the one-line workaround.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Prereqs</div>
+      <div><a href="../partI/02_electrical.html">Ch 02</a> (electrical / NRZI / pull-ups) and <a href="../partI/03_packets.html">Ch 03</a> (packets, PIDs, CRC). The chapter assumes you already know <em>what</em> bytes go on the wire and <em>how</em> they're encoded — this chapter shows what silicon does the encoding for you.</div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Sample</div>
+      <div>None. Theory + datasheet reference only. Every <code>usb_NN</code> sample exercises this hardware indirectly through Zephyr's UDC driver — see §5.</div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Verified</div>
+      <div>RP2350 datasheet build <code>d126e9e</code> (2025-07-29), §12.7 (USB), pp. 1141–1181. Cross-referenced against Zephyr v4.4.99 <code>drivers/usb/udc/udc_rpi_pico.c</code>. 2026-05-08.</div>
+    </div>
+  </section>
+
+  <h2 id="three-answers">1. Three quick answers</h2>
+
+  <p>If you're skimming, this whole chapter answers three questions:</p>
+
+  <table class="byte-table">
+    <thead><tr><th>Question</th><th>Answer</th><th>Section</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="field">Is USB separate hardware?</td>
+        <td class="meaning">Yes — a discrete digital + analog IP block on the chip's bus fabric. Runs independently of the Cortex-M33 cores; a halted CPU can still receive a SETUP packet.</td>
+        <td>§2, §3</td>
+      </tr>
+      <tr>
+        <td class="field">How does the CPU talk to it?</td>
+        <td class="meaning">Three channels: <strong>MMIO registers</strong> (control/status, at <code>0x50110000</code>), <strong>shared DPRAM</strong> (endpoint buffers, at <code>0x50100000</code>), and <strong>interrupts</strong> (one IRQ line, vector <code>14</code>). No DMA path — the CPU does the data movement.</td>
+        <td>§4</td>
+      </tr>
+      <tr>
+        <td class="field">What does the silicon contain?</td>
+        <td class="meaning">USB controller (digital FSM) + USB PHY (analog D+/D- driver/receiver) + 4 KB DPRAM + dedicated PLL_USB (48 MHz). All on-die — no external USB chip needed.</td>
+        <td>§3</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ─────────────────────────── 2. BLOCK DIAGRAM ─────────────────────────── -->
+
+  <h2 id="block-diagram">2. The block diagram</h2>
+
+  <p>Datasheet §12.7.3 shows it like this — annotated below for clarity:</p>
+
+  <pre><code>┌─────────────────────────────────────────────────────────────────────┐
+│                          RP2350 SoC                                 │
+│                                                                     │
+│  ┌─────────────────┐         ┌─────────────────────┐                │
+│  │ Cortex-M33 ◄────┼─────────┤   AHB / APB fabric  │                │
+│  │  (or Hazard3)   │         └──────────┬──────────┘                │
+│  └────────▲────────┘   NVIC IRQ 14      │ MMIO + DPRAM (clk_sys)    │
+│           │                             ▼                           │
+│  ┌────────┴───────────────────────────────────────────────────────┐ │
+│  │              USB SUBSYSTEM  (separate IP, clk_usb = 48 MHz)    │ │
+│  │                                                                │ │
+│  │  ┌─────────────────┐    ┌─────────────────────┐                │ │
+│  │  │ USB CONTROLLER  │◄──►│ DPRAM  (4 KB)       │                │ │
+│  │  │ (digital FSM)   │    │ at 0x50100000       │                │ │
+│  │  │ • SETUP detect  │    │ EP control words    │                │ │
+│  │  │ • Serial RX     │    │ + EP data buffers   │                │ │
+│  │  │ • Serial TX     │    └─────────────────────┘                │ │
+│  │  │ • CRC, NRZI,    │    Registers at 0x50110000                │ │
+│  │  │   bit-stuff     │    ┌─────────────────────┐                │ │
+│  │  │ • DATA0/DATA1   │    │ PLL_USB  (48 MHz    │                │ │
+│  │  │ • Device + Host │    │ from 12 MHz xtal)   │                │ │
+│  │  └────────┬────────┘    └─────────────────────┘                │ │
+│  │           ▼                                                    │ │
+│  │  ┌────────────────────────────────────────────┐                │ │
+│  │  │         USB PHY  (analog block)            │                │ │
+│  │  │ • Differential drivers (~3.3 V swing)      │                │ │
+│  │  │ • Single-ended + differential receivers    │                │ │
+│  │  │ • On-die pull-ups (1.2 kΩ / 2.3 kΩ)        │                │ │
+│  │  │ • Line-state detect → reset / suspend      │                │ │
+│  │  └────────────┬───────────────────────────────┘                │ │
+│  └───────────────┼────────────────────────────────────────────────┘ │
+└──────────────────┼──────────────────────────────────────────────────┘
+                   ▼
+            USB_DP (pin 48) / USB_DM (pin 46) — both with required 27 Ω
+            external series resistors</code></pre>
+
+  <p>Two clock domains, one shared memory, one IRQ line. Everything inside the dashed box runs at <code>clk_usb = 48 MHz</code>; everything outside runs at <code>clk_sys</code>. The DPRAM is dual-ported — both sides can read and write simultaneously, with hardware arbitrating in the rare case of an exact-cycle collision.</p>
+
+  <div class="callout info">
+    <div class="callout-title">Note — clk_sys constraint (RP2350-E12)</div>
+    <p>The dual-port arbitration only works when <code>clk_sys &gt; clk_usb</code>. If you somehow run <code>clk_sys ≤ 48 MHz</code> while USB is active, DPRAM access timing breaks silently. RP2350-E12 (datasheet §12.7.3.1) is the only RP2350 USB errata, and the workaround is one line: keep <code>clk_sys ≥ 50 MHz</code>. Zephyr's default RP2350 board init runs <code>clk_sys</code> at 150 MHz, so this is a paper concern unless you go out of your way to under-clock for power.</p>
+  </div>
+
+  <!-- ─────────────────────────── 3. THE FOUR PIECES ─────────────────────────── -->
+
+  <h2 id="four-pieces">3. The four pieces</h2>
+
+  <h3 id="piece-controller">3a. USB Controller — the digital FSM</h3>
+
+  <p>The controller is a single state machine that does everything Ch 03 describes <em>in hardware</em>. It receives bytes from the PHY, identifies the PID, validates CRCs, recognises SETUP packets, routes them into the DPRAM, and sends ACK/NAK/STALL responses within the bus turn-around window (~7.5 bit-times at FS — too tight for any software response). On the TX side it generates TOKEN and DATA packets, computes CRCs, and clocks them out through the PHY. It manages the per-endpoint DATA0/DATA1 toggle automatically; firmware never thinks about it.</p>
+
+  <p>The controller can run as either a USB device or a USB host — the silicon supports both. Mode is selected by <code>MAIN_CTRL.HOST_NDEVICE</code>:</p>
+
+  <table class="byte-table">
+    <thead><tr><th>Bit</th><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr class="spec-section"><td colspan="3"><code>MAIN_CTRL</code> @ <code>USBCTRL_REGS_BASE + 0x040</code> (datasheet §12.7.5, Table 1198)</td></tr>
+      <tr><td class="hex">31</td><td class="field">SIM_TIMING</td><td class="meaning">Reduced timings for FPGA simulation. Reset = 0. Leave alone in real silicon.</td></tr>
+      <tr><td class="hex">2</td><td class="field">PHY_ISO</td><td class="meaning"><strong>Isolates the PHY from the digital core. Reset = 1 (isolated). Software MUST clear this before any USB traffic — see §6.</strong></td></tr>
+      <tr><td class="hex">1</td><td class="field">HOST_NDEVICE</td><td class="meaning">0 = device mode, 1 = host mode. Reset = 0 (device).</td></tr>
+      <tr><td class="hex">0</td><td class="field">CONTROLLER_EN</td><td class="meaning">Master enable. Reset = 0.</td></tr>
+    </tbody>
+  </table>
+
+  <p>In device mode, the controller exposes <strong>16 IN + 16 OUT endpoints</strong> (EP0 through EP15 in each direction); EP0 is always the control endpoint. In host mode, you get a single configurable EPx pair plus up to 15 hardware-polled interrupt-endpoint slots — enough to drive a hub of HID devices without per-poll software involvement (datasheet §12.7.1.1.1, §12.7.1.1.2).</p>
+
+  <p>Almost everything from <a href="../partI/03_packets.html">Ch 03</a> happens entirely inside this block. Your firmware does not see PIDs, NRZI, or stuffed bits — it sees endpoint events and buffer pointers.</p>
+
+  <h3 id="piece-phy">3b. USB PHY — the analog block</h3>
+
+  <p>The PHY is the only analog block in the USB subsystem. Three jobs:</p>
+
+  <ol>
+    <li><strong>Differential drive and receive</strong> on D+/D-. Output swing is rail-to-rail on the 3.3 V supply; receivers report J/K/SE0/SE1 line states up to the digital line-state-detect logic, which resolves them into bus-reset / suspend / resume / data events.</li>
+    <li><strong>NRZI encode/decode and bit-stuffing.</strong> The USB 2.0 wire format from <a href="../partI/02_electrical.html#nrzi">Ch 02 §NRZI</a> happens here. Firmware writes plain bytes into the DPRAM; the PHY translates them into the line transitions on the wire. (The "0 toggles, 1 holds" rule and the stuffed-bit-after-six-ones convention are PHY responsibilities.)</li>
+    <li><strong>On-die pull-ups (device mode)</strong> for FS speed signaling. The USB 2.0 spec mandates 1.5 kΩ ± 5 % on D+ for FS; RP2350 ships <em>two</em> programmable pull-up strengths, neither of which exactly matches the spec target:</li>
+  </ol>
+
+  <table class="byte-table">
+    <thead><tr><th>Setting</th><th>Resistance</th><th>USB 2.0 spec</th></tr></thead>
+    <tbody>
+      <tr><td class="field"><code>SIE_CTRL.RPU_OPT = 0</code> (reset default)</td><td class="meaning">~1.2 kΩ</td><td class="meaning">Below the 1.425 kΩ floor — softer than spec.</td></tr>
+      <tr><td class="field"><code>SIE_CTRL.RPU_OPT = 1</code></td><td class="meaning">~2.3 kΩ</td><td class="meaning">Above the 1.575 kΩ ceiling — harder than spec.</td></tr>
+    </tbody>
+  </table>
+
+  <p>In practice every host accepts both — the spec window is conservative, and real hosts treat <em>any</em> idle-state pull above their threshold as a connect event. The only time it matters is when you're qualifying against a strict compliance tester, in which case you need an external resistor and you set both internal options to whichever flips your D+ voltage furthest off the rail.</p>
+
+  <p><strong>The 27 Ω external series resistors are not optional.</strong> Datasheet §1.2.2 requires a 27 Ω series resistor on each of <code>USB_DP</code> and <code>USB_DM</code>:</p>
+
+  <div class="callout warn">
+    <div class="callout-title">Quote from datasheet §1.2.2</div>
+    <p>"A 27 Ω series termination resistor is required on each pin, but bus pullups and pulldowns are provided internally."</p>
+  </div>
+
+  <p>This is a real difference from many other MCU USB blocks — RP2350 does not include the series-impedance termination on-die. Omit them on a custom PCB and you'll see eye-pattern violations and intermittent enumeration failures, especially with longer cables.</p>
+
+  <p>Pin assignment on the QFN-80 package (RP2350B, the part edevkit1 uses): <code>USB_DP</code> on pin 48, <code>USB_DM</code> on pin 46, <code>USB_OTP_VDD</code> on pin 51 (datasheet Table 2). Pins 46/48 can be repurposed as GPIO27 if USB is unused — that's new in RP2350; on RP2040 they were USB-only.</p>
+
+  <h3 id="piece-dpram">3c. DPRAM — the shared mailbox</h3>
+
+  <p>4 KB of dual-ported SRAM at <code>0x50100000</code>. Both the CPU (through <code>clk_sys</code>) and the USB controller (through <code>clk_usb</code>) access it through independent ports — no contention, no mailbox protocol, just shared memory with hardware arbitration in the (very rare) case of exact-cycle conflict. The first 256 bytes hold endpoint <em>control</em> structures; the remaining 3,840 bytes hold endpoint <em>data</em> buffers (datasheet §12.7.3.7, p. 1146).</p>
+
+  <table class="byte-table">
+    <thead><tr><th>Offset</th><th>Hex</th><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr class="spec-section"><td colspan="4">DPRAM layout @ <code>0x50100000</code> (datasheet §12.7.3.7, Tables 1192–1194)</td></tr>
+      <tr><td class="offset">0x00</td><td class="hex">8</td><td class="field">SETUP packet buffer</td><td class="meaning">Always written here when a SETUP arrives. Both device and host modes use this slot.</td></tr>
+      <tr><td class="offset">0x08</td><td class="hex">4</td><td class="field">EP1 IN control</td><td class="meaning">Endpoint-control word (see register-bit table below). One per non-EP0 endpoint.</td></tr>
+      <tr><td class="offset">0x0C</td><td class="hex">4</td><td class="field">EP1 OUT control</td><td class="meaning">…paired by EP number, IN at +0, OUT at +4.</td></tr>
+      <tr><td class="offset">0x10..0x7C</td><td class="hex">112</td><td class="field">EP2..EP15 control</td><td class="meaning">Same 8-byte stride per EP number.</td></tr>
+      <tr><td class="offset">0x80</td><td class="hex">4</td><td class="field">EP0 IN buffer control</td><td class="meaning">EP0 is special-cased — no endpoint control register, just buffer control.</td></tr>
+      <tr><td class="offset">0x84</td><td class="hex">4</td><td class="field">EP0 OUT buffer control</td><td class="meaning">Same.</td></tr>
+      <tr><td class="offset">0x88..0xFC</td><td class="hex">120</td><td class="field">EP1..EP15 buffer control</td><td class="meaning">One 4-byte buffer-control word per EP per direction.</td></tr>
+      <tr><td class="offset">0x100</td><td class="hex">64</td><td class="field">EP0 IN buffer 0</td><td class="meaning">EP0's data buffers start here. Always single-buffered, 64 bytes.</td></tr>
+      <tr><td class="offset">0x140</td><td class="hex">64</td><td class="field">EP0 OUT buffer 0</td><td class="meaning"></td></tr>
+      <tr><td class="offset">0x180..0xFFF</td><td class="hex">3712</td><td class="field">Free buffer space</td><td class="meaning">Used by EP1+ data buffers. Each endpoint's <code>EP_CTRL</code> word holds the offset of its buffer (bits 15:6, 64-byte aligned).</td></tr>
+    </tbody>
+  </table>
+
+  <p>Each non-EP0 endpoint has two control words:</p>
+
+  <h4>Endpoint control word (32-bit)</h4>
+  <table class="byte-table">
+    <thead><tr><th>Bit(s)</th><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td class="hex">31</td><td class="field">EP_ENABLE</td><td class="meaning">1 = endpoint enabled. Cleared after every SETUP that needs renegotiation.</td></tr>
+      <tr><td class="hex">30</td><td class="field">DOUBLE_BUFFERED</td><td class="meaning">0 = single 64 B buffer; 1 = double-buffered (two 64 B buffers, controller alternates).</td></tr>
+      <tr><td class="hex">29</td><td class="field">INT_PER_BUFF</td><td class="meaning">Raise <code>BUFF_STATUS</code> after each transferred buffer.</td></tr>
+      <tr><td class="hex">28</td><td class="field">INT_PER_2BUFF</td><td class="meaning">Raise <code>BUFF_STATUS</code> after every two transferred buffers (lower IRQ rate at high throughput).</td></tr>
+      <tr><td class="hex">27:26</td><td class="field">ENDPOINT_TYPE</td><td class="meaning">0 = Control, 1 = Isochronous, 2 = Bulk, 3 = Interrupt.</td></tr>
+      <tr><td class="hex">17</td><td class="field">INTERRUPT_ON_STALL</td><td class="meaning">Device only — fire IRQ when this endpoint sends a STALL handshake.</td></tr>
+      <tr><td class="hex">16</td><td class="field">INTERRUPT_ON_NAK</td><td class="meaning">Device only — fire IRQ when this endpoint sends a NAK.</td></tr>
+      <tr><td class="hex">15:6</td><td class="field">BUFFER_BASE_OFFSET</td><td class="meaning">Top 10 bits of the buffer's offset within DPRAM. Bottom 6 bits are zero (64-byte alignment), so the smallest grain is 64 B.</td></tr>
+      <tr><td class="hex">5:0</td><td class="field">POLL_INTERVAL</td><td class="meaning">Host mode only — interrupt-endpoint poll interval in ms.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Buffer control word (32-bit) — drives every transfer</h4>
+  <p>This is the register firmware writes to "submit" a transfer. Two halves: bits 31:16 control buffer 1 (the second buffer in a double-buffered endpoint), bits 15:0 control buffer 0:</p>
+  <table class="byte-table">
+    <thead><tr><th>Bit(s)</th><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td class="hex">31</td><td class="field">FULL_1</td><td class="meaning">Buffer 1 contains valid data. Set by CPU on IN, by controller on OUT.</td></tr>
+      <tr><td class="hex">30</td><td class="field">LAST_1</td><td class="meaning">Buffer 1 is the last in the transfer (controller sends a ZLP if the host expects more).</td></tr>
+      <tr><td class="hex">29</td><td class="field">PID_1</td><td class="meaning">DATA0 (=0) or DATA1 (=1) toggle for buffer 1.</td></tr>
+      <tr><td class="hex">28:27</td><td class="field">DOUBLE_BUFFER_OFFSET</td><td class="meaning">For isochronous: 0=128 B, 1=256 B, 2=512 B, 3=1024 B stride between buf 0 and buf 1.</td></tr>
+      <tr><td class="hex">26</td><td class="field">AVAILABLE_1</td><td class="meaning">Hand buffer 1 over to the controller. Set by CPU; cleared by controller when transfer completes.</td></tr>
+      <tr><td class="hex">25:16</td><td class="field">LENGTH_1</td><td class="meaning">Bytes in/out for buffer 1. 10 bits → max 1023 B (the isochronous MPS).</td></tr>
+      <tr><td class="hex">15:6</td><td class="field"><em>buffer 0 mirror</em></td><td class="meaning">FULL_0 / LAST_0 / PID_0 / RESET_BUFFER_SELECT / STALL / AVAILABLE_0 — same fields, lower half.</td></tr>
+      <tr><td class="hex">9:0</td><td class="field">LENGTH_0</td><td class="meaning">Bytes for buffer 0.</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>The transfer protocol from a firmware perspective is short:</strong> write your bytes into the buffer at the offset declared by the endpoint's <code>BUFFER_BASE_OFFSET</code>, set <code>LENGTH_n</code>, set <code>PID_n</code> (toggle), set <code>FULL_n</code> (for IN — controller sets it for OUT), set <code>AVAILABLE_n</code>. The controller eventually clears <code>AVAILABLE_n</code> and raises <code>BUFF_STATUS</code> in the IRQ. Zephyr's UDC driver wraps all this — your application code never touches these bits — but knowing the shape explains every "transfer hangs" symptom.</p>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Transfer hangs after the first packet of a multi-buffer sequence."</strong> The <code>AVAILABLE_n</code> bit must be written <em>after</em> the rest of the buffer-control word has settled, because the dual-port arbiter can race a single-cycle write across both clock domains. The RP2350 ships with <code>LINESTATE_TUNING.DEV_BUFF_CONTROL_DOUBLE_READ_FIX</code> enabled by default which closes this race; don't disable it unless you have a very specific reason. (Datasheet §12.7.2.2.)</p>
+  </div>
+
+  <h3 id="piece-pll">3d. PLL_USB — the dedicated 48 MHz clock</h3>
+
+  <p>USB Full-Speed needs exactly 48 MHz (12 Mbps × 4-sample oversample). RP2350 has a <strong>dedicated PLL</strong> — separate from <code>PLL_SYS</code> — whose output is fixed at 48 MHz when fed the standard 12 MHz crystal. <code>PLL_USB</code> is also used by the ADC and the UART boot ROM, but the system clock can be anything PLL_SYS supports (up to 150 MHz on RP2350) without affecting USB.</p>
+
+  <p>This separation is why USB keeps working when you change the CPU clock (e.g., dropping <code>clk_sys</code> to save power between bursts). The catch — RP2350-E12 — is in §7.</p>
+
+  <p>Zephyr's RP2350 board init configures <code>PLL_USB</code> automatically. Application code does not normally touch it. The one time you would: implementing low-power suspend, where you disable <code>PLL_USB</code> to save the ~2 mA it consumes, and re-enable on bus resume.</p>
+
+  <!-- ─────────────────────────── 4. CPU CHANNELS ─────────────────────────── -->
+
+  <h2 id="cpu-channels">4. How the CPU talks to the USB subsystem</h2>
+
+  <p>Three channels — and an important non-channel.</p>
+
+  <h3 id="channel-mmio">4a. MMIO registers (0x50110000)</h3>
+
+  <p>The control/status registers live in a 64 KB block at <code>USBCTRL_REGS_BASE = 0x50110000</code> (datasheet §12.7.5, Table 1196 et seq.). The most-touched ones:</p>
+
+  <table class="byte-table">
+    <thead><tr><th>Offset</th><th>Register</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td class="offset">0x000</td><td class="field">ADDR_ENDP</td><td class="meaning">Device address (bits 6:0). Firmware copies this from the SET_ADDRESS SETUP packet — see §4d.</td></tr>
+      <tr><td class="offset">0x004..0x03C</td><td class="field">ADDR_ENDP1..15</td><td class="meaning">Host mode — per-interrupt-endpoint device-address + endpoint number.</td></tr>
+      <tr><td class="offset">0x040</td><td class="field">MAIN_CTRL</td><td class="meaning">Master enable, host/device select, PHY isolation.</td></tr>
+      <tr><td class="offset">0x04C</td><td class="field">SIE_CTRL</td><td class="meaning">Pull-up enable, pull-up strength, transceiver power, EP0 stop-on-short, host transaction control.</td></tr>
+      <tr><td class="offset">0x050</td><td class="field">SIE_STATUS</td><td class="meaning">VBUS detect, line state, suspended state, error flags. Many bits are W1C (write-1-to-clear).</td></tr>
+      <tr><td class="offset">0x058</td><td class="field">BUFF_STATUS</td><td class="meaning">One bit per (EP, direction). Set by the controller when a transfer completes; W1C.</td></tr>
+      <tr><td class="offset">0x090</td><td class="field">INTE</td><td class="meaning">Interrupt enable mask.</td></tr>
+      <tr><td class="offset">0x094</td><td class="field">INTF</td><td class="meaning">Interrupt force (for testing IRQ paths).</td></tr>
+      <tr><td class="offset">0x098</td><td class="field">INTS</td><td class="meaning">Interrupt status (the bits actually firing right now).</td></tr>
+    </tbody>
+  </table>
+
+  <p>The interrupt sources are worth memorising; they're what the ISR dispatches on:</p>
+
+  <table class="byte-table">
+    <thead><tr><th>Bit</th><th>Source</th><th>When</th></tr></thead>
+    <tbody>
+      <tr class="spec-section"><td colspan="3"><code>INTS</code> bits — datasheet Tables 1218–1220 (pp. 1176–1178)</td></tr>
+      <tr><td class="hex">23</td><td class="field">EPX_STOPPED_ON_NAK</td><td class="meaning">RP2350-new — host stopped a polled bulk endpoint after a NAK.</td></tr>
+      <tr><td class="hex">22</td><td class="field">DEV_SM_WATCHDOG_FIRED</td><td class="meaning">Device-mode SM watchdog (RP2350-new) tripped — recovery from stuck FSM.</td></tr>
+      <tr><td class="hex">21</td><td class="field">ENDPOINT_ERROR</td><td class="meaning">Generic endpoint-error catch.</td></tr>
+      <tr><td class="hex">20</td><td class="field">RX_SHORT_PACKET</td><td class="meaning">Received fewer bytes than the configured length on an endpoint.</td></tr>
+      <tr><td class="hex">19</td><td class="field">EP_STALL_NAK</td><td class="meaning">Any endpoint reflecting STALL or NAK out.</td></tr>
+      <tr><td class="hex">18</td><td class="field">ABORT_DONE</td><td class="meaning">An endpoint abort sequence completed.</td></tr>
+      <tr><td class="hex">17</td><td class="field">DEV_SOF</td><td class="meaning">Start-of-Frame received (every 1 ms in FS).</td></tr>
+      <tr><td class="hex">16</td><td class="field">SETUP_REQ</td><td class="meaning">SETUP packet arrived; firmware should read DPRAM 0x00.</td></tr>
+      <tr><td class="hex">15</td><td class="field">DEV_RESUME_FROM_HOST</td><td class="meaning">Bus resumed from suspend.</td></tr>
+      <tr><td class="hex">14</td><td class="field">DEV_SUSPEND</td><td class="meaning">Bus idle ≥3 ms — suspend.</td></tr>
+      <tr><td class="hex">13</td><td class="field">DEV_CONN_DIS</td><td class="meaning">Connect/disconnect line-state change detected.</td></tr>
+      <tr><td class="hex">12</td><td class="field">BUS_RESET</td><td class="meaning">SE0 ≥ 10 ms — bus reset received.</td></tr>
+      <tr><td class="hex">11</td><td class="field">VBUS_DETECT</td><td class="meaning">VBUS line state changed (device mode).</td></tr>
+      <tr><td class="hex">10</td><td class="field">STALL</td><td class="meaning">Host received a STALL handshake.</td></tr>
+      <tr><td class="hex">9:5</td><td class="field">ERROR_*</td><td class="meaning">CRC, bit-stuff, RX overflow, RX timeout, data-sequence — five separate error sources.</td></tr>
+      <tr><td class="hex">4</td><td class="field">BUFF_STATUS</td><td class="meaning">One or more endpoint buffers transferred — see <code>BUFF_STATUS</code> register for which ones.</td></tr>
+      <tr><td class="hex">3</td><td class="field">TRANS_COMPLETE</td><td class="meaning">A complete transfer finished (with a LAST_BUFF marker).</td></tr>
+      <tr><td class="hex">2</td><td class="field">HOST_SOF</td><td class="meaning">Host mode — SOF generation tick.</td></tr>
+      <tr><td class="hex">1</td><td class="field">HOST_RESUME</td><td class="meaning">Host detected resume from a downstream device.</td></tr>
+      <tr><td class="hex">0</td><td class="field">HOST_CONN_DIS</td><td class="meaning">Host detected device connect/disconnect.</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="channel-dpram">4b. Shared DPRAM (0x50100000)</h3>
+
+  <p>Already covered in §3c. From the CPU's perspective it's just memory — load and store at byte / halfword / word granularity. The endpoint control words are <em>at fixed offsets</em>; the buffers are <em>where you choose to put them</em>, declared via each endpoint's <code>BUFFER_BASE_OFFSET</code>. There is no malloc — buffer placement is part of your driver's static layout.</p>
+
+  <h3 id="channel-irq">4c. The single IRQ line — vector 14</h3>
+
+  <p>The entire USB block raises <strong>one</strong> NVIC line, <code>USBCTRL_IRQ</code> = vector 14 on the Cortex-M33 NVIC table (datasheet §3.2 System Interrupts). The ISR reads <code>INTS</code> to dispatch — bus reset, SETUP arrived, buffers ready, error — services it, and write-1-clears the source bit. This is how Zephyr's USB stack stays responsive without polling: a SETUP at 1 µs into a 1 ms frame fires IRQ 14 immediately; the ISR runs the dispatcher; user code wakes via Zephyr's work queue.</p>
+
+  <p>If you ever set <code>CONFIG_USBD_LOG_LEVEL_DBG=y</code> in a sample's <code>prj.conf</code> and watch RTT, the storm of <code>SETUP</code>, <code>BUFF_STATUS</code>, <code>SOF</code> events you see is the ISR dispatching on these <code>INTS</code> bits.</p>
+
+  <h3 id="channel-dma">4d. The non-channel: DMA</h3>
+
+  <p>RP2350's general-purpose DMA controller has channels for SPI, I²C, ADC, PIO, UART — but <strong>no DREQ signal for USB</strong>. Endpoint data movement is CPU-driven: when <code>BUFF_STATUS</code> fires, the ISR (or a downstream worker thread) memcpys bytes between the DPRAM buffer and an application ring buffer. For the bandwidths FS USB delivers (~1 MB/s sustained), this is fine; the CPU spends well under 5 % of one core on data movement at that rate.</p>
+
+  <p>This is a real difference from RP2040 → some other MCU families. STM32H7's USB OTG_HS, for instance, has dedicated DMA. RP2350 chose silicon area over DMA throughput, on the well-founded assumption that 1 MB/s isn't worth a dedicated channel. <a href="../partVI/27_zero_copy.html">Ch 27</a> revisits this when the topic is high-throughput bulk transfers.</p>
+
+  <p>The other consequence of "no DMA": <code>SET_ADDRESS</code> handling is firmware-driven. The controller does <em>not</em> auto-parse the SETUP payload — when a <code>SET_ADDRESS(N)</code> arrives, your ISR reads the SETUP buffer at DPRAM <code>0x00</code>, extracts the new address, and writes it to <code>ADDR_ENDP</code> before completing the status stage. The exact ordering rule is: the host's status-stage IN token uses the <em>old</em> address; firmware must update <code>ADDR_ENDP</code> after the controller has acked the status stage but before the host's next SETUP. Zephyr's UDC driver handles this; you only need to know it exists when something else has gone wrong (see <a href="../partI/05_enumeration.html">Ch 05</a>).</p>
+
+  <!-- ─────────────────────────── 5. ZEPHYR UDC ─────────────────────────── -->
+
+  <h2 id="zephyr-udc">5. Where Zephyr's UDC driver fits</h2>
+
+  <p>This is the one place where everything else in the book stops being portable. Application code calling <code>usbd_register_class()</code> and <code>usbd_enable()</code> works the same on STM32, nRF52, ESP32, RP2040, and RP2350. Underneath that API, a per-MCU <strong>UDC (USB Device Controller) driver</strong> translates the portable calls into the actual register writes. On RP2350 that driver lives at <code>$ZEPHYR_BASE/drivers/usb/udc/udc_rpi_pico.c</code> — it knows <code>0x50110000</code>, it knows the bit at position 26 of the buffer-control word means <code>AVAILABLE_1</code>, it services <code>USBCTRL_IRQ</code>.</p>
+
+  <pre><code>┌────────────────────────────────────────────────────────────┐
+│ Application (samples/usb/usb_NN/src/main.c, src/&lt;class&gt;.c) │
+│   usbd_enable, usbd_register_class, usbd_ep_enqueue, …     │
+├────────────────────────────────────────────────────────────┤
+│ Zephyr usbd core (subsys/usb/device_next/)                 │
+│   enumeration FSM, request handler, dispatcher             │
+├────────────────────────────────────────────────────────────┤
+│ UDC driver (drivers/usb/udc/udc_rpi_pico.c)                │
+│   knows RP2350 register map; writes MMIO,                  │
+│   reads DPRAM, services USBCTRL_IRQ                        │
+├────────────────────────────────────────────────────────────┤
+│ HARDWARE  (the four blocks from §3 above)                  │
+└────────────────────────────────────────────────────────────┘</code></pre>
+
+  <p>This is why <code>usb_01</code>'s <code>main.c</code> contains <em>zero</em> RP2350 register references. That's all hidden in <code>udc_rpi_pico.c</code>. If you ever need to debug a "the host sees us at the wrong address" problem, that file is where the breakpoint goes.</p>
+
+  <p>Reading <code>udc_rpi_pico.c</code> alongside this chapter is faster than reading the datasheet end-to-end. The driver is ~1500 lines and uses the exact field names (<code>BUFF_STATUS</code>, <code>SIE_CTRL</code>, <code>EP_CTRL</code>) that appear in §3 above.</p>
+
+  <!-- ─────────────────────────── 6. WHAT'S NEW vs RP2040 ─────────────────────────── -->
+
+  <h2 id="vs-rp2040">6. What's new in RP2350 vs RP2040</h2>
+
+  <p>The USB IP is largely the same — register addresses, endpoint count, DPRAM size, IRQ vector all carry over from RP2040 unchanged. Datasheet §12.7.2 lists ten enhancements. The ones that affect firmware:</p>
+
+  <table class="byte-table">
+    <thead><tr><th>Feature</th><th>What it is</th><th>Compatibility</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="field">PHY isolation control</td>
+        <td class="meaning"><code>MAIN_CTRL.PHY_ISO</code> (bit 2) — new in RP2350. Powers down the PHY analog block while keeping the digital core powered.</td>
+        <td class="meaning"><strong>Breaks RP2040 software</strong> if not handled. Reset value is 1 (isolated). Software MUST clear it at startup before any USB activity.</td>
+      </tr>
+      <tr>
+        <td class="field">USB pin GPIO mux</td>
+        <td class="meaning">USB_DP and USB_DM can be repurposed as GPIO27 when USB is unused.</td>
+        <td class="meaning">Additive. Default behaviour matches RP2040 — pins are USB unless explicitly remapped.</td>
+      </tr>
+      <tr>
+        <td class="field">NAK-poll bulk-stop (host)</td>
+        <td class="meaning"><code>NAK_POLL.STOP_EPX_ON_NAK</code> + <code>INTS.EPX_STOPPED_ON_NAK</code>. Hardware can stop a polled bulk transfer when the device NAKs, instead of busy-polling.</td>
+        <td class="meaning">Additive. Useful when implementing a USB host driver for unbuffered devices.</td>
+      </tr>
+      <tr>
+        <td class="field">Multi-hub fix</td>
+        <td class="meaning"><code>LINESTATE_TUNING.MULTI_HUB_FIX</code> — corrects inter-packet timeouts across long hub chains.</td>
+        <td class="meaning">Default off. Enable if your application sees enumeration failures behind two-or-more hub tiers (see <a href="../appendix/troubleshooting.html#cascaded-hubs">appendix → cascaded hubs</a>).</td>
+      </tr>
+      <tr>
+        <td class="field">Device-suspend wake fix</td>
+        <td class="meaning"><code>LINESTATE_TUNING.DEV_LS_WAKE_FIX</code> — wake on any bus activity (K or SE0), not just K.</td>
+        <td class="meaning">Default ON in RP2350. Improves robustness vs RP2040 corner case.</td>
+      </tr>
+      <tr>
+        <td class="field">DPRAM double-read fix</td>
+        <td class="meaning"><code>LINESTATE_TUNING.DEV_BUFF_CONTROL_DOUBLE_READ_FIX</code> — closes the dual-port arbitration race that needed 3-nop spacing on RP2040.</td>
+        <td class="meaning">Default ON. Removes the need for <code>__NOP() __NOP() __NOP()</code> sequences around <code>AVAILABLE</code> bit writes.</td>
+      </tr>
+      <tr>
+        <td class="field">EP0 stop-on-short</td>
+        <td class="meaning"><code>SIE_CTRL.EP0_STOP_ON_SHORT_PACKET</code> (bit 19) — auto-stops EP0 on a short packet during data stage.</td>
+        <td class="meaning">Default off. Enables a cleaner state machine on devices with non-standard control-transfer flows.</td>
+      </tr>
+      <tr>
+        <td class="field">Device SM watchdog</td>
+        <td class="meaning"><code>DEV_SM_WATCHDOG</code> register + interrupt source. Resets the device state machine if it wedges.</td>
+        <td class="meaning">Default off. Last-ditch defence against firmware bugs that leave the FSM in an unrecoverable state.</td>
+      </tr>
+      <tr>
+        <td class="field">Device RX-error quiesce</td>
+        <td class="meaning"><code>LINESTATE_TUNING.DEV_RX_ERR_QUIESCE</code> — stop device RX on first error to avoid double-error IRQs.</td>
+        <td class="meaning">Optional. Useful for stress testing.</td>
+      </tr>
+      <tr>
+        <td class="field">SIE RX chatter fix</td>
+        <td class="meaning"><code>LINESTATE_TUNING.SIE_RX_CHATTER_SE0_FIX</code> — handles hub-EOP-followed-by-valid-token sequences.</td>
+        <td class="meaning">Default ON. Closes a hub-interaction corner case.</td>
+      </tr>
+      <tr>
+        <td class="field">RP2040 errata fixed</td>
+        <td class="meaning">RP2040-E2 (endpoint abort), E5 (bus reset), E3/E4 (host buffer flags), E15 (bus-error hang during IN) — all silicon-fixed.</td>
+        <td class="meaning">Pure improvement; no software workarounds needed.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <div class="callout-title">The one bit that bites every port</div>
+    <p>If you're moving a working RP2040 USB driver to RP2350 and the device just won't enumerate — no IRQs, no line-state events — you forgot to clear <code>MAIN_CTRL.PHY_ISO</code>. The PHY is isolated by default at reset (<code>= 1</code>), and on RP2040 there was no such bit, so existing driver code doesn't touch it. Datasheet §12.7.2 quote: <em>"You must clear the MAIN_CTRL.PHY_ISO bit at startup and after power down events."</em> This is the single change that breaks otherwise-portable code.</p>
+  </div>
+
+  <!-- ─────────────────────────── 7. ERRATA ─────────────────────────── -->
+
+  <h2 id="errata">7. Errata — RP2350-E12</h2>
+
+  <p>Exactly one USB-related errata exists in the RP2350 datasheet:</p>
+
+  <div class="callout danger">
+    <div class="callout-title">RP2350-E12 — clk_sys must be &gt; 48 MHz when USB is active</div>
+    <p>The DPRAM dual-port arbitration assumes <code>clk_sys &gt; clk_usb</code>. If <code>clk_sys ≤ 48 MHz</code> while the USB controller is enabled, DPRAM accesses can return stale data or drop writes — silently. Symptom: enumeration appears to work but transfers corrupt, or the device randomly drops off the bus mid-transfer.</p>
+    <p><strong>Workaround:</strong> keep <code>clk_sys ≥ 50 MHz</code> while USB is enabled. The Zephyr default of <code>clk_sys = 150 MHz</code> is well above the threshold; you'd only hit this if you intentionally under-clock for power, in which case disable USB first (<code>MAIN_CTRL.CONTROLLER_EN = 0</code>) before dropping the clock.</p>
+    <p>Datasheet §12.7.3.1, p. 1144.</p>
+  </div>
+
+  <p>That's the entire RP2350 USB errata list. Comparable RP2040 had five distinct USB errata (E2, E3, E4, E5, E15) — RP2350 silicon fixed all of them. Net: RP2350's USB block is one of the cleanest IP blocks in the chip from an errata standpoint.</p>
+
+  <!-- ─────────────────────────── 8. PRACTICAL ─────────────────────────── -->
+
+  <h2 id="practical">8. Practical implications</h2>
+
+  <ol>
+    <li><strong>Endpoint count is generous.</strong> 16 IN + 16 OUT + EP0 in device mode. Most samples use 2–4 endpoints; only a multi-bulk-IN composite (think <code>usb_25</code>) starts feeling the limit, and even there the harder constraint is DPRAM space, not endpoint slots.</li>
+    <li><strong>DPRAM is the real budget.</strong> 4 KB total, 256 B reserved for endpoint control words, 256 B used by EP0's two 64 B buffers and their wrapping, leaving <strong>3,584 B of headroom</strong> for application endpoints. With 64 B bulk packets, that's 56 buffers — well above any composite device's needs. The exception: isochronous endpoints with 1023 B MPS, where you can use up two-thirds of DPRAM with a single double-buffered iso stream.</li>
+    <li><strong>No external USB chip required.</strong> The PHY is on-die. Your PCB needs only USB-C connector + 27 Ω series resistors + a TVS array for ESD (recommended; not specified in the datasheet but standard practice). No USB redrivers, no level shifters.</li>
+    <li><strong>USB on its own clock.</strong> You can change <code>clk_sys</code> arbitrarily (above 48 MHz, per E12) without affecting USB. Useful for power management.</li>
+    <li><strong>PIO-based USB exists but isn't needed here.</strong> The <a href="https://github.com/sekigon-gonnoc/Pico-PIO-USB"><code>pico-pio-usb</code></a> project lets a PIO state machine bit-bang a second USB interface. Useful when you want a USB host AND a USB device on the same chip; not relevant for edevkit1, which uses the native peripheral as a device only.</li>
+    <li><strong>Power: PLL_USB consumes ~2 mA.</strong> Disable it during deep suspend; re-enable on bus resume. The Zephyr PM subsystem handles this if <code>CONFIG_PM</code> is enabled.</li>
+  </ol>
+
+  <!-- ─────────────────────────── 9. VERIFICATION ─────────────────────────── -->
+
+  <h2 id="verification">9. Verification milestone</h2>
+
+  <p>The proof that all four hardware pieces from §3 are working in concert is one RTT log line you've already seen if you've run <code>usb_01</code>:</p>
+
+  <pre><code>[00:00:00.323,000] &lt;inf&gt; usbd_core: Actual device speed 1</code></pre>
+
+  <p>The <code>1</code> here is <code>USBD_SPEED_FS</code>. For that single number to appear, every block had to do its job:</p>
+  <ul>
+    <li>The <strong>controller</strong> received <code>BUS_RESET</code> via <code>INTS</code>, dispatched it to the driver, completed the reset state machine.</li>
+    <li>The <strong>PHY</strong> drove the FS pull-up high (after firmware set <code>SIE_CTRL.PULLUP_EN</code>) and detected the host's J/K signaling.</li>
+    <li>The <strong>DPRAM</strong> received the host's first <code>SETUP</code> packet (<code>GET_DESCRIPTOR(Device)</code>) at offset <code>0x00</code>, and EP0's IN buffer at <code>0x100</code> contained the device descriptor bytes the firmware loaded there.</li>
+    <li><strong>PLL_USB</strong> was running at exactly 48 MHz the whole time — without that, the controller can't time-recover the host's bits and would never have seen the SETUP at all.</li>
+  </ul>
+
+  <p>Find that line in your RTT and you've verified the whole chapter.</p>
+
+  <!-- ─────────────────────────── 10. GOING DEEPER ─────────────────────────── -->
+
+  <h2 id="going-deeper">10. Going deeper</h2>
+
+  <ul>
+    <li><strong>RP2350 datasheet § 12.7</strong> (USB), pp. 1141–1181 — the full register and bitfield reference. <a href="https://pip-assets.raspberrypi.com/categories/1214-rp2350/documents/RP-008373-DS-2-rp2350-datasheet.pdf">RP-008373-DS-2</a>.</li>
+    <li><strong>RP2350 datasheet § 1.2.2</strong> (Pin descriptions table) — pin 46 / 48 / 51 USB pin assignments + the 27 Ω external-resistor requirement.</li>
+    <li><strong>RP2350 datasheet § 3.2</strong> (System Interrupts) — full NVIC vector table including <code>USBCTRL_IRQ = 14</code>.</li>
+    <li><strong>Zephyr RP2350 UDC driver</strong>: <code>$ZEPHYR_BASE/drivers/usb/udc/udc_rpi_pico.c</code>. The actual register-programming code; reading it is faster than the datasheet for any "how is X implemented in firmware" question.</li>
+    <li><strong>Raspberry Pi Hardware Design Guide</strong>: <a href="https://github.com/raspberrypi/hardware-design-guide">github.com/raspberrypi/hardware-design-guide</a> — recommended USB-C + RP2350 PCB layouts, including 27 Ω placement and ESD diode footprints.</li>
+    <li><strong>USB 2.0 Specification, §7.1.5 and §7.1.6</strong> — the spec context for the on-die pull-up and the bit-stuffing rules the PHY implements.</li>
+  </ul>
+
+  <nav class="chapter-nav" aria-label="Chapter navigation">
+    <a class="prev" href="/docs/usb_book.html">
+      <div class="nav-label">← Previous</div>
+      <div class="nav-title">Ch 13 — Endpoint buffers, MPS, ZLPs (not yet written)</div>
+    </a>
+    <a class="next" href="../partIV/15_cdc_acm.html">
+      <div class="nav-label">Next →</div>
+      <div class="nav-title">Ch 15: CDC ACM — your first real I/O</div>
+    </a>
+  </nav>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

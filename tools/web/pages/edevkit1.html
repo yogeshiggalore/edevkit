@@ -2443,7 +2443,7 @@ Files attached:     Gerbers, drill, pick-and-place, BOM, assembly drawings
 <tr><td>POWMAN driver</td><td>Partial in Zephyr</td><td>Direct register pokes via <code>mmio</code> for the few features needed</td></tr>
 <tr><td>OTP write</td><td>Partial in Zephyr</td><td>Use LittleFS + RP2350 chip-ID for serial. Don't need OTP for v1.</td></tr>
 <tr><td>TrustZone Secure / NS</td><td>TF-M integration young</td><td>Skip. v2 if needed.</td></tr>
-<tr><td>UF2 / picotool ergonomics</td><td>pico-sdk native; Zephyr produces ELF/HEX/BIN</td><td>Post-process to UF2 with <code>picotool</code> if needed for recovery</td></tr>
+<tr><td>UF2 / picotool ergonomics</td><td>pico-sdk native; Zephyr produces ELF/HEX/BIN/UF2 per image</td><td>Per-image UF2 already comes out of Zephyr's build. For BOOTSEL recovery, <code>edev_build</code> auto-emits a single <code>merged.uf2</code> from sysbuild's <code>merged.hex</code> via vendored <code>tools/uf2/uf2conv.py</code> (RP2XXX_ABSOLUTE family) — no picotool dependency.</td></tr>
 </tbody>
 </table>
 </div>

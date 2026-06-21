@@ -1,0 +1,31 @@
+# edevkit — clangd config (commit me)
+#
+# clangd discovers each sample's compile_commands.json by walking up from the
+# .c file. edev_build / edev_rebuild create a symlink at the sample root that
+# points at the sysbuild-nested DB:
+#
+#     <sample>/compile_commands.json -> build-<board>/<sample>/compile_commands.json
+#
+# Build the sample once (edev_build) and IntelliSense picks up automatically.
+
+CompileFlags:
+  # Zephyr leans on GCC pragmas/attributes that clangd's frontend doesn't model
+  # — silence the warnings rather than have squiggles on every kernel header.
+  Add:
+    - -Wno-unknown-pragmas
+    - -Wno-unknown-attributes
+    - -Wno-attributes
+  # clangd defaults to "linux-gcc-arm"-equivalent target via the compile DB.
+  # Don't override target here — the Zephyr SDK's arm-zephyr-eabi-gcc entry in
+  # compile_commands.json already encodes the right --target and sysroot.
+
+Diagnostics:
+  # Zephyr's DEVICE_DT_GET / DT_NODELABEL macros expand to opaque expressions
+  # that clangd-tidy occasionally flags. Suppress the noisiest checks.
+  ClangTidy:
+    Remove:
+      - clang-diagnostic-unused-function
+      - clang-diagnostic-unused-variable
+
+Index:
+  Background: Build

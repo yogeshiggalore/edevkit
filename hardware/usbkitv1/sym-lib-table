@@ -1,0 +1,5 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "xiao") (type "KiCad") (uri "/Users/yogesh/projects/temp/edevkit/edevkit/hardware/lib/xiao/Seeed Studio XIAO Series Library/Seeed_Studio_XIAO_Series.kicad_sym") (options "") (descr ""))
+	(lib (name "com09032") (type "KiCad") (uri "/Users/yogesh/projects/temp/edevkit/edevkit/hardware/lib/COM-09032") (options "") (descr ""))
+)

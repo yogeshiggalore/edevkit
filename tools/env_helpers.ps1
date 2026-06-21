@@ -109,12 +109,39 @@ int main(void)
     Write-Host "   Next:  cd $appDir; edev_build; edev_flash"
 }
 
+# Convert sysbuild's merged.hex → merged.uf2 (single drag-and-drop for BOOTSEL).
+# Family ID RP2XXX_ABSOLUTE (0xe48bff57) — matches Zephyr bin2uf2 and is the
+# right family for a multi-region image (bootloader + app slot). No-op when
+# merged.hex isn't present (single-image build).
+function _edev_emit_merged_uf2 {
+    param([string]$BuildDir)
+    foreach ($hex in @("$BuildDir\merged.hex", "$BuildDir\zephyr\merged.hex")) {
+        if (-not (Test-Path $hex)) { continue }
+        $uf2  = "$BuildDir\merged.uf2"
+        $conv = "$env:EDEVKIT_REPO\tools\uf2\uf2conv.py"
+        if (-not (Test-Path $conv)) {
+            Write-Host "⚠️  uf2conv.py missing at $conv — skipping merged.uf2 emit." -ForegroundColor Yellow
+            return
+        }
+        Write-Host "🧬 Emitting merged.uf2 from $(Split-Path -Leaf $hex)"
+        & python $conv -c -f RP2XXX_ABSOLUTE -o $uf2 $hex | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "⚠️  merged.uf2 conversion failed; SWD flash still works." -ForegroundColor Yellow
+            return
+        }
+        Write-Host "   → $uf2"
+        return
+    }
+}
+
 function edev_build {
     param([string]$Src = $PWD, [string]$Board = $env:EDEV_BOARD_DEFAULT)
     if (-not (_edev_check)) { return }
     $buildDir = "$Src\build-$(_edev_board_dir $Board)"
     Write-Host "🧱 Building (board: $Board)"
     westz build -p always -b $Board --sysbuild -s $Src -d $buildDir @args
+    if ($LASTEXITCODE -ne 0) { return }
+    _edev_emit_merged_uf2 $buildDir
 }
 
 function edev_build_simple {
@@ -131,6 +158,8 @@ function edev_flash {
     $imageName = (Split-Path -Leaf $Src)   # sysbuild names the per-image dir after the CMake project()
     $mcuboot   = "$buildDir\mcuboot\zephyr\zephyr.bin"
     $appBin    = "$buildDir\$imageName\zephyr\zephyr.signed.bin"
+    # Fallbacks: sysbuild without MCUboot signing, then plain (non-sysbuild) build.
+    if (-not (Test-Path $appBin)) { $appBin = "$buildDir\$imageName\zephyr\zephyr.bin" }
     if (-not (Test-Path $appBin)) { $appBin = "$buildDir\zephyr\zephyr.bin" }
 
     if (-not (Get-Command probe-rs -ErrorAction SilentlyContinue)) {

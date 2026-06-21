@@ -1,0 +1,73 @@
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+
+/{
+    joystick: joystick{
+        compatible = "zephyr,input-analog-axis";
+        poll-period-ms = <15>;
+        io-channels = <&adc 0>, <&adc 1>;
+
+        axis_x{
+            zephyr,axis = <INPUT_ABS_X>;
+            in-min = <100>;
+            in-max = <4000>;
+            out-min = <(-512)>;
+            out-max = <511>;
+            deadzone = <30>;
+        };
+
+        axis_y{
+            zephyr,axis = <INPUT_ABS_Y>;
+            in-min = <100>;
+            in-max = <4000>;
+            out-min = <(-512)>;
+            out-max = <511>;
+            deadzone = <30>;
+        };
+    };
+
+    buttons{
+        compatible = "gpio-keys";
+        js_btn: js_btn{
+            gpios = <&gpio0 15 GPIO_ACTIVE_LOW>;
+            label = "Joystick Button";
+            zephyr,code = <INPUT_KEY_ENTER>;
+        };
+    };
+
+    js_lp: js_lp{
+        compatible = "zephyr,input-longpress";
+        input-codes = <INPUT_KEY_ENTER>;
+        short-codes = <INPUT_KEY_KPENTER>;
+        long-codes = <INPUT_KEY_MENU>;
+        long-delay-ms = <800>;
+    };
+
+    js_dt: js_dt{
+        compatible = "zephyr,input-double-tap";
+        input-codes = <INPUT_KEY_ENTER>;
+        double-tap-codes = <INPUT_KEY_PLAYPAUSE>;
+        double-tap-delay-ms = <300>;
+    };
+};
+
+&adc {
+    status = "okay";
+    #address-cells = <1>;   /* ← add these two */
+    #size-cells = <0>;      /*    lines         */
+    channel@0 {
+        reg = <0>;
+        zephyr,gain = "ADC_GAIN_1";
+        zephyr,reference = "ADC_REF_INTERNAL";
+        zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+        zephyr,resolution = <12>;
+    };
+
+    channel@1 {
+        reg = <1>;
+        zephyr,gain = "ADC_GAIN_1";
+        zephyr,reference = "ADC_REF_INTERNAL";
+        zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+        zephyr,resolution = <12>;
+    };
+};

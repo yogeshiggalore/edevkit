@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="USB">
+  <title>edevkit USB Book — Part I · Ch 01: Why USB is the way it is</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Part I · Ch 01</span>
+      <span class="grow"></span>
+      <span class="last-verified">Theory · 2026-05-07</span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · part I · ch 01</div>
+    <h1>Why USB is the way it is</h1>
+    <p class="lede">A short history, the one design choice that shapes everything else, and why the API looks the way it does once you know.</p>
+  </header>
+
+<section class="chapter-meta" aria-label="Chapter metadata">
+      <div class="meta-row">
+        <div class="meta-label">You'll learn</div>
+        <div>
+          <ul>
+            <li>Why USB is <em>host-master polled</em>, and what that buys (and costs) you.</li>
+            <li>The version timeline from USB 1.0 to USB4 v2.0, and what's worth remembering about each step.</li>
+            <li>What architecturally changed in SuperSpeed (USB 3.x) — and what stayed identical to USB 2.0.</li>
+            <li>The difference between a frame, a microframe, and a transaction — and why those words appear in error messages.</li>
+            <li>How USB compares to UART, SPI, and I²C in problem-shape, not just speed.</li>
+            <li>Which design choices in USB look weird until you remember it had to scale to 127 devices behind a hub tree.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Prereqs</div>
+        <div>You've used at least one of UART, SPI, or I²C. No prior USB knowledge assumed.</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Sample</div>
+        <div>None — theory only. Chapters 02–04 are also sample-free; the first sample (<code class="sample-link">usb_01_hello_enum</code>) ships with Chapter 05.</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Verified</div>
+        <div>2026-05-07 · concepts apply to USB 1.1 / 2.0 / 3.x / USB4 — they have not changed since 1996.</div>
+      </div>
+    </section>
+
+    <h2>A 90-second history</h2>
+    <p>USB was published in January 1996 by a consortium of seven companies — Compaq, DEC, IBM, Intel, Microsoft, NEC, and Nortel — to solve one problem: <strong>the back of a PC was a mess</strong>. Mice, keyboards, modems, scanners, joysticks, and printers each had their own connector, their own electrical spec, and frequently their own interrupt request line. Adding a new device often required cracking the case open and setting jumpers. Plug-and-play was a slogan, not a fact.</p>
+
+    <p>USB has been revised six times since 1996, almost always to add bandwidth. The descriptor model, transfer types, and control/bulk/interrupt/isochronous categories have barely changed. Code you wrote for a USB 2.0 CDC device in 2002 still enumerates on a USB-C port on a 2025 laptop. Each new revision layered on top of the previous one rather than replacing it: a USB4 host still negotiates down to USB 2.0 for legacy devices, and a USB 3.0 device still has a USB 2.0 fallback path on the same connector.</p>
+
+    <h3>USB versions at a glance</h3>
+    <p>Here's the version map. The right-most column is the current USB-IF user-facing name (in force since the 2022 branding refresh) — that's what you'll see on cable packaging today.</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Version</th><th>Year</th><th>Wire speed</th><th>What it added</th><th>Marketing name (post-2022)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">USB 1.0</td><td>1996</td><td class="hex">1.5 / 12 Mbps</td><td class="meaning">Low-speed (LS) and full-speed (FS); the host-polled architecture established here is still the model in 2026. Rarely shipped — most "USB 1" hardware is actually 1.1.</td><td>—</td></tr>
+        <tr><td class="field">USB 1.1</td><td>1998</td><td class="hex">1.5 / 12 Mbps</td><td class="meaning">Bug-fix release that made 1.0 actually deployable. The iMac G3 (1998) made USB mainstream by shipping it as the only peripheral connector.</td><td>—</td></tr>
+        <tr><td class="field">USB 2.0</td><td>2000</td><td class="hex">480 Mbps</td><td class="meaning">High-speed (HS) added. Same wires, same protocol, faster signalling. Transaction Translators inside HS hubs let LS/FS devices share a bus with HS traffic without slowing it. <strong>This is the level edevkit1 / RP2350 stops at.</strong></td><td>USB 2.0 / "Hi-Speed"</td></tr>
+        <tr><td class="field">USB 3.0</td><td>2008</td><td class="hex">5 Gbps</td><td class="meaning">SuperSpeed (SS). A new <em>parallel</em> physical lane runs alongside D+/D-, with a new link layer. New connectors gained extra contacts (Type-A/B SuperSpeed, Micro-B SuperSpeed). 8b/10b line coding → ~4 Gbps payload.</td><td>USB 5Gbps</td></tr>
+        <tr><td class="field">USB 3.1 Gen 2</td><td>2013</td><td class="hex">10 Gbps</td><td class="meaning">SuperSpeed+ — same lane topology, doubled symbol rate, switched to 128b/132b line coding (~9.7 Gbps payload, much less encoding overhead).</td><td>USB 10Gbps</td></tr>
+        <tr><td class="field">USB 3.2</td><td>2017</td><td class="hex">20 Gbps</td><td class="meaning">Adds a <em>second</em> SuperSpeed lane pair, only on Type-C connectors (Type-A/B physically can't carry the extra pins). Two parallel 10 Gbps lanes = 20 Gbps aggregate.</td><td>USB 20Gbps</td></tr>
+        <tr><td class="field">USB4</td><td>2019</td><td class="hex">20 / 40 Gbps</td><td class="meaning">New stack derived from Thunderbolt 3 (Intel donated the spec). Type-C only. Tunnels DisplayPort, PCIe, and USB 3.x over a single unified link with dynamic bandwidth allocation.</td><td>USB 20Gbps / USB 40Gbps</td></tr>
+        <tr><td class="field">USB4 v2.0</td><td>2022</td><td class="hex">80 Gbps (asym 120/40)</td><td class="meaning">PAM-3 signalling on the same Type-C cables. Optional asymmetric mode pushes 120 Gbps one way / 40 Gbps the other — designed for high-resolution displays.</td><td>USB 80Gbps</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <div class="callout-title">Naming has been renamed twice — same connector, three names</div>
+      <p>USB 3.0 was retroactively renamed "USB 3.1 Gen 1" when 3.1 was published in 2013, then renamed again to "USB 3.2 Gen 1×1" when 3.2 came out in 2017. All three names refer to the same 5 Gbps single-lane SuperSpeed link. Since the 2022 branding refresh the official user-facing name is just <strong>USB 5Gbps</strong> and the Gen-numbers are deprecated. When vendor docs say "USB 3.x", mentally substitute "any version of SuperSpeed" — it almost never matters which sub-revision.</p>
+    </div>
+
+    <h3>What changed in SuperSpeed (USB 3.x), and what didn't</h3>
+    <p>SuperSpeed is the biggest architectural break in USB's history. We don't implement any of it on edevkit1 (the RP2350 has no SS PHY), but it's worth knowing what's different because it changes what "USB" means on a modern host:</p>
+
+    <ul>
+      <li><strong>A second physical lane, in parallel.</strong> SuperSpeed adds a TX/RX differential-pair set <em>alongside</em> D+/D-, not in place of them. A USB 3.0 cable carries VBUS, GND, D+, D-, <em>plus</em> SS_TX± and SS_RX±. A USB 2.0 device plugged into a SS port simply uses the original four wires; a USB 3.0 device uses both sets simultaneously and the host links to it at the higher speed.</li>
+      <li><strong>Full duplex.</strong> USB 2.0 is half-duplex on a single shared pair — host and device take turns. SuperSpeed has dedicated TX and RX pairs, so host and device can transmit at the same time. Effective bidirectional throughput is roughly doubled even before counting the raw speed bump.</li>
+      <li><strong>Polling goes away.</strong> The biggest departure from the model in this chapter. In USB 2.0 the host polls each endpoint every frame and an idle device replies NAK over and over (Wireshark traces are full of them). In SuperSpeed the device sends an <em>Endpoint Ready</em> notification when it has data, and the host services it on demand. No NAK storms, far less idle bus traffic, and devices can sleep through long idle periods. The "host is a polite tyrant" mental model softens here — still host-led, but conversational rather than interrogative.</li>
+      <li><strong>Explicit link power states (U0–U3).</strong> Instead of USB 2.0's binary "active vs suspend", SuperSpeed has four negotiated link states: <code>U0</code> (active), <code>U1</code> (standby, fast wake), <code>U2</code> (sleep, slower wake), <code>U3</code> (suspend). Hosts and devices step between them automatically — drives can spin down between transfers without requiring an OS-level suspend.</li>
+      <li><strong>Different line coding.</strong> 8b/10b at 5 Gbps on USB 3.0 (so ~4 Gbps of payload after encoding overhead). 128b/132b at 10 Gbps on USB 3.1 Gen 2 (~9.7 Gbps payload). Encoding efficiency improves at each generation while keeping enough transitions for clock recovery.</li>
+      <li><strong>Separate PHY required on each end.</strong> A SuperSpeed host or device needs an additional SerDes — you can't bit-bang it out of a regular MCU peripheral or even a PIO state machine. RP2350 has no SS PHY, which is why edevkit1 is firmly USB 2.0 full-speed and our highest expectation is 12 Mbps on the wire.</li>
+      <li><strong>What stayed the same.</strong> Descriptors, the four transfer types, class codes, VID/PID matching, the enumeration sequence — all unchanged. A SuperSpeed-capable device has the same descriptor tree as its USB 2.0 ancestor, with one extra <code>SuperSpeed Endpoint Companion</code> descriptor per endpoint that adds fields like <code>bMaxBurstSize</code>. This is why the rest of this book applies regardless of which USB speed your device ends up negotiating.</li>
+    </ul>
+
+    <div class="callout info">
+      <div class="callout-title">Scope of this book</div>
+      <p>The edevkit1 hardware is RP2350B, which exposes a <strong>USB 2.0 full-speed</strong> peripheral (12 Mbps). Everything in Parts I–VII applies to FS and HS identically. SuperSpeed-specific topics (the second lane, U-states, Endpoint Ready notifications, the SS Endpoint Companion descriptor) we cover only to the depth of the bullets above — relevant for understanding modern hosts, not for implementing on RP2350.</p>
+    </div>
+
+    <h2>The one design choice that shapes everything else</h2>
+    <p>USB is <strong>host-master polled</strong>. There is exactly one host on a bus, and the host initiates every single transaction. Devices never speak unless asked. Even an interrupt-style transfer — say, a HID keyboard reporting a key-press — works by the host periodically asking <em>"do you have data for me?"</em> and the device answering yes/no.</p>
+
+    <p>This is the opposite of how USB <em>feels</em> when you write firmware for it. You think you're writing "send a key code." You're really filling a buffer that the next time the host polls, will be drained. The host's polling cadence determines your latency, not your code.</p>
+
+    <p>Compare this to the protocols you already know:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Protocol</th><th>Topology</th><th>Who initiates</th><th>Latency model</th><th>Hot-plug</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>UART</td><td>Two parties, no arbiter</td><td>Either side, anytime</td><td>Send-and-pray; framing on bytes</td><td>Tolerated, not detected</td></tr>
+        <tr><td>SPI</td><td>1 master, N slaves via CS</td><td>Master only</td><td>Bounded by SCK</td><td>None</td></tr>
+        <tr><td>I²C</td><td>Multi-master bus</td><td>Whichever wins arbitration</td><td>Variable; clock-stretching allowed</td><td>None</td></tr>
+        <tr><td><strong>USB</strong></td><td>Tree under one root host</td><td>Host always</td><td>Bounded by host's polling interval</td><td>First-class — bus reset + re-enum</td></tr>
+      </tbody>
+    </table>
+
+    <p>That last column is the one that drove almost every USB design decision. If you want a user to plug a device in mid-session and have it work without reboots, drivers, or address conflicts, you need:</p>
+
+    <ul>
+      <li>A way to detect a device appeared (electrical signaling on D+/D-).</li>
+      <li>A way to assign it an address dynamically, without conflict (host hands one out).</li>
+      <li>A way for the device to describe itself (descriptors).</li>
+      <li>A way for the OS to figure out which driver to load (class codes + VID/PID).</li>
+      <li>A way for the host to police the bus so a misbehaving device cannot wedge it (polled — devices can't initiate).</li>
+    </ul>
+
+    <p>Every USB descriptor, every standard control request, every "why is this so verbose?" moment in your firmware traces back to that list.</p>
+
+    <h2>The host polling loop</h2>
+    <p>The host doesn't poll continuously — that would saturate the bus. Instead, time on the wire is sliced into <strong>frames</strong>:</p>
+
+    <ul>
+      <li><strong>Full-speed (12 Mbps):</strong> 1 ms per frame. Frame number increments. Each frame begins with a Start-of-Frame (SOF) packet.</li>
+      <li><strong>High-speed (480 Mbps):</strong> still 1 ms frames, but each is divided into 8 <strong>microframes</strong> of 125 µs.</li>
+      <li><strong>SuperSpeed (5 Gbps+):</strong> different structure — bus intervals replace frames. Out of scope here.</li>
+    </ul>
+
+    <p>Within a frame, the host schedules transactions in priority order: control transfers and isochronous endpoints get reserved bandwidth first, interrupt endpoints get scheduled at their requested polling interval, then bulk transfers fight for whatever's left. This is why a misbehaving device can't starve a HID keyboard — the keyboard's interrupt slot is reserved.</p>
+
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+  participant H as Host
+  participant D as Device
+
+  Note over H,D: Frame N (1 ms boundary)
+  H->>D: SOF (frame N)
+  H->>D: IN token (endpoint 1, interrupt poll)
+  D-->>H: NAK (no data ready)
+  H->>D: OUT token (endpoint 2, bulk write)
+  H->>D: DATA (64 bytes)
+  D-->>H: ACK
+  H->>D: IN token (endpoint 3, bulk read)
+  D-->>H: DATA (64 bytes)
+  H->>D: ACK
+  Note over H,D: Frame N+1 (1 ms later)
+  H->>D: SOF (frame N+1)
+      </pre>
+    </div>
+
+    <p>Three things to notice in that picture:</p>
+    <ol>
+      <li><strong>Every transaction is host-led.</strong> Even when the device "sends" data on an IN endpoint, the host sent the IN token first; the device merely answered.</li>
+      <li><strong>NAK is normal, not an error.</strong> "I don't have data for you yet" is a perfectly valid response and the host will simply ask again next frame. (Hard errors are different: a USB host retries a failed transmission up to <strong>3 times</strong> before reporting the failure to client software — §4.5.2.)</li>
+      <li><strong>Multiple endpoints share one frame.</strong> A single device can have a dozen logical "channels" (endpoints) interleaved across frames. We'll cover endpoint addressing in Chapter 06.</li>
+    </ol>
+
+    <h2>Why this design pays off</h2>
+
+    <h3>Hot-plug works</h3>
+    <p>Because the host owns the bus, it owns address assignment. New device shows up → host detects it (D+ or D- pull-up appearing), runs through enumeration, hands it an address from a pool. No driver-side coordination, no conflict, no reboot. We'll walk byte-by-byte through enumeration in Chapter 05.</p>
+
+    <h3>Power management works</h3>
+    <p>Devices declare their power needs (<code>bMaxPower</code> in the configuration descriptor). The host can refuse to enable a configuration that exceeds the budget. The host can also tell a device to suspend (cut to ≤ 2.5 mA / 500 µA depending on era), and the device has to obey. The user pulling out a phone charger from a hub doesn't crash the rest of the bus.</p>
+
+    <h3>Driver matching works</h3>
+    <p>Class codes (e.g. 0x03 = HID, 0x09 = Hub, 0x0A = CDC-Data) are part of the descriptor tree. The OS reads the descriptors during enumeration and matches against the class-driver registry. A vendor-specific device can additionally pin itself to a specific driver via VID/PID in the device descriptor or, on Windows, via Microsoft OS 2.0 descriptors (Chapter 09). Either way, the OS doesn't need to ask the device <em>"what are you?"</em> — the device already told it.</p>
+
+    <h3>One bus, 127 devices, seven tiers</h3>
+    <p>Address field is 7 bits, so 127 devices can be on a single bus tree (address 0 is reserved for "newly attached, not yet addressed"). Hubs are themselves USB devices that proxy traffic — the host sees through them. From a firmware author's perspective, the hub topology is invisible: you write code as if you're the only device.</p>
+    <p>Two architectural limits are worth knowing (USB 2.0 §4.1.1):</p>
+    <ul>
+      <li><strong>Maximum 7 tiers including the root</strong> — i.e. up to 5 chained hubs between the host and the deepest device. Beyond that, propagation delays violate the protocol's timing budget.</li>
+      <li><strong>Compound devices occupy two tiers</strong> (an embedded hub plus its function on one cable), so they cannot be enabled if attached at tier 7. Only standalone functions can live at the bottom of the tree.</li>
+    </ul>
+
+    <h3>Mixed-speed devices don't slow the bus</h3>
+    <p>A USB 2.0 high-speed hub contains a <strong>Transaction Translator</strong> (TT). When a low- or full-speed device is plugged into an HS hub, the host talks to the hub at 480 Mbps and the hub talks to the slow device at its native rate. Slow traffic stays "behind" the hub instead of monopolizing the bus all the way up to the host. From the device-firmware perspective this is invisible — you don't know whether you're connected directly or through a TT — but knowing the mechanism explains why a USB 1.1 mouse plugged into a modern laptop doesn't kill HS throughput on the same root port. (For a real-world failure mode TTs cause, see <a href="../appendix/troubleshooting.html#cascaded-hubs">appendix → troubleshooting</a>.)</p>
+
+    <h2>What this design makes hard</h2>
+
+    <h3>Latency floor</h3>
+    <p>If you want a device to react to an external event in &lt; 1 ms, USB FS is the wrong protocol. The host won't poll your interrupt endpoint more often than once per frame. HS gets you down to 125 µs, but it's still floored by the host's microframe scheduler. For sub-microsecond reactions, you need an out-of-band signal (GPIO, SWO trace, dedicated wire). edevkit1's CMSIS-DAP probe is fine — debug-step latencies are dominated by SWD timing, not USB. A real-time control loop running over USB CDC, however, will disappoint you.</p>
+
+    <h3>Peer-to-peer is impossible</h3>
+    <p>Two USB devices cannot talk to each other directly. They must talk through a host. USB On-The-Go (OTG) and USB Dual-Role-Device (DRD) work by letting one party <em>become</em> the host temporarily, but at any given moment there is still exactly one host. The RP2350 used here is device-only; it cannot host. (USB hosts are doable on RP2040/RP2350 with PIO — see <code>pico-pio-usb</code> — but we're not building one.)</p>
+
+    <h3>Verbosity</h3>
+    <p>A bare-minimum USB device that does nothing useful still has to: respond to enumeration, expose a device descriptor (18 bytes), a configuration descriptor with at least one interface (≥ 18 bytes more), at least three string descriptors (manufacturer, product, serial), and answer standard control requests. That's a few hundred bytes of read-only structure before your first byte of payload. SPI, by contrast, is "wiggle these pins."</p>
+
+    <h3>Driver requirements</h3>
+    <p>An I²C sensor works the moment its data sheet's MCU-side driver is implemented. A USB device may need a host-side driver to be loaded — and on Windows, that historically meant signed <code>.inf</code> files. Microsoft OS 2.0 descriptors (Chapter 23) let modern devices skip the <code>.inf</code> by binding to WinUSB at enumeration time, but the friction is real.</p>
+
+    <h2>How to think about USB going forward</h2>
+
+    <p>The mental model that helps most:</p>
+    <p style="font-style: italic; padding-left: 24px; border-left: 3px solid var(--brand);">
+      <strong>The host is a polite tyrant.</strong> It owns the bus, runs the schedule, hands out addresses, polices misbehavior. Your device is a well-described mailbox the host visits on a fixed schedule. Most of "USB programming" is making sure your descriptors describe yourself accurately enough that the host knows when and how to visit, and that your endpoint buffers are ready when it arrives.
+    </p>
+
+    <p>Once that frame is in your head, the API stops looking weird. Of course you have to declare your maximum packet size — the host needs to know how much to ask for. Of course you can't just push data out — the host has to ask first. Of course descriptors are static — the host caches them.</p>
+
+    <p>Concretely, every chapter from here on builds on this foundation:</p>
+    <ul>
+      <li><strong>Chapter 02</strong> goes one layer down: the wire, the encoding, what D+/D- are doing.</li>
+      <li><strong>Chapter 03</strong> goes one layer up: the packets that ride that wire, and the framing rules.</li>
+      <li><strong>Chapter 04</strong> covers the four transfer types and which problem each is designed for.</li>
+      <li><strong>Chapter 05</strong> walks the full enumeration sequence byte by byte — the moment your device first announces itself to the world. By the time you finish Chapter 05, you'll have <code>usb_01_hello_enum</code> running and recognize every descriptor byte the host is reading from your firmware.</li>
+    </ul>
+
+    <h2>Common pitfalls</h2>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"My device sends data but the host never sees it."</strong> You can't <em>send</em>. You can only <em>have data ready when polled</em>. If your code is conceptually <code>usb_send(buf)</code> and you expect the bytes to leave immediately, you'll be confused by latency that depends on poll interval and bus load. Re-frame: <code>usb_buffer_for_next_poll(buf)</code>.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"I see a flood of NAKs in Wireshark and assume it's broken."</strong> NAK is the normal "no data this poll, try again later" response on IN endpoints. Wireshark just shows them more visibly than other captures. Look at the rate, not the presence — sustained 100% NAK rate on an endpoint that should have data is a bug; intermittent NAKs are correct behavior.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"I expected 1 ms latency on a CDC port and got 8 ms."</strong> Bulk endpoints don't have guaranteed scheduling. The host may aggregate transfers and only get to your bulk-IN once it has a free slot. If you need bounded latency, use an interrupt endpoint and accept its lower throughput. We'll quantify this in Chapter 04.</p>
+    </div>
+
+    <h2>Going deeper</h2>
+    <ul>
+      <li>Universal Serial Bus Specification, Revision 2.0 (April 2000) — chapter 4 (Architectural Overview) is the canonical version of this chapter, less opinionated. <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a>.</li>
+      <li>USB 3.2 Specification, Revision 1.1 (June 2022) — the consolidated SuperSpeed spec; chapter 3 (Architectural Overview) is the SS counterpart to USB 2.0 ch 4 and explains the dual-lane model in proper detail. <a href="https://www.usb.org/document-library/usb-32-specification-released-june-2022-and-ecns">usb.org</a>.</li>
+      <li>USB4 Specification, Version 2.0 — only worth opening if you need to understand the Thunderbolt-derived stack. <a href="https://www.usb.org/document-library/usb4r-specification">usb.org</a>.</li>
+      <li>USB-IF SuperSpeed Branding Guide (2022) — the document that retired the "Gen 1×1" naming in favour of "USB 5/10/20Gbps". Useful when decoding old vendor docs. <a href="https://www.usb.org/document-library/usb-performance-branding-and-packaging-specification">usb.org</a>.</li>
+      <li>Jan Axelson, <em>USB Complete</em>, 5th ed. — the classic reader-friendly companion. Worth keeping on the desk.</li>
+      <li><a href="https://www.beyondlogic.org/usbnutshell/usb1.shtml">USB in a NutShell</a> — free online primer; light on USB-C and modern descriptors but accurate on the fundamentals.</li>
+    </ul>
+
+    <nav class="chapter-nav" aria-label="Chapter navigation">
+      <a class="prev placeholder" href="#"><div class="nav-label">← Previous</div><div class="nav-title">—</div></a>
+      <a class="next" href="02_electrical.html">
+        <div class="nav-label">Next →</div>
+        <div class="nav-title">Ch 02: Electrical layer &amp; USB-C basics</div>
+      </a>
+    </nav>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

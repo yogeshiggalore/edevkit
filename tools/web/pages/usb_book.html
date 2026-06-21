@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="A hands-on guide to USB on Zephyr — 24 generic samples paired with chapters covering enumeration, descriptors, standard classes, composite devices, WinUSB/MS OS 2.0, performance, and debugging.">
+  <title>edevkit — USB Book</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/docs/usb/_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/" title="Back to docs hub">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> edevkit</span>
+      </a>
+      <span class="doc-tag">USB Book</span>
+      <span class="grow"></span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+    <header class="hero landing">
+      <div class="eyebrow">edevkit · learn by sample</div>
+      <h1>The USB Book</h1>
+      <p class="lede">A hands-on guide to USB on Zephyr. Twenty-four progressively harder samples, each paired with a chapter that explains what's happening on the wire — from your first enumerated descriptor to a multi-class composite vendor device with WinUSB binding.</p>
+      <div class="hero-stats">
+        <span><strong>8</strong> Parts</span>
+        <span><strong>30+</strong> Chapters</span>
+        <span><strong>24</strong> Samples</span>
+        <span><strong>RP2350B</strong> · Zephyr 4.x</span>
+      </div>
+    </header>
+
+    <div class="landing-sidelinks">
+      <a href="/docs/usb/matrix.html">Chapter ↔ sample matrix</a>
+      <a href="/docs/usb/appendix/glossary.html">Glossary</a>
+      <a href="/docs/usb/appendix/cheatsheet.html">Cheatsheet</a>
+      <a href="/docs/usb/appendix/troubleshooting.html">Troubleshooting</a>
+      <a href="/docs/usb/appendix/stack_comparison.html">Stack comparison</a>
+    </div>
+
+    <h2>How to use this book</h2>
+    <div class="how-grid">
+      <div class="how-card">
+        <div class="step">1</div>
+        <h3>Read the chapter</h3>
+        <p>Each chapter is self-contained: concept exposition, byte-level breakdowns, diagrams. Theory chapters in Part I have no sample — start there if you've never enumerated a USB device.</p>
+      </div>
+      <div class="how-card">
+        <div class="step">2</div>
+        <h3>Build the paired sample</h3>
+        <p>From Part II onward every chapter has a sample under <code>firmware/samples/usb/usb_NN_*/</code>. Build, flash, plug in.</p>
+      </div>
+      <div class="how-card">
+        <div class="step">3</div>
+        <h3>Verify on your OS</h3>
+        <p>Each chapter ships exact verification commands for Linux, macOS, and Windows. If they don't all work, the chapter fails its quality bar — file an issue.</p>
+      </div>
+      <div class="how-card">
+        <div class="step">4</div>
+        <h3>Hit the pitfalls section</h3>
+        <p>The mistakes other people made writing this code, condensed. Read these before debugging — they save hours.</p>
+      </div>
+    </div>
+
+    <h2>Contents</h2>
+    <div class="legend parts-legend">
+      <span class="ready"><span class="dot"></span>Written</span>
+      <span class="pending"><span class="dot"></span>Pending</span>
+    </div>
+
+    <div class="parts">
+
+      <section class="part-card">
+        <div class="part-header">
+          <span class="part-num">Part I</span>
+          <h3 class="part-title">USB from first principles</h3>
+          <span class="part-summary">Theory · no samples</span>
+        </div>
+        <div class="chapters">
+          <a class="ch" href="/docs/usb/partI/01_why_usb.html"><span class="num">01</span><span class="title">Why USB is the way it is</span><span class="pair">—</span></a>
+          <a class="ch" href="/docs/usb/partI/02_electrical.html"><span class="num">02</span><span class="title">Electrical layer &amp; USB-C basics</span><span class="pair">—</span></a>
+          <a class="ch" href="/docs/usb/partI/03_packets.html"><span class="num">03</span><span class="title">Packets &amp; framing</span><span class="pair">—</span></a>
+          <a class="ch" href="/docs/usb/partI/04_transfer_types.html"><span class="num">04</span><span class="title">Transfer types</span><span class="pair">—</span></a>
+          <a class="ch" href="/docs/usb/partI/05_enumeration.html"><span class="num">05</span><span class="title">Enumeration walkthrough</span><span class="pair">→ usb_01</span></a>
+        </div>
+      </section>
+
+      <section class="part-card">
+        <div class="part-header">
+          <span class="part-num">Part II</span>
+          <h3 class="part-title">Descriptors, the language of USB</h3>
+          <span class="part-summary">Tier 0 · usb_01..04</span>
+        </div>
+        <div class="chapters">
+          <a class="ch" href="/docs/usb/partII/06_descriptors.html"><span class="num">06</span><span class="title">Device, configuration, interface, endpoint</span><span class="pair">→ usb_02</span></a>
+          <a class="ch" href="/docs/usb/partII/07_strings.html"><span class="num">07</span><span class="title">String descriptors &amp; per-unit identity</span><span class="pair">→ usb_03</span></a>
+          <a class="ch" href="/docs/usb/partII/08_control_transfers.html"><span class="num">08</span><span class="title">Control transfers in depth</span><span class="pair">→ usb_04</span></a>
+          <span class="ch unwritten"><span class="num">09</span><span class="title">BOS, platform capability, MS OS 2.0</span><span class="pair">→ usb_25</span></span>
+        </div>
+      </section>
+
+      <section class="part-card">
+        <div class="part-header">
+          <span class="part-num">Part III</span>
+          <h3 class="part-title">Zephyr USB-Device-Next</h3>
+          <span class="part-summary">stack architecture</span>
+        </div>
+        <div class="chapters">
+          <span class="ch unwritten"><span class="num">10</span><span class="title">Why next, not legacy</span><span class="pair">—</span></span>
+          <span class="ch unwritten"><span class="num">11</span><span class="title">Devicetree bindings &amp; Kconfig</span><span class="pair">—</span></span>
+          <span class="ch unwritten"><span class="num">12</span><span class="title">Writing a class driver</span><span class="pair">—</span></span>
+          <span class="ch unwritten"><span class="num">13</span><span class="title">Endpoint buffers, MPS, ZLPs</span><span class="pair">—</span></span>
+          <a class="ch" href="/docs/usb/partIII/14_rp2350_usb.html"><span class="num">14</span><span class="title">Inside RP2350 — the USB hardware subsystem</span><span class="pair">—</span></a>
+        </div>
+      </section>
+
+      <section class="part-card">
+        <div class="part-header">
+          <span class="part-num">Part IV</span>
+          <h3 class="part-title">Standard classes by example</h3>
+          <span class="part-summary">Tier 1 · usb_10..15</span>
+        </div>
+        <div class="chapters">
+          <a class="ch" href="/docs/usb/partIV/15_cdc_acm.html"><span class="num">15</span><span class="title">CDC ACM</span><span class="pair">→ usb_10, usb_11</span></a>
+          <span class="ch unwritten"><span class="num">16</span><span class="title">HID — boot vs report</span><span class="pair">→ usb_12, usb_13</span></span>
+          <span class="ch unwritten"><span class="num">17</span><span class="title">HID generic / raw reports</span><span class="pair">→ usb_14</span></span>
+          <span class="ch unwritten"><span class="num">18</span><span class="title">Mass Storage (BBB)</span><span class="pair">→ usb_15</span></span>
+        </div>
+      </section>
+
+      <section class="part-card">
+        <div class="part-header">
+          <span class="part-num">Part V</span>
+          <h3 class="part-title">Composite, vendor, driverless</h3>
+          <span class="part-summary">Tier 2 · usb_20..26</span>
+        </div>
+        <div class="chapters">
+          <span class="ch unwritten"><span class="num">19</span><span class="title">Interface Association Descriptors</span><span class="pair">→ usb_20</span></span>
+          <span class="ch unwritten"><span class="num">20</span><span class="title">CDC + HID composite</span><span class="pair">→ usb_21</span></span>
+          <span class="ch unwritten"><span class="num">21</span><span class="title">Vendor-specific class</span><span class="pair">→ usb_22</span></span>
+          <span class="ch unwritten"><span class="num">22</span><span class="title">WinUSB / WCID — older mechanism</span><span class="pair">→ usb_23</span></span>
+          <span class="ch unwritten"><span class="num">23</span><span class="title">BOS + MS OS 2.0 — modern driverless</span><span class="pair">→ usb_24</span></span>
+          <span class="ch unwritten"><span class="num">24</span><span class="title">Multi-bulk-IN vendor device</span><span class="pair">→ usb_25</span></span>
+          <span class="ch unwritten"><span class="num">25</span><span class="title">Isochronous endpoints (audio-lite)</span><span class="pair">→ usb_26</span></span>
+        </div>
+      </section>
+
+      <section class="part-card">
+        <div class="part-header">
+          <span class="part-num">Part VI</span>
+          <h3 class="part-title">Performance</h3>
+          <span class="part-summary">Tier 3 · usb_30..35</span>
+        </div>
+        <div class="chapters">
+          <span class="ch unwritten"><span class="num">26</span><span class="title">Throughput math &amp; back-pressure</span><span class="pair">→ usb_30</span></span>
+          <span class="ch unwritten"><span class="num">27</span><span class="title">Ring buffers &amp; zero-copy on RP2350</span><span class="pair">→ usb_30</span></span>
+          <span class="ch unwritten"><span class="num">28</span><span class="title">Latency, polling intervals, NAK handling</span><span class="pair">→ usb_30</span></span>
+        </div>
+      </section>
+
+      <section class="part-card">
+        <div class="part-header">
+          <span class="part-num">Part VII</span>
+          <h3 class="part-title">Putting it together — multi-class composite vendor device</h3>
+          <span class="part-summary">cross-cutting</span>
+        </div>
+        <div class="chapters">
+          <span class="ch unwritten"><span class="num">29</span><span class="title">Designing the topology</span><span class="pair">—</span></span>
+          <span class="ch unwritten"><span class="num">30</span><span class="title">Coexisting classes without endpoint clashes</span><span class="pair">—</span></span>
+          <span class="ch unwritten"><span class="num">31</span><span class="title">DFU, suspend/wake, alt settings, multi-config</span><span class="pair">→ usb_31..35</span></span>
+        </div>
+      </section>
+
+      <section class="part-card">
+        <div class="part-header">
+          <span class="part-num">Part VIII</span>
+          <h3 class="part-title">Debugging &amp; tools</h3>
+          <span class="part-summary">Tier 4 · usb_40..42</span>
+        </div>
+        <div class="chapters">
+          <span class="ch unwritten"><span class="num">32</span><span class="title">Wireshark, USBPcap, usbmon, lsusb</span><span class="pair">→ usb_42</span></span>
+          <span class="ch unwritten"><span class="num">33</span><span class="title">Common bugs: ZLP, MPS, recursive descriptors, IAD</span><span class="pair">→ usb_40, usb_41</span></span>
+          <span class="ch unwritten"><span class="num">34</span><span class="title">edevkit-usbtest harness</span><span class="pair">—</span></span>
+        </div>
+      </section>
+
+    </div>
+
+    <p class="part-end-note" style="text-align:center;">
+      Last updated 2026-05-06 · Phase 0 + Part I shipped · samples in progress
+    </p>
+
+  </div>
+
+  <script src="/docs/usb/_assets/book.js" defer></script>
+</body>
+</html>

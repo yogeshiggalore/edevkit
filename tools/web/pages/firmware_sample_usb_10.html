@@ -1,0 +1,973 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Design + code-flow specification for usb_10_cdc_acm_echo — the first sample to expose a standard USB class (CDC ACM Abstract Control Model). Walks the descriptor tree the Zephyr class auto-generates, the DTR gate, RX→TX echo path, and three-OS verification.">
+  <title>edevkit — Firmware · usb_10 design + code flow</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --brand: oklch(56% 0.16 215); --brand-2: oklch(50% 0.18 235);
+    --brand-soft: oklch(94% 0.04 215); --brand-fg: oklch(99% 0.005 215);
+    --accent: oklch(72% 0.15 70); --accent-soft: oklch(95% 0.05 70);
+    --good: oklch(58% 0.14 145); --good-soft: oklch(94% 0.05 145);
+    --warn: oklch(72% 0.16 80); --warn-soft: oklch(95% 0.07 80);
+    --danger: oklch(56% 0.20 28); --danger-soft: oklch(95% 0.05 28);
+
+    --bg: oklch(99.2% 0.003 240); --bg-soft: oklch(97% 0.005 240);
+    --bg-elev: oklch(100% 0 0);
+    --line: oklch(91% 0.012 240); --line-soft: oklch(94.5% 0.008 240);
+    --line-strong: oklch(85% 0.014 240);
+    --grid-dot: oklch(0% 0 0 / .055);
+    --code-bg: oklch(96.5% 0.007 240); --code-border: oklch(91% 0.012 240);
+    --fg: oklch(20% 0.02 240); --fg-2: oklch(36% 0.02 240);
+    --muted: oklch(50% 0.02 240); --faint: oklch(64% 0.015 240);
+
+    --r-2: 6px; --r-3: 10px; --r-pill: 999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --ease: cubic-bezier(.2, 0, 0, 1); --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+      --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+      --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+      --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+      --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+      --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+      --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+      --bg-elev: oklch(20% 0.018 240);
+      --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+      --line-strong: oklch(35% 0.022 240);
+      --grid-dot: oklch(100% 0 0 / .05);
+      --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+      --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+      --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand: oklch(72% 0.15 215); --brand-2: oklch(66% 0.16 235);
+    --brand-soft: oklch(28% 0.07 215); --brand-fg: oklch(15% 0.02 240);
+    --accent: oklch(80% 0.15 70); --accent-soft: oklch(28% 0.06 70);
+    --good: oklch(72% 0.16 145); --good-soft: oklch(28% 0.06 145);
+    --warn: oklch(82% 0.16 80); --warn-soft: oklch(28% 0.06 80);
+    --danger: oklch(70% 0.20 28); --danger-soft: oklch(28% 0.06 28);
+    --bg: oklch(13% 0.012 240); --bg-soft: oklch(17% 0.015 240);
+    --bg-elev: oklch(20% 0.018 240);
+    --line: oklch(28% 0.018 240); --line-soft: oklch(23% 0.014 240);
+    --line-strong: oklch(35% 0.022 240);
+    --grid-dot: oklch(100% 0 0 / .05);
+    --code-bg: oklch(15% 0.012 240); --code-border: oklch(28% 0.018 240);
+    --fg: oklch(95% 0.008 240); --fg-2: oklch(82% 0.012 240);
+    --muted: oklch(68% 0.014 240); --faint: oklch(52% 0.016 240);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-text); font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg); min-height: 100dvh;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px; background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1080px; margin: 0 auto; padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none; font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600; color: var(--fg-2);
+    padding: 6px 10px; border-radius: var(--r-2);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .doc-tag {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--faint); padding: 4px 10px;
+    border-radius: var(--r-pill); background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .grow { flex: 1; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 28px 96px; }
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px; margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted);
+    padding: 5px 11px; background: var(--bg-soft);
+    border: 1px solid var(--line); border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+  header.hero h1 {
+    font-family: var(--font-sans); font-size: 38px; line-height: 1.15;
+    margin: 18px 0 12px; letter-spacing: -0.02em; font-weight: 700;
+  }
+  header.hero .lede {
+    font-size: 18px; line-height: 1.55; color: var(--fg-2); max-width: 720px;
+  }
+
+  h2 {
+    font-family: var(--font-sans); font-size: 24px;
+    margin-top: 56px; margin-bottom: 14px;
+    letter-spacing: -0.018em; font-weight: 700;
+    padding-bottom: 6px; border-bottom: 1px solid var(--line-soft);
+  }
+  h3 {
+    font-family: var(--font-sans); font-size: 19px;
+    margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-family: var(--font-mono); font-size: 12px;
+    margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  strong { font-weight: 600; }
+
+  code, pre, .mono { font-family: var(--font-mono); }
+  :not(pre) > code {
+    background: var(--code-bg); padding: 1px 6px;
+    border-radius: 4px; font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--code-border);
+    border-radius: var(--r-3); padding: 14px 16px;
+    overflow-x: auto; font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+  .file-label {
+    display: inline-block; font-family: var(--font-mono); font-size: 11px;
+    font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--brand); background: var(--brand-soft);
+    padding: 4px 10px; border-radius: var(--r-pill);
+    border: 1px solid color-mix(in oklch, var(--brand) 30%, transparent);
+    margin: 18px 0 -6px;
+  }
+
+  .callout {
+    margin: 18px 0; padding: 14px 18px; border-radius: var(--r-3);
+    background: var(--bg-soft); border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.info    { background: var(--brand-soft);  border-left-color: var(--brand); }
+  .callout.warn    { background: var(--warn-soft);   border-left-color: var(--warn); }
+  .callout.good    { background: var(--good-soft);   border-left-color: var(--good); }
+  .callout.danger  { background: var(--danger-soft); border-left-color: var(--danger); }
+  .callout-title {
+    display: inline-block; font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--fg-2); margin-bottom: 4px;
+  }
+
+  .toc {
+    background: var(--bg-soft); border: 1px solid var(--line);
+    border-radius: var(--r-3); padding: 16px 22px; margin-bottom: 36px;
+  }
+  .toc-title {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 3px 0; }
+
+  table {
+    border-collapse: collapse; width: 100%; margin: 14px 0;
+    font-size: 14.5px;
+  }
+  th, td {
+    border: 1px solid var(--line); padding: 7px 11px;
+    text-align: left; vertical-align: top;
+  }
+  th {
+    background: var(--bg-soft); font-family: var(--font-sans);
+    font-weight: 600; font-size: 13.5px;
+  }
+  td.hex   { font-family: var(--font-mono); color: var(--brand-2); white-space: nowrap; }
+  td.field { font-family: var(--font-mono); font-weight: 600; white-space: nowrap; }
+
+  ul, ol { padding-left: 24px; }
+  li { margin: 3px 0; }
+  li > p:first-child { margin-top: 0; }
+  li > p:last-child  { margin-bottom: 0; }
+
+  .credits {
+    margin-top: 56px; padding: 18px 22px;
+    background: var(--bg-soft); border: 1px solid var(--line);
+    border-radius: var(--r-3); font-size: 12px; line-height: 1.55;
+    color: var(--fg-2);
+  }
+  .credits strong { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" title="Back to docs hub">
+      <span aria-hidden="true">←</span> edevkit
+    </a>
+    <span class="doc-tag">Firmware · usb_10 design</span>
+    <span class="grow"></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · firmware · USB sample design doc</div>
+  <h1>usb_10 — CDC ACM echo (your first real I/O)</h1>
+  <p class="lede">Design + code-flow spec for the first edevkit USB sample that does <strong>real bidirectional data transfer</strong>. usb_02–04 only ever moved bytes on EP0 (descriptor reads, vendor commands). usb_10 brings the bulk pair to life via Zephyr's bundled CDC ACM class — the host's OS auto-loads <code>cdc_acm</code> / <code>AppleUSBCDCACMData</code> / <code>usbser.sys</code>, a <code>ttyACMx</code> / <code>cu.usbmodemX</code> / <code>COMn</code> node appears, and any terminal program can talk to the device. This is the canonical first-byte-of-data sample.</p>
+</header>
+
+<div class="callout info">
+  <div class="callout-title">Authoring status — sample not yet built, doc is the locking spec</div>
+  <p>This document is the design-locking spec for <code>firmware/samples/usb/usb_10/</code>. <strong>You</strong> are writing the code from this doc; the doc gives function signatures, data-flow diagrams, prj.conf / overlay / CMakeLists details, the descriptor tree the Zephyr class will emit, and the boot/runtime state machine — everything except the literal C bodies. Pairs with <a href="/docs/usb/partIV/15_cdc_acm.html">USB Book Ch 15 — CDC ACM</a> for the wire-shape theory. Every API claim has been verified against Zephyr 4.4 source on 2026-05-13 (<code>subsys/usb/device_next/class/usbd_cdc_acm.c</code>, <code>include/zephyr/usb/class/usb_cdc.h</code>, <code>include/zephyr/usb/usbd_msg.h</code>, <code>dts/bindings/serial/zephyr,cdc-acm-uart.yaml</code>, <code>samples/subsys/usb/cdc_acm/</code>).</p>
+</div>
+
+<div class="toc">
+  <div class="toc-title">Sections</div>
+  <ol>
+    <li><a href="#goal">Goal &amp; scope</a></li>
+    <li><a href="#delta">What changes vs usb_04</a></li>
+    <li><a href="#descriptor-tree">The descriptor tree Zephyr will emit (byte-by-byte)</a></li>
+    <li><a href="#enum-traffic">EP0 traffic during enumeration</a></li>
+    <li><a href="#zephyr-api">The Zephyr API — CDC ACM is a UART</a></li>
+    <li><a href="#defenses">Carry-forward defenses + new (G19–G22)</a></li>
+    <li><a href="#layout">File layout</a></li>
+    <li><a href="#flow">Boot &amp; runtime flow</a></li>
+    <li><a href="#main-spec">Spec: <code>src/main.c</code> — function-by-function</a></li>
+    <li><a href="#config-spec">Spec: <code>prj.conf</code> · <code>CMakeLists.txt</code> · <code>boards/*.overlay</code></a></li>
+    <li><a href="#build">Build, flash, RTT</a></li>
+    <li><a href="#verify">Verify on the host (Linux · macOS · Windows)</a></li>
+    <li><a href="#pitfalls">Anticipated pitfalls</a></li>
+    <li><a href="#credits-section">Attribution</a></li>
+  </ol>
+</div>
+
+<!-- ─────────────────────────── 1. GOAL ─────────────────────────── -->
+
+<h2 id="goal">1. Goal &amp; scope</h2>
+
+<p><strong>One sentence:</strong> stand up a single CDC ACM virtual serial port on edevkit such that, on any host OS, a stock terminal program can connect to the auto-created tty / COM node and every character typed is echoed back by the device — gated behind a "wait for host to open the port" DTR semaphore so no bytes are lost before userspace is listening.</p>
+
+<p>This is usb_05's slot in the matrix sense (the first <em>real I/O</em> sample) but the matrix-numbering convention reserves <code>usb_05..usb_09</code> for Tier-0 / Part II additions if any are added later, so this sample takes the Tier-1 number <strong>usb_10</strong> — pairing with Ch 15 (CDC ACM), which is the first chapter where the device "does something useful" rather than "exists statically." Sister sample <code>usb_11</code> (pending, same chapter) will lift to <em>two</em> CDC ACM instances on the same device, demonstrating composite multi-IAD layouts.</p>
+
+<p>Pairs with <a href="/docs/usb/partIV/15_cdc_acm.html">USB Book Ch 15 — CDC ACM</a>. Read Ch 15 first — this document assumes you've internalised the IAD-plus-two-interfaces shape and the four class control requests, and focuses on the Zephyr-side mechanics of getting it running on the RP2350B.</p>
+
+<div class="callout info">
+  <div class="callout-title">Why "echo" and not "greeter / streamer / interactive shell"</div>
+  <p>An echo loop is the simplest sample that proves <strong>both</strong> directions of the bulk pair are wired: every keystroke must arrive on bulk OUT, get into a FIFO, come back out on bulk IN, and land back in the user's terminal. A one-way streamer would prove only IN; a greeter (send-on-connect) would prove neither direction's steady-state behaviour. With echo, you can also use <code>cat &gt; /dev/ttyACM0</code> and <code>cat /dev/ttyACM0</code> in two windows to bulk-test the throughput. The literal echo implementation is one line — the value is in everything that has to be right around it.</p>
+</div>
+
+<h3>What usb_10 does <em>not</em> cover</h3>
+<ul>
+  <li><strong>Multiple CDC ACM instances.</strong> Splitting into two virtual ports is the job of usb_11 — that's where two IADs in the same configuration get exercised. usb_10 stays at one instance to keep the descriptor count manageable.</li>
+  <li><strong>Bridging to a hardware UART.</strong> usb_10 is purely virtual — bytes go USB-in → ring-buffer → USB-out. There is no <code>uart_dev_for_usart0</code> involvement. A "USB-to-real-UART bridge" (the bring-up tool every project ends up writing) is its own sample later.</li>
+  <li><strong>Custom line-coding handling.</strong> The firmware accepts whatever baud / parity / stop bits the host requests, stores them via Zephyr's CDC ACM class, and ignores their semantics. We don't reconfigure anything based on them. Ch 15 §4a explains why this is correct for a pure-virtual port.</li>
+  <li><strong>SerialState notifications.</strong> The interrupt-IN endpoint exists and NAKs forever; we never proactively notify the host of anything. usb_11 may exercise it; usb_10 does not.</li>
+  <li><strong>Flow control of any kind.</strong> RTS/CTS isn't honoured; XON/XOFF isn't filtered. Ring-buffer back-pressure (RX FIFO full → NAK the bulk OUT) is implicit through Zephyr's class, not something the application code touches.</li>
+  <li><strong>OTA / bootloader interactions.</strong> CDC ACM coexisting with MCUboot+SMP is a real concern for edevkit1 v1, but it's out of scope here. usb_10 builds without MCUboot.</li>
+</ul>
+
+<h3>Locked decisions</h3>
+<table>
+  <thead><tr><th>Field</th><th>Value</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td class="field">VID</td><td class="hex">0x1209</td><td>pid.codes open-hardware umbrella — constant across every sample.</td></tr>
+    <tr><td class="field">PID</td><td class="hex">0xede5</td><td><code>0xede0 + 5</code>. usb_04 was <code>0xede4</code>; usb_10 takes the next free number rather than <code>0xedea</code> to keep PIDs grep-friendly to sample numbers without an off-by-one (so usb_10 → <code>0xede5</code>, usb_11 → <code>0xede6</code>, etc.). Update the matrix and Ch 15's verify commands accordingly.</td></tr>
+    <tr><td class="field">Device class triple</td><td class="hex">0xEF / 0x02 / 0x01</td><td>"Miscellaneous / Common / IAD" — required for the host to honour the IAD. Zephyr USB-Device-Next sets this automatically when a registered class advertises an IAD; no manual call to <code>usbd_device_set_code_triple()</code> needed (and don't make one — see G19 below).</td></tr>
+    <tr><td class="field">Class</td><td>Bundled Zephyr <code>usbd_cdc_acm</code></td><td>We do <em>not</em> define our own class via <code>USBD_DEFINE_CLASS</code>. The class is built by Zephyr when <code>CONFIG_USBD_CDC_ACM_CLASS=y</code>; one instance is materialised per devicetree node whose <code>compatible</code> is <code>"zephyr,cdc-acm-uart"</code>. We just add the DT node and the Kconfig.</td></tr>
+    <tr><td class="field">DT node label</td><td><code>cdc_acm_uart0</code></td><td>Conventional Zephyr name for the first CDC ACM instance. Lives under <code>&amp;zephyr_udc0</code> in the board overlay.</td></tr>
+    <tr><td class="field">DT node label string</td><td>"edevkit usb_10 CDC-ACM"</td><td>The <code>label</code> property doubles as the iInterface string for the Communications interface (see the binding YAML, <code>dts/bindings/serial/zephyr,cdc-acm-uart.yaml</code>). Keep it descriptive — it's what end-users see in the OS.</td></tr>
+    <tr><td class="field">Default line coding</td><td>115200 8N1</td><td>Zephyr's <code>CDC_ACM_DEFAULT_LINECODING</code> macro. The host will overwrite this via SET_LINE_CODING after CONFIGURE; the default only matters until the first host SET.</td></tr>
+    <tr><td class="field">Bulk MPS (FS)</td><td>64</td><td>Hard-coded by Zephyr CDC ACM class; this is also the spec-mandated FS bulk MPS for CDC.</td></tr>
+    <tr><td class="field">Interrupt IN MPS / interval</td><td>16 B / 10 ms</td><td>Hard-coded by Zephyr CDC ACM class (<code>CDC_ACM_DEFAULT_INT_EP_MPS</code> and <code>CDC_ACM_FS_INT_EP_INTERVAL</code>).</td></tr>
+    <tr><td class="field">RX/TX ring-buf size</td><td>1024 B each</td><td>Zephyr defaults (<code>tx-fifo-size</code> / <code>rx-fifo-size</code> DT properties). We don't override.</td></tr>
+    <tr><td class="field">CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT</td><td><code>n</code></td><td>Defer USB-device enable until the app calls <code>usbd_enable()</code> from <code>main()</code>. With <code>=y</code>, the stack comes up before user code runs and the DTR semaphore would miss its first edge.</td></tr>
+    <tr><td class="field">bcdDevice</td><td class="hex">0x0105</td><td>Bumped from usb_04's 0x0104 to bust macOS descriptor cache on first plug-in.</td></tr>
+    <tr><td class="field">Board</td><td><code>rpi_pico2/rp2350a/m33</code></td><td>Cortex-M33 cores, same as every prior sample.</td></tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 2. DELTA ─────────────────────────── -->
+
+<h2 id="delta">2. What changes vs usb_04</h2>
+
+<table>
+  <thead><tr><th>Aspect</th><th>usb_04</th><th>usb_10</th></tr></thead>
+  <tbody>
+    <tr><td>Class type</td><td>Custom vendor (we wrote <code>control_demo</code> by hand)</td><td><strong>Standard</strong> CDC ACM (bundled Zephyr class)</td></tr>
+    <tr><td>How class is registered</td><td><code>USBD_DEFINE_CLASS</code> + <code>usbd_register_class</code> in main</td><td>DT node + Kconfig only. Class instances are auto-registered.</td></tr>
+    <tr><td>Descriptor source</td><td>Hand-written <code>struct usb_if_descriptor</code> + EP descriptors</td><td>Generated by the class from the DT node — we never see them.</td></tr>
+    <tr><td>Interfaces</td><td>1 (vendor)</td><td>2 (Communications + Data) inside one IAD</td></tr>
+    <tr><td>Endpoints</td><td>EP0 + 2 declared-not-implemented bulk</td><td>EP0 + 1 interrupt IN + 2 bulk (used)</td></tr>
+    <tr><td>EP0 traffic</td><td>Standard requests + 4 custom vendor requests on EP0</td><td>Standard requests + 4 class requests (SET_LINE_CODING / GET_LINE_CODING / SET_CONTROL_LINE_STATE / SEND_BREAK) handled internally by the class</td></tr>
+    <tr><td>Data on bulk endpoints</td><td>Never. Bulk EPs NAK forever.</td><td><strong>This is the entire point.</strong> Host writes → bulk OUT → ringbuf → bulk IN → host reads.</td></tr>
+    <tr><td>Application API surface</td><td><code>control_to_host</code> / <code>control_to_dev</code> callbacks</td><td>Zephyr UART API on the CDC ACM <code>const struct device *</code> — <code>uart_irq_callback_set</code>, <code>uart_irq_rx_enable</code>, <code>uart_fifo_read</code>, <code>uart_fifo_fill</code></td></tr>
+    <tr><td>Host driver needed</td><td>Nothing standard — verify via libusb / pyusb</td><td>Nothing on Linux / macOS / Win10 1709+. Auto-loaded.</td></tr>
+    <tr><td>Verify tooling</td><td>Custom <code>verify.py</code> via pyusb</td><td>Stock <code>screen</code> / <code>picocom</code> / <code>PuTTY</code> + a small <code>verify.py</code> for automated round-trip</td></tr>
+    <tr><td>New gotchas introduced</td><td>G16–G18 (control transfer specifics)</td><td>G19–G22 (DT compatible name, CDC_ACM_SERIAL_INITIALIZE_AT_BOOT, DTR gate, ZLP-handled-by-class)</td></tr>
+  </tbody>
+</table>
+
+<p>The structural shift is from "we implement the class" to "we configure the bundled class." Most of the sample's lines of code now live in the boot-time wiring (enable USB, wait for DTR, hook up the UART IRQ) and the IRQ handler that copies bytes between two ring-buffers. The descriptor tree we own zero bytes of.</p>
+
+<!-- ─────────────────────────── 3. DESCRIPTOR TREE ─────────────────────────── -->
+
+<h2 id="descriptor-tree">3. The descriptor tree Zephyr will emit (byte-by-byte)</h2>
+
+<p>You won't write these bytes — Zephyr's CDC ACM class generates them from the DT node — but you need to recognise them in an <code>lsusb -v</code> capture for verification. The byte layout below is what <code>usbd_cdc_acm.c</code>'s <code>struct usbd_cdc_acm_desc</code> serialises (from the class source we read at <code>subsys/usb/device_next/class/usbd_cdc_acm.c:56</code>):</p>
+
+<pre><code>Configuration Descriptor (9 bytes — auto, not from class)
+  09 02 4B 00 02 01 00 80 32         len, type, wTotalLength=0x004B (75), 2 ifaces, ...
+
+  Interface Association Descriptor (8 bytes) ───── G20
+    08 0B 00 02 02 02 01 00          len=8, type=IAD, bFirstIf=0, bIfCount=2,
+                                      bFunctionClass=0x02 CDC, subclass=0x02 ACM,
+                                      protocol=0x01 AT_CMD_V250 (Zephyr default),
+                                      iFunction=0
+
+  Interface 0 — Communications, ACM (9 bytes)
+    09 04 00 00 01 02 02 01 iI       bInterfaceNumber=0, bAlternateSetting=0,
+                                      bNumEndpoints=1, class=0x02, subclass=0x02,
+                                      protocol=0x01, iInterface=&lt;DT label&gt;
+
+    CDC Header functional descriptor (5 bytes)
+      05 24 00 10 01                   subtype=0x00 HEADER, bcdCDC=0x0110
+
+    CDC Call Management func desc (5 bytes)
+      05 24 01 00 01                   subtype=0x01, bmCapabilities=0x00,
+                                       bDataInterface=0x01
+
+    CDC ACM functional descriptor (4 bytes)
+      04 24 02 02                      subtype=0x02 ACM, bmCapabilities=0x02
+                                       (SET/GET_LINE_CODING + SET_CONTROL_LINE_STATE)
+
+    CDC Union functional descriptor (5 bytes)
+      05 24 06 00 01                   subtype=0x06, bControlInterface=0,
+                                       bSubordinateInterface0=1
+
+    Endpoint Descriptor (7 bytes)
+      07 05 82 03 10 00 0A             addr=0x82 IN, attr=0x03 interrupt,
+                                       MPS=16, bInterval=10ms
+
+  Interface 1 — Data (9 bytes)
+    09 04 01 00 02 0A 00 00 00       bInterfaceNumber=1, bNumEndpoints=2,
+                                      class=0x0A CDC_DATA, subclass=0, protocol=0
+
+    Endpoint Descriptor (7 bytes)
+      07 05 01 02 40 00 00             addr=0x01 OUT, attr=0x02 bulk, MPS=64
+
+    Endpoint Descriptor (7 bytes)
+      07 05 81 02 40 00 00             addr=0x81 IN, attr=0x02 bulk, MPS=64
+
+Total: 9 + 8 + 9 + 5 + 5 + 4 + 5 + 7 + 9 + 7 + 7 = 75 bytes (matches wTotalLength)
+</code></pre>
+
+<p>That's <strong>11 descriptors</strong>, four of them CDC-functional-class-specific, for one virtual serial port. Compare to usb_03/usb_04 where the configuration descriptor totalled 32 bytes (1 cfg + 1 iface + 2 EP). CDC ACM is ~2.3× the byte count and ~3× the descriptor count of a bare vendor class. That's the price of "OS auto-loads a driver."</p>
+
+<div class="callout info">
+  <div class="callout-title">How to verify these bytes match what your build actually emits</div>
+  <p>After first successful flash, run <code>lsusb -v -d 1209:ede5</code> on Linux (or <code>ioreg -p IOUSB -l</code> on macOS, or USBView on Windows) and diff against the layout above. Pay particular attention to: (a) the device descriptor must be <code>0xEF / 0x02 / 0x01</code> — if it's <code>0x00 / 0x00 / 0x00</code> the host won't parse the IAD; (b) the IAD's <code>bFirstInterface</code> + <code>bInterfaceCount</code> must straddle exactly the Communications + Data pair; (c) the Union descriptor's <code>bSubordinateInterface0</code> must point at the Data interface (1, not 0).</p>
+</div>
+
+<!-- ─────────────────────────── 4. ENUM TRAFFIC ─────────────────────────── -->
+
+<h2 id="enum-traffic">4. EP0 traffic during enumeration</h2>
+
+<p>From host plug-in to "device is fully usable", the host issues approximately the following control transfers. Zephyr handles all of them — your code never sees these unless you log at <code>USBD_LOG_LEVEL_DBG</code>. Listed in capture-order so you can match a Wireshark trace.</p>
+
+<table>
+  <thead><tr><th>#</th><th>Request</th><th>From</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>GET_DESCRIPTOR(Device, len=64)</td><td>Standard</td><td>Initial probe. Host doesn't know MPS yet, asks for 64 bytes, gets 18.</td></tr>
+    <tr><td>2</td><td>SET_ADDRESS(addr)</td><td>Standard</td><td>2-stage.</td></tr>
+    <tr><td>3</td><td>GET_DESCRIPTOR(Device, len=18)</td><td>Standard</td><td>Full device descriptor at the new address.</td></tr>
+    <tr><td>4</td><td>GET_DESCRIPTOR(Configuration, len=9)</td><td>Standard</td><td>Just the cfg header — needs wTotalLength.</td></tr>
+    <tr><td>5</td><td>GET_DESCRIPTOR(Configuration, len=wTotalLength)</td><td>Standard</td><td>Full 75-byte tree.</td></tr>
+    <tr><td>6</td><td>GET_DESCRIPTOR(String, lang)</td><td>Standard</td><td>Then product / mfr / serial / interface strings, all by index.</td></tr>
+    <tr><td>7</td><td>SET_CONFIGURATION(1)</td><td>Standard</td><td>This is the moment the bulk pipes come alive.</td></tr>
+    <tr><td>8</td><td>GET_LINE_CODING (bRequest=0x21)</td><td>Class</td><td>Host asks: what's the current baud / data / parity / stop?</td></tr>
+    <tr><td>9</td><td>SET_LINE_CODING (bRequest=0x20)</td><td>Class</td><td>Issued when userspace opens the tty and applies its termios.</td></tr>
+    <tr><td>10</td><td>SET_CONTROL_LINE_STATE (bRequest=0x22, wValue=0x0003)</td><td>Class</td><td><strong>This is the DTR edge we wait for.</strong> wValue bit 0 = DTR, bit 1 = RTS.</td></tr>
+  </tbody>
+</table>
+
+<p>Steps 8-10 fire after every <code>open()</code> of the tty / COM, not just after enumeration. If userspace closes and reopens the port, you'll see another SET_CONTROL_LINE_STATE(0x0003) preceded by SET_CONTROL_LINE_STATE(0x0000) on the close. That's why the DTR gate uses a semaphore (one-shot) rather than a flag — we only care about the first open. If you do want to handle reconnects, watch <code>USBD_MSG_CDC_ACM_CONTROL_LINE_STATE</code> messages from the USBD callback and reset state on every DTR transition.</p>
+
+<!-- ─────────────────────────── 5. ZEPHYR API ─────────────────────────── -->
+
+<h2 id="zephyr-api">5. The Zephyr API — CDC ACM is a UART</h2>
+
+<p>This is the conceptual shift from usb_04. There's no <code>struct usbd_class_api</code> for you to fill in. The class exists, it's already attached to the USBD context the moment your DT node is present and the Kconfig is on. What you get is a <strong>Zephyr UART device handle</strong> (<code>const struct device *</code>) that happens to be backed by USB instead of a physical UART, and you talk to it with the standard Zephyr UART API (<code>include/zephyr/drivers/uart.h</code>).</p>
+
+<h3>5a. Getting the device handle</h3>
+
+<pre><code>// At file scope:
+const struct device *const cdc_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);
+//                                                     ^^^^^^^^^^^^^^^^^^^^
+//                            DT compat with hyphens (zephyr,cdc-acm-uart) becomes
+//                            underscore-form in C (zephyr_cdc_acm_uart). G19.
+
+// In main, gate on it being ready:
+if (!device_is_ready(cdc_dev)) {
+    LOG_ERR("CDC ACM device not ready");
+    return -ENODEV;
+}
+</code></pre>
+
+<p><code>DEVICE_DT_GET_ONE</code> errors at compile time if there isn't exactly one DT node with that compatible. (Use <code>DEVICE_DT_GET</code> with <code>DT_NODELABEL(cdc_acm_uart0)</code> if you want to be explicit, or once you go to usb_11's two-instance variant — then <code>GET_ONE</code> won't compile.)</p>
+
+<h3>5b. USBD setup and the message callback</h3>
+
+<p>The boot order is the same one usb_04 used (and that <code>reference_zephyr_usbd_api</code> documents), with one CDC-specific addition: we register a <strong>message callback</strong> on the USBD context so the class can wake us up on DTR transitions. The callback receives <code>struct usbd_msg</code> events of type <code>USBD_MSG_CDC_ACM_CONTROL_LINE_STATE</code> and <code>USBD_MSG_CDC_ACM_LINE_CODING</code> (defined in <code>include/zephyr/usb/usbd_msg.h</code>). In the handler, call <code>uart_line_ctrl_get(msg-&gt;dev, UART_LINE_CTRL_DTR, &amp;dtr)</code> to learn the new state. If DTR went 0→1, <code>k_sem_give</code> a "host attached" semaphore.</p>
+
+<pre><code>// Conceptual — function bodies in §9
+static void on_usbd_msg(struct usbd_context *ctx, const struct usbd_msg *msg);
+   // dispatch on msg-&gt;type:
+   //   USBD_MSG_CDC_ACM_CONTROL_LINE_STATE → check DTR, k_sem_give if 0→1
+   //   USBD_MSG_CDC_ACM_LINE_CODING        → optional: log new baud
+   //   USBD_MSG_VBUS_*                     → optional: usbd_enable / disable
+   //   USBD_MSG_RESET / USBD_MSG_CONFIGURATION → log only
+</code></pre>
+
+<h3>5c. The RX/TX path — interrupt-driven UART API</h3>
+
+<p>Once DTR is asserted, install an interrupt callback on the UART device and enable RX interrupts. Zephyr's CDC ACM class then drives the same UART IRQ semantics as a hardware UART: on incoming USB-OUT data, <code>uart_irq_rx_ready</code> goes true; you drain via <code>uart_fifo_read</code>. To send, enable TX-ready interrupts, then fill via <code>uart_fifo_fill</code>. The intermediate buffer is a Zephyr <code>ring_buf</code> you allocate.</p>
+
+<pre><code>RX path (host → device):
+   USB bulk OUT URB arrives
+     → Zephyr CDC ACM class reassembles into RX FIFO (1024 B, DT-configured)
+       → UART IRQ fires with uart_irq_rx_ready
+         → Your IRQ handler calls uart_fifo_read into a stack buffer
+           → Stack buffer copied into ring_buf
+             → If ring_buf was empty, enable TX IRQ to drain
+
+TX path (device → host):
+   UART IRQ fires with uart_irq_tx_ready
+     → Your IRQ handler calls ring_buf_get into a stack buffer
+       → Stack buffer flushed via uart_fifo_fill
+         → Zephyr CDC ACM class wraps into bulk IN URBs
+           → ZLP added by class when length is exact multiple of MPS — G22
+
+Back-pressure:
+   If ring_buf is full (host writes faster than host reads back the echo):
+     → uart_irq_rx_disable, set rx_throttled = true
+     → Zephyr class lets its USB-OUT URB queue fill
+       → Eventually the class NAKs the next bulk OUT until we re-enable RX
+         → Host's write() blocks transparently.
+   When ring_buf drains:
+     → uart_irq_rx_enable, rx_throttled = false
+       → Class resumes accepting URBs.
+</code></pre>
+
+<p>This is exactly the pattern in Zephyr's reference sample <code>samples/subsys/usb/cdc_acm/src/main.c</code>. You can read that file once for reference, but writing it from scratch by reading just §5c is the more instructive path — it's about 60 lines of C and every line earns its place.</p>
+
+<h3>5d. The "Wait for DTR" gate, in detail</h3>
+
+<p>From plug-in to "host userspace has opened the tty," the sequence is:</p>
+
+<pre><code>1. Device boots; main() runs.
+2. main() initialises the USBD context, registers the message callback,
+   registers the bundled CDC ACM class, calls usbd_enable() — USB pull-up
+   asserts, host begins enumeration.
+3. Enumeration completes (Table in §4 steps 1-7). Bulk pipes are now active
+   but no host program has open()'d the tty yet → no SET_CONTROL_LINE_STATE
+   with DTR set has been seen.
+4. main() calls k_sem_take(&amp;dtr_sem, K_FOREVER) — blocks here.
+5. User runs `screen /dev/ttyACM0 115200` → kernel CDC ACM driver calls
+   usbd_cdc_acm_open() internally → issues SET_CONTROL_LINE_STATE(0x0003).
+6. Class delivers USBD_MSG_CDC_ACM_CONTROL_LINE_STATE → our callback fires
+   → uart_line_ctrl_get returns DTR=1 → k_sem_give(&amp;dtr_sem).
+7. main()'s k_sem_take returns. We log "DTR set". Now we hook up the IRQ
+   handler and enable RX. From here on the echo loop runs.
+</code></pre>
+
+<p>Without the gate, step 4 is skipped, and the device starts sending its first byte (a greeting or anything else) the moment enumeration completes — but the host's userspace has nowhere to put it. On Linux it ends up in <code>cdc_acm</code>'s small pre-open buffer and is later returned to <code>read()</code>; on macOS it gets dropped silently. This is the single most common "works on Linux but not on macOS" pattern for USB-serial firmware, and the fix is to gate every send on the semaphore.</p>
+
+<div class="callout warn">
+  <div class="callout-title">Don't gate the IRQ handler installation itself</div>
+  <p>It's tempting to call <code>uart_irq_callback_set()</code> only after DTR. Don't — the call is cheap and idempotent. The thing to gate is <strong>any transmit that would race with the host's first <code>read()</code></strong>. RX from the host can be queued; the host won't <em>send</em> until userspace has opened the port either. The asymmetric loss is on the device-to-host direction. (Zephyr's stock sample gates the IRQ install too; that's fine but a hair over-conservative.)</p>
+</div>
+
+<!-- ─────────────────────────── 6. DEFENSES ─────────────────────────── -->
+
+<h2 id="defenses">6. Carry-forward defenses + new (G19–G22)</h2>
+
+<h3>Carried over (re-state, re-defend)</h3>
+<ul>
+  <li><strong>G1</strong>. <code>CONFIG_USB_DEVICE_STACK_NEXT=y</code> still mandatory.</li>
+  <li><strong>G3</strong>. Class registration by name string — does <em>not</em> apply here. The bundled CDC ACM class registers itself via its devicetree node; you don't call <code>usbd_register_class</code>. (You <em>do</em> get the class data via <code>USBD_CDC_ACM_DT_DEVICE_DEFINE</code> macros — but for usb_10 the DT instantiation does this implicitly and we don't reference it from main.)</li>
+  <li><strong>G4 / G16</strong>. Returning <code>-ENOTSUP</code> from unsupported control callbacks — does not apply here, since the bundled class owns all CDC class requests. No callbacks for you to write.</li>
+  <li><strong>G14</strong>. <code>CONFIG_HWINFO=y</code> if you're generating a per-unit serial via <code>hwinfo_get_device_id</code> as in usb_03 — yes, do this. The shared <code>sample_usbd.{c,h}</code> from earlier samples handles it.</li>
+</ul>
+
+<h3>New for usb_10 (CDC-ACM-specific)</h3>
+
+<table>
+  <thead><tr><th>ID</th><th>Symptom if violated</th><th>Defense</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="field">G19</td>
+      <td>Build fails with "no such DT node" / device handle is NULL at runtime / OS doesn't enumerate.</td>
+      <td>The DT compatible string is <code>"zephyr,cdc-acm-uart"</code> (lowercase, with hyphens and a comma). In C code it shows up as <code>zephyr_cdc_acm_uart</code> — hyphens and commas become underscores. <code>DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart)</code> is correct; <code>DEVICE_DT_GET_ONE(zephyr,cdc-acm-uart)</code> won't compile. Also: do <em>not</em> call <code>usbd_device_set_code_triple()</code> here — the bundled class needs the device-level triple to be the IAD sentinel <code>0xEF/0x02/0x01</code>, which Zephyr sets for you. Overriding it to <code>0x00/0x00/0x00</code> breaks host driver loading.</td>
+    </tr>
+    <tr>
+      <td class="field">G20</td>
+      <td>USB stack comes up before <code>main()</code> runs; the first DTR edge is missed; the "Wait for DTR" semaphore never releases on first connect.</td>
+      <td>Set <code>CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT=n</code> in <code>prj.conf</code>. This defers <code>usbd_enable()</code> until your <code>main()</code> calls it explicitly, ensuring the message callback is registered before any control transfers can fire. Zephyr's reference sample sets <code>=n</code> for exactly this reason; the default in some Zephyr versions is <code>=y</code> which would silently break the gate.</td>
+    </tr>
+    <tr>
+      <td class="field">G21</td>
+      <td>Greeting / boot banner is lost on macOS, works on Linux. (Or worse: works locally but breaks in CI where macOS opens the port slightly later.)</td>
+      <td>Gate every device-to-host transmit on the DTR semaphore. Don't send anything before <code>k_sem_take(&amp;dtr_sem, K_FOREVER)</code> returns. The stock symptom is "first byte is dropped" — most users assume their TX path is broken; it's not, the host wasn't listening yet. <em>See §5d for the full sequence.</em></td>
+    </tr>
+    <tr>
+      <td class="field">G22</td>
+      <td>Host's <code>read()</code> blocks forever after the device sends an exact-multiple-of-64-bytes response, even though all 64 bytes arrived.</td>
+      <td>This is the ZLP rule (Ch 15 §6a). For CDC ACM via Zephyr's bundled class, <strong>the class handles this for you</strong> — there's a <code>zlp_needed</code> flag in <code>struct cdc_acm_uart_data</code> that tracks "last IN was 64 bytes, no more came in the callback window, send a ZLP." But the rule only fires if you let Zephyr's class drive the TX from its own ring buffer. If you reach below the API and submit raw bulk URBs yourself (you shouldn't, but you might in a custom variant), you'd have to emit ZLPs manually. For usb_10 as designed: <em>trust the class</em>. Just be aware that's what's happening so the symptom doesn't surprise you.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 7. LAYOUT ─────────────────────────── -->
+
+<h2 id="layout">7. File layout</h2>
+
+<pre><code>firmware/samples/usb/usb_10/
+├── CMakeLists.txt
+├── prj.conf
+├── boards/
+│   └── rpi_pico2_rp2350a_m33.overlay     # DT: cdc_acm_uart0 under &amp;zephyr_udc0
+├── src/
+│   ├── main.c                            # the whole sample (~120 lines)
+│   ├── sample_usbd.h                     # carry-over from usb_01..04
+│   └── sample_usbd.c                     # carry-over from usb_01..04
+└── verify.py                             # host-side round-trip echo test
+</code></pre>
+
+<p>The <code>sample_usbd.{c,h}</code> pair is the same boilerplate shared by usb_01..04: defines language / manufacturer / product / serial string descriptors, exposes <code>sample_usbd_init_device(msg_cb)</code> which returns the initialised <code>struct usbd_context *</code>. Copy it from usb_04 verbatim except for:</p>
+<ul>
+  <li>Change the product string to <code>"usb_10 - cdc_acm"</code> (G12 — ASCII hyphen).</li>
+  <li>Change <code>SAMPLE_USBD_PID</code> to <code>0xede5</code> in <code>sample_usbd.h</code>.</li>
+  <li>Bump <code>bcdDevice</code> to <code>0x0105</code>.</li>
+  <li>Optionally update the manufacturer string if you've been using a per-sample one.</li>
+</ul>
+
+<!-- ─────────────────────────── 8. FLOW ─────────────────────────── -->
+
+<h2 id="flow">8. Boot &amp; runtime flow</h2>
+
+<pre><code>┌─────────────────────────────────────────────────────────────────────────┐
+│ POWER-ON                                                                │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 1. Zephyr boot                                                          │
+│ 2. CDC ACM class init (G20 says we set _INITIALIZE_AT_BOOT=n, so the    │
+│    class only allocates structures; the USB stack is still down)        │
+│ 3. main():                                                              │
+│    a. ring_buf_init(&amp;echo_rb, 1024)                                     │
+│    b. cdc_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart)                  │
+│       device_is_ready(cdc_dev)  → assert                                │
+│    c. ctx = sample_usbd_init_device(on_usbd_msg)                        │
+│    d. usbd_enable(ctx)            → USB pull-up asserts                 │
+│ 4. Host enumeration runs (table in §4 steps 1-7).                       │
+│    The class handles all CDC requests internally.                       │
+│ 5. main() blocks: k_sem_take(&amp;dtr_sem, K_FOREVER)                       │
+└──────────────────────┬──────────────────────────────────────────────────┘
+                       │
+                       │ Host runs `screen /dev/ttyACM0 115200`
+                       │   → kernel CDC ACM driver issues
+                       │     SET_CONTROL_LINE_STATE(wValue=0x0003)
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│ on_usbd_msg(ctx, msg):                                                  │
+│   msg->type == USBD_MSG_CDC_ACM_CONTROL_LINE_STATE                      │
+│     uart_line_ctrl_get(msg->dev, UART_LINE_CTRL_DTR, &amp;dtr)              │
+│     if (dtr) k_sem_give(&amp;dtr_sem)                                       │
+└──────────────────────┬──────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│ main() resumes:                                                         │
+│ 6. LOG_INF("DTR set, host attached")                                    │
+│ 7. uart_irq_callback_set(cdc_dev, on_uart_irq)                          │
+│ 8. uart_irq_rx_enable(cdc_dev)                                          │
+│ 9. main() exits (or k_sleep(K_FOREVER) — IRQs do the rest)              │
+└──────────────────────┬──────────────────────────────────────────────────┘
+                       │
+                       │ Every keystroke from screen:
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│ on_uart_irq(cdc_dev, NULL):                                             │
+│   while (uart_irq_update(cdc_dev) &amp;&amp; uart_irq_is_pending(cdc_dev)):     │
+│     if (rx_ready &amp;&amp; !throttled):                                        │
+│       n = uart_fifo_read(cdc_dev, buf, 64)                              │
+│       put = ring_buf_put(&amp;echo_rb, buf, n)                              │
+│       if (put &lt; n) LOG_ERR("dropped %d bytes", n-put)                   │
+│       if (put &gt; 0) uart_irq_tx_enable(cdc_dev)                          │
+│       if (ring_buf is full) uart_irq_rx_disable; throttled = true       │
+│     if (tx_ready):                                                      │
+│       n = ring_buf_get(&amp;echo_rb, buf, 64)                               │
+│       if (n == 0) uart_irq_tx_disable; continue                         │
+│       if (throttled) uart_irq_rx_enable; throttled = false              │
+│       send = uart_fifo_fill(cdc_dev, buf, n)                            │
+│       if (send &lt; n) LOG_ERR("short fill %d/%d", send, n)                │
+└─────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+
+<!-- ─────────────────────────── 9. MAIN SPEC ─────────────────────────── -->
+
+<h2 id="main-spec">9. Spec: <code>src/main.c</code> — function-by-function</h2>
+
+<p>You're writing <code>main.c</code> from scratch. Here's the exact spec for each function. Glue code (logging, helpers) you can add to taste.</p>
+
+<h3>9a. Top of file — includes, log module, statics</h3>
+
+<p>Required headers and what you need from each:</p>
+
+<ul>
+  <li><code>&lt;zephyr/kernel.h&gt;</code> — <code>k_sem</code>, <code>K_SEM_DEFINE</code>, <code>K_FOREVER</code>.</li>
+  <li><code>&lt;zephyr/device.h&gt;</code> — <code>const struct device *</code>, <code>DEVICE_DT_GET_ONE</code>, <code>device_is_ready</code>.</li>
+  <li><code>&lt;zephyr/drivers/uart.h&gt;</code> — <code>uart_irq_*</code> + <code>uart_fifo_*</code> + <code>uart_line_ctrl_get</code> + <code>UART_LINE_CTRL_DTR</code>.</li>
+  <li><code>&lt;zephyr/sys/ring_buffer.h&gt;</code> — <code>ring_buf</code>, <code>ring_buf_init</code>, <code>ring_buf_put</code>, <code>ring_buf_get</code>.</li>
+  <li><code>&lt;zephyr/usb/usbd.h&gt;</code> — <code>usbd_context</code>, <code>usbd_enable</code>, <code>usbd_msg</code>, <code>usbd_msg_type_string</code>.</li>
+  <li><code>&lt;zephyr/usb/usbd_msg.h&gt;</code> — <code>USBD_MSG_*</code> enum (CDC_ACM_LINE_CODING, CDC_ACM_CONTROL_LINE_STATE, etc.).</li>
+  <li><code>&lt;zephyr/logging/log.h&gt;</code> — <code>LOG_*</code>.</li>
+  <li><code>"sample_usbd.h"</code> — your boilerplate from usb_04.</li>
+</ul>
+
+<p>File-scope statics (note the names — they're referenced in §8's flow):</p>
+<ul>
+  <li><code>cdc_dev</code> — <code>const struct device *const</code>, initialised with <code>DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart)</code>.</li>
+  <li><code>echo_buf[1024]</code> — backing memory for the ring buffer.</li>
+  <li><code>echo_rb</code> — <code>struct ring_buf</code>, init'd at start of <code>main</code>.</li>
+  <li><code>rx_throttled</code> — <code>bool</code>, defaults to <code>false</code>.</li>
+  <li><code>dtr_sem</code> — <code>K_SEM_DEFINE(dtr_sem, 0, 1)</code> — one-shot, host-attached signal.</li>
+</ul>
+
+<h3>9b. <code>on_usbd_msg(struct usbd_context *ctx, const struct usbd_msg *msg)</code></h3>
+
+<p><strong>When called:</strong> by the USBD core, from a worker thread, on every state-change event. <strong>What it does:</strong></p>
+
+<ol>
+  <li>Log the message type name via <code>usbd_msg_type_string(msg-&gt;type)</code> at <code>LOG_DBG</code>. (Optional; useful during bring-up, noisy in production.)</li>
+  <li>If <code>msg-&gt;type == USBD_MSG_CDC_ACM_CONTROL_LINE_STATE</code>:
+    <ul>
+      <li>Read DTR via <code>uart_line_ctrl_get(msg-&gt;dev, UART_LINE_CTRL_DTR, &amp;dtr)</code>.</li>
+      <li>If <code>dtr != 0</code>, <code>k_sem_give(&amp;dtr_sem)</code>.</li>
+    </ul>
+  </li>
+  <li>If <code>msg-&gt;type == USBD_MSG_CDC_ACM_LINE_CODING</code> (optional):
+    <ul>
+      <li>Read baud via <code>uart_line_ctrl_get(msg-&gt;dev, UART_LINE_CTRL_BAUD_RATE, &amp;baud)</code>; log it. Don't act on it.</li>
+    </ul>
+  </li>
+  <li>Other message types — log only.</li>
+</ol>
+
+<p>Note that <code>msg-&gt;dev</code> for CDC-ACM messages is the CDC ACM <em>UART</em> device, not the USBD device. That's the same handle you use for <code>uart_*</code> calls.</p>
+
+<h3>9c. <code>on_uart_irq(const struct device *dev, void *user_data)</code></h3>
+
+<p><strong>When called:</strong> by the UART subsystem whenever an RX or TX event is pending. <strong>What it does:</strong> loops on <code>uart_irq_update</code> + <code>uart_irq_is_pending</code> while there's still pending work. Inside the loop, two branches:</p>
+
+<p><em>RX branch</em> (if <code>!rx_throttled &amp;&amp; uart_irq_rx_ready(dev)</code>):</p>
+<ol>
+  <li>Determine read budget: <code>n = MIN(ring_buf_space_get(&amp;echo_rb), sizeof(stack_buf))</code> where <code>stack_buf</code> is local, e.g. <code>uint8_t stack_buf[64]</code>.</li>
+  <li>If <code>n == 0</code>: ring buffer is full — call <code>uart_irq_rx_disable(dev)</code>, set <code>rx_throttled = true</code>, <code>continue</code>.</li>
+  <li>Otherwise: <code>recv_len = uart_fifo_read(dev, stack_buf, n)</code>.</li>
+  <li><code>rb_len = ring_buf_put(&amp;echo_rb, stack_buf, recv_len)</code>.</li>
+  <li>If <code>rb_len &lt; recv_len</code>: log a drop count (shouldn't happen given step 1's budget check, but log defensively).</li>
+  <li>If <code>rb_len &gt; 0</code>: <code>uart_irq_tx_enable(dev)</code> — kick the TX path so the echo happens.</li>
+</ol>
+
+<p><em>TX branch</em> (if <code>uart_irq_tx_ready(dev)</code>):</p>
+<ol>
+  <li><code>rb_len = ring_buf_get(&amp;echo_rb, stack_buf, sizeof(stack_buf))</code>.</li>
+  <li>If <code>rb_len == 0</code>: ring is empty — <code>uart_irq_tx_disable(dev)</code>, <code>continue</code>.</li>
+  <li>If <code>rx_throttled</code>: re-enable RX, clear the flag (we just made space).</li>
+  <li><code>send_len = uart_fifo_fill(dev, stack_buf, rb_len)</code>.</li>
+  <li>If <code>send_len &lt; rb_len</code>: log a short-fill warning (the UART TX FIFO was tighter than we expected; the next IRQ will drain more — but log it).</li>
+</ol>
+
+<h3>9d. <code>main(void)</code></h3>
+
+<p>Sequence:</p>
+<ol>
+  <li>Init the ring buffer: <code>ring_buf_init(&amp;echo_rb, sizeof(echo_buf), echo_buf)</code>.</li>
+  <li>Assert <code>device_is_ready(cdc_dev)</code> — return <code>-ENODEV</code> on failure.</li>
+  <li>Call <code>sample_usbd_init_device(on_usbd_msg)</code> — stash the returned context (may not need to keep it).</li>
+  <li>If <code>usbd_can_detect_vbus(ctx)</code> is false (RP2350 case — VBUS detection is not surfaced through the UDC driver currently): call <code>usbd_enable(ctx)</code> explicitly. Log on failure.</li>
+  <li><code>LOG_INF("Waiting for DTR (host to open the port)...")</code>.</li>
+  <li><code>k_sem_take(&amp;dtr_sem, K_FOREVER)</code>.</li>
+  <li><code>LOG_INF("DTR set, host attached.")</code>.</li>
+  <li>(Optional) <code>uart_line_ctrl_set(cdc_dev, UART_LINE_CTRL_DCD, 1)</code> and <code>UART_LINE_CTRL_DSR</code>, 1 — pushes SerialState notifications upstream. Stock samples do this; we don't need to.</li>
+  <li><code>uart_irq_callback_set(cdc_dev, on_uart_irq)</code>.</li>
+  <li><code>uart_irq_rx_enable(cdc_dev)</code>.</li>
+  <li>Return 0. The Zephyr scheduler keeps the system alive; the echo happens entirely from IRQ context.</li>
+</ol>
+
+<!-- ─────────────────────────── 10. CONFIG SPEC ─────────────────────────── -->
+
+<h2 id="config-spec">10. Spec: <code>prj.conf</code> · <code>CMakeLists.txt</code> · <code>boards/*.overlay</code></h2>
+
+<h3>10a. <code>prj.conf</code></h3>
+
+<p>Required Kconfigs (each annotated with why):</p>
+
+<ul>
+  <li><code>CONFIG_USB_DEVICE_STACK_NEXT=y</code> — G1, mandatory for USBD_*.</li>
+  <li><code>CONFIG_USBD_CDC_ACM_CLASS=y</code> — pulls in the bundled CDC ACM class and instantiates one device per matching DT node.</li>
+  <li><code>CONFIG_SERIAL=y</code> — UART subsystem. CDC ACM class registers itself as a UART driver and needs this.</li>
+  <li><code>CONFIG_UART_LINE_CTRL=y</code> — exposes <code>uart_line_ctrl_get</code> / <code>_set</code>. Without it, the DTR check in <code>on_usbd_msg</code> won't link.</li>
+  <li><code>CONFIG_UART_INTERRUPT_DRIVEN=y</code> — explicit, even though <code>CONFIG_USBD_CDC_ACM_CLASS</code> selects it transitively. Belt and braces.</li>
+  <li><code>CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT=n</code> — G20, defer USB enable to main().</li>
+  <li><code>CONFIG_HWINFO=y</code> — G14, for per-unit serial in <code>sample_usbd.c</code>.</li>
+  <li><code>CONFIG_LOG=y</code>, <code>CONFIG_USE_SEGGER_RTT=y</code>, <code>CONFIG_RTT_CONSOLE=y</code>, <code>CONFIG_UART_CONSOLE=n</code> — same RTT-only logging path as usb_04. <strong>Critical:</strong> we use RTT for logging because the UART console would collide with the CDC ACM virtual UART. If you wanted logs over CDC ACM itself, you'd set <code>zephyr,console = &amp;cdc_acm_uart0</code> in the chosen node and toggle these accordingly — but that's a separate sample.</li>
+  <li><code>CONFIG_USBD_LOG_LEVEL_INF=y</code>, <code>CONFIG_USBD_CDC_ACM_LOG_LEVEL_OFF=y</code> — keep stack logs informative, silence the CDC ACM class's own per-byte debug spam.</li>
+  <li><code>CONFIG_HEAP_MEM_POOL_SIZE=2048</code> — class uses some heap.</li>
+  <li><code>CONFIG_THREAD_NAME=y</code>, <code>CONFIG_BOOT_BANNER=y</code> — debugging affordances.</li>
+</ul>
+
+<div class="callout warn">
+  <div class="callout-title">Do NOT enable</div>
+  <ul>
+    <li><code>CONFIG_USBD_MSG_DEFERRED_MODE</code> — message callback would fire from system workqueue with subtle reentrancy on shared state. The default (callback from USBD thread, synchronous) is what we want.</li>
+    <li><code>CONFIG_UART_LINE_CTRL_PROPAGATE</code> — would auto-forward line-coding to a downstream UART. We have no downstream UART.</li>
+  </ul>
+</div>
+
+<h3>10b. <code>boards/rpi_pico2_rp2350a_m33.overlay</code></h3>
+
+<p>The board overlay adds one DT node, sourced from the binding at <code>dts/bindings/serial/zephyr,cdc-acm-uart.yaml</code>:</p>
+
+<pre><code>&amp;zephyr_udc0 {
+    cdc_acm_uart0: cdc_acm_uart0 {
+        compatible = "zephyr,cdc-acm-uart";
+        label = "edevkit usb_10 CDC-ACM";
+        /* tx-fifo-size and rx-fifo-size default to 1024 — leave alone */
+    };
+};
+</code></pre>
+
+<p>Verify the UDC node label by greppling the board DTS — for <code>rpi_pico2/rp2350a/m33</code> it's <code>zephyr_udc0</code> (defined in <code>boards/raspberrypi/rpi_pico2/rpi_pico2_rp2350a_common.dtsi</code>). Older boards used <code>usbd</code> or <code>usbd0</code>; the memory file <code>reference_zephyr_usbd_api</code> has the grep recipe.</p>
+
+<h3>10c. <code>CMakeLists.txt</code></h3>
+
+<p>Same shape as usb_04. Three lines change:</p>
+
+<pre><code>cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(usb_10_cdc_acm_echo)
+
+target_sources(app PRIVATE
+    src/main.c
+    src/sample_usbd.c
+)
+target_include_directories(app PRIVATE src)
+</code></pre>
+
+<!-- ─────────────────────────── 11. BUILD ─────────────────────────── -->
+
+<h2 id="build">11. Build, flash, RTT</h2>
+
+<pre><code># From firmware/samples/usb/usb_10/
+west build -b rpi_pico2/rp2350a/m33 --pristine
+
+# Flash via a second edevkit / pico debug probe
+probe-rs download --chip RP2350 --binary-format elf \
+    build/zephyr/zephyr.elf
+
+# Or drag-drop the UF2 in BOOTSEL mode
+cp build/zephyr/zephyr.uf2 /Volumes/RP2350/    # macOS
+
+# RTT log for the device side (separate terminal)
+probe-rs rtt --chip RP2350
+</code></pre>
+
+<p>On a successful boot you should see, in this order:</p>
+
+<pre><code>*** Booting Zephyr OS build ... ***
+[00:00:00.001,000] &lt;inf&gt; cdc_acm_echo: Waiting for DTR (host to open the port)...
+[00:00:01.234,000] &lt;inf&gt; cdc_acm_echo: DTR set, host attached.
+</code></pre>
+
+<p>The gap between the two lines is "however long it took you to run <code>screen /dev/ttyACMx</code> after the device enumerated." Until then the device sits in <code>k_sem_take</code>.</p>
+
+<!-- ─────────────────────────── 12. VERIFY ─────────────────────────── -->
+
+<h2 id="verify">12. Verify on the host</h2>
+
+<h3>12a. Manual round-trip (every OS)</h3>
+
+<p>Plug in the device. The OS should auto-enumerate the CDC ACM driver. Identify the node:</p>
+
+<table>
+  <thead><tr><th>OS</th><th>Node path</th><th>Open with</th></tr></thead>
+  <tbody>
+    <tr><td>Linux</td><td><code>/dev/ttyACM0</code> (or higher index)</td><td><code>screen /dev/ttyACM0 115200</code> — quit with <kbd>Ctrl-A</kbd> <kbd>k</kbd></td></tr>
+    <tr><td>macOS</td><td><code>/dev/cu.usbmodem&lt;serial&gt;1</code></td><td><code>screen /dev/cu.usbmodem&lt;serial&gt;1 115200</code> — quit with <kbd>Ctrl-A</kbd> <kbd>\</kbd></td></tr>
+    <tr><td>Windows</td><td><code>COMn</code> (check Device Manager)</td><td>PuTTY → Serial → <code>COMn</code> 115200, or <code>plink -serial COMn -sercfg 115200,8,1,N</code></td></tr>
+  </tbody>
+</table>
+
+<p>Type characters. Each one should appear <strong>twice</strong>: once from local terminal echo, once from the device echo. In <code>screen</code> you can disable local echo with <kbd>Ctrl-A</kbd> <kbd>:</kbd> <code>echo off</code> to see only the device's echo. (PuTTY: Terminal → Local echo: Force off.)</p>
+
+<h3>12b. Class-triple verification</h3>
+
+<table>
+  <thead><tr><th>OS</th><th>Command</th><th>What to look for</th></tr></thead>
+  <tbody>
+    <tr><td>Linux</td><td><code>lsusb -v -d 1209:ede5</code></td><td><code>bDeviceClass 239 / bDeviceSubClass 2 / bDeviceProtocol 1</code> on the device descriptor; <code>INTERFACE ASSOCIATION DESCRIPTOR bFirstInterface 0 bInterfaceCount 2 bFunctionClass 2 bFunctionSubClass 2</code>; both expected interface descriptors with their class triples.</td></tr>
+    <tr><td>macOS</td><td><code>ioreg -p IOUSB -l -w0 | grep -A30 ede5</code></td><td><code>"bcdDevice" = 0x105</code>, two-interface composite, IAD reflected as <code>"bFunctionClass" = 2</code>.</td></tr>
+    <tr><td>Windows</td><td>USBView from WDK</td><td>Device descriptor expands to show IAD + both interface descriptors with the CDC subclass triples.</td></tr>
+  </tbody>
+</table>
+
+<h3>12c. Automated round-trip — <code>verify.py</code></h3>
+
+<p>Use <code>pyserial</code> for the host-side test:</p>
+
+<pre><code># Pseudocode — write this yourself
+import serial, sys, time, os
+from glob import glob
+
+# Discover the right path per OS
+def find_port():
+    if sys.platform == 'linux':   return '/dev/ttyACM0'
+    if sys.platform == 'darwin':  return sorted(glob('/dev/cu.usbmodem*'))[-1]
+    # Windows: caller passes 'COMn' as argv[1]
+    return sys.argv[1]
+
+s = serial.Serial(find_port(), 115200, timeout=2)
+# Slight pause: opening the port releases the firmware DTR semaphore;
+# give it a beat to install the IRQ handler before sending.
+time.sleep(0.1)
+
+payload = b'Hello, edevkit!\n'
+s.write(payload)
+got = s.read(len(payload))
+assert got == payload, f"mismatch: sent {payload!r}, got {got!r}"
+print("OK — round-trip verified")
+</code></pre>
+
+<p>Run it on every supported OS. Both this script and the <code>screen</code>-based manual test should pass; if either fails on one OS only, the issue is almost always G21 (DTR gate) or G19 (DT compatible string).</p>
+
+<div class="callout good">
+  <div class="callout-title">Acceptance — usb_10 is "done" when</div>
+  <ul>
+    <li>Build succeeds on <code>rpi_pico2/rp2350a/m33</code> with no warnings.</li>
+    <li>Device enumerates on Linux / macOS / Windows with class triples per §3 and §12b.</li>
+    <li><code>verify.py</code> passes on all three OSes from a cold boot — no manual retries, no replug.</li>
+    <li>RTT log shows "Waiting for DTR" before any terminal opens, "DTR set" exactly when the terminal opens.</li>
+    <li>Holding down a key for 5 seconds (~150 chars at typematic) round-trips without drops.</li>
+    <li>Closing the terminal and reopening it succeeds — no replug required.</li>
+  </ul>
+</div>
+
+<!-- ─────────────────────────── 13. PITFALLS ─────────────────────────── -->
+
+<h2 id="pitfalls">13. Anticipated pitfalls</h2>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Build fails with <code>__device_dts_ord_0</code> referenced but not defined."</strong> The DT node didn't materialise. Confirm the overlay path is <code>boards/&lt;board_name&gt;.overlay</code> exactly (sysbuild looks at the board name with slashes replaced by underscores: <code>rpi_pico2_rp2350a_m33.overlay</code>). Run <code>west build -t menuconfig</code> after a build and inspect the generated <code>build/zephyr/.config</code> for <code>CONFIG_USBD_CDC_ACM=y</code> + the DT instance numbers — if zero, the node didn't reach the binding.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Device enumerates as &quot;Unknown Device&quot; on Windows."</strong> Class triple isn't IAD-sentinel. See §1's "Locked decisions" — Zephyr should set this automatically, but if you've added a <code>usbd_device_set_code_triple()</code> call somewhere (carry-over from a vendor-class sample), remove it. Or you've forgotten <code>CONFIG_USBD_CDC_ACM_CLASS=y</code>, in which case the IAD doesn't get registered and the device shows up as a single-interface bare device.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Linux works, macOS shows no <code>/dev/cu.usbmodem*</code> node."</strong> Almost always missing or duplicate iSerial. macOS's path generator falls back to nonsense and may not register the device under <code>/dev/</code> at all. Check that <code>sample_usbd.c</code>'s <code>USBD_DESC_SERIAL_NUMBER_DEFINE</code> macro is in place and that <code>CONFIG_HWINFO=y</code>. Plug into a freshly-rebooted Mac to bypass any cached negative-result.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"DTR semaphore never releases — main blocks on k_sem_take forever even after opening screen."</strong> Either (a) the message callback isn't registered (sample_usbd_init_device is called without your callback, or you're using the older 3-arg form), (b) the host's terminal program isn't asserting DTR (some terminal programs allow disabling DTR — check settings), or (c) you set <code>CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT=y</code> (G20) and missed the edge during init. Verify by adding <code>LOG_INF("USBD msg: %s", usbd_msg_type_string(msg->type))</code> at the top of <code>on_usbd_msg</code> — you should see <code>USBD_MSG_CDC_ACM_CONTROL_LINE_STATE</code> in RTT exactly when you open the terminal.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Echo drops every other character when typing fast."</strong> Ring buffer's filling up and you've removed the throttle path by mistake. Confirm: (i) <code>n = MIN(ring_buf_space_get(...), sizeof(stack_buf))</code> in the RX branch — if you read <code>sizeof(stack_buf)</code> unconditionally, you'll overflow <code>ring_buf_put</code>; (ii) you re-enable RX in the TX branch when the throttle flag clears; (iii) your stack buffer isn't smaller than 1 (basic sanity).</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Send fails after a 64-byte exact-multiple <code>write()</code> — host's <code>read()</code> hangs."</strong> Surprising but possible. Zephyr's class handles the ZLP for the IN direction, but only if the TX FIFO is genuinely drained at IRQ time. If your IRQ handler exits with the FIFO half-empty (you returned without filling more bytes even though ring_buf still has data), the class may not see the exact-multiple end-of-transfer and may delay the ZLP. Workaround: always drain ring_buf fully in the TX branch before exiting. The stock pattern in §9c does this correctly because of the <code>while (uart_irq_update &amp;&amp; ...)</code> outer loop.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Reboot device while terminal is open — terminal hangs, then says 'lost'."</strong> Expected and correct. The terminal saw the USB device disappear (no more URBs completing) and reports the loss. Reconnecting requires reopening the terminal — Zephyr's CDC ACM doesn't fake "persistent device" semantics across firmware reboots. If you need that for development, run a wrapper script like <code>while true; do screen /dev/ttyACM0 115200; sleep 1; done</code>.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Symptom → Fix</div>
+  <p><strong>"Logs go missing — RTT is silent."</strong> If you set <code>zephyr,console</code> in the DT to <code>&amp;cdc_acm_uart0</code> (or the source code does), Zephyr's <code>LOG_*</code> backend now writes to CDC ACM, not RTT. Either revert the chosen node to UART0 or accept that logs ride on the same virtual port you're echoing — in which case you'll see them interleaved with your echo. For usb_10 as specified, the chosen node should stay on RTT (or the board's default).</p>
+</div>
+
+<!-- ─────────────────────────── 14. CREDITS ─────────────────────────── -->
+
+<h2 id="credits-section">14. Attribution</h2>
+
+<div class="credits">
+  <p><strong>Zephyr CDC ACM implementation referenced for API surface verification.</strong></p>
+  <p>The descriptor layout in §3, the API spellings in §5, and the message-callback shape in §5b were all verified against Zephyr 4.4 source on 2026-05-13. Specifically: <code>subsys/usb/device_next/class/usbd_cdc_acm.c</code>, <code>include/zephyr/usb/class/usb_cdc.h</code>, <code>include/zephyr/usb/usbd_msg.h</code>, <code>dts/bindings/serial/zephyr,cdc-acm-uart.yaml</code>, <code>include/zephyr/drivers/uart.h</code>. The flow in §8 and the RX/TX paths in §5c/§9c follow the same shape as Zephyr's reference sample <code>samples/subsys/usb/cdc_acm/src/main.c</code> (Apache-2.0, © Intel Corporation 2019 + © Nordic Semiconductor 2021–2024) — that file is the canonical "how to use this class" reference and any sample you write will end up looking similar to it. The pedagogical scaffolding (§1, §2, §4, §6, §13) is original to this doc.</p>
+  <p><strong>USB-IF CDC v1.20 + PSTN v1.20 specs.</strong> The byte layouts of functional descriptors (§3) and class requests (§4) are from <em>Class Definitions for Communication Devices 1.20</em> (CDC 1.20, Nov 2010) and <em>PSTN Devices 1.20</em>. Available at <a href="https://www.usb.org/document-library/class-definitions-communication-devices-12">usb.org</a>. Free download, redistributable under USB-IF terms.</p>
+  <p><strong>Linux <code>drivers/usb/class/cdc-acm.c</code></strong> — the host-side ACM driver, GPL-2.0. Behaviour described in §7 of Ch 15 (driver-loading section) matches the source as of kernel 6.6.</p>
+</div>
+
+</div>
+
+</body>
+</html>

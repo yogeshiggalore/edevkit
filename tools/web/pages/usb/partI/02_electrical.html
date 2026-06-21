@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="What">
+  <title>edevkit USB Book — Part I · Ch 02: Electrical layer &amp; USB-C basics</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Part I · Ch 02</span>
+      <span class="grow"></span>
+      <span class="last-verified">Theory · 2026-05-06</span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · part I · ch 02</div>
+    <h1>Electrical layer &amp; USB-C basics</h1>
+    <p class="lede">What's actually on the wires, how speed gets negotiated, and the small set of USB-C electrical rules you really need to ship.</p>
+  </header>
+
+<section class="chapter-meta" aria-label="Chapter metadata">
+      <div class="meta-row">
+        <div class="meta-label">You'll learn</div>
+        <div>
+          <ul>
+            <li>What D+ and D- carry — the line states (J, K, SE0, SE1) and why they're not just "0 and 1".</li>
+            <li>NRZI encoding and bit-stuffing, and why your firmware never has to think about either.</li>
+            <li>How a device tells the host "I'm full-speed" without sending any packets — speed signaling via pull-ups.</li>
+            <li>The USB connector family — Type-A/B, Mini, Micro, Type-C — with photos and where each one is still appropriate in 2026.</li>
+            <li>The minimum USB-C electrical rules for a device-only port (CC pull-downs, VBUS detect, no-e-marker cables).</li>
+            <li>What signal-integrity advice actually matters at FS speeds for a hand-soldered prototype.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Prereqs</div>
+        <div>Chapter 01. Comfort with "differential pair" and "pull-up resistor" helpful; we explain both.</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Sample</div>
+        <div>None — theory only.</div>
+      </div>
+      <div class="meta-row">
+        <div class="meta-label">Verified</div>
+        <div>2026-05-07 · USB 2.0 spec §7, USB Type-C R2.4 §4.5, USB-IF connector classification, applies to RP2350B FS PHY.</div>
+      </div>
+    </section>
+
+    <h2>D+ and D-: a differential pair, mostly</h2>
+    <p>USB carries data on a single twisted pair: D+ (sometimes labelled <code>USB_DP</code>) and D- (<code>USB_DM</code>). At high-level you can think of it as a 1-bit lane that uses two wires to fight noise — when one goes high the other goes low, and a receiver looks at the <em>difference</em>. Common-mode interference (something noisy nearby coupling equally onto both wires) gets cancelled out.</p>
+
+    <p>But USB also uses <em>single-ended</em> states for things differential can't express. The four named line states are:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>State</th><th>D+</th><th>D-</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">J</td><td class="hex">high</td><td class="hex">low</td><td class="meaning">Idle/"1" on FS &amp; HS (reversed on LS)</td></tr>
+        <tr><td class="field">K</td><td class="hex">low</td><td class="hex">high</td><td class="meaning">Inverse of J — drives the NRZI toggle</td></tr>
+        <tr><td class="field">SE0</td><td class="hex">low</td><td class="hex">low</td><td class="meaning">Both wires low — used for End-of-Packet and bus reset</td></tr>
+        <tr><td class="field">SE1</td><td class="hex">high</td><td class="hex">high</td><td class="meaning">Both wires high — illegal in normal operation, used as fault indicator</td></tr>
+      </tbody>
+    </table>
+
+    <p>The two single-ended states (SE0 and SE1) exist because the protocol needs to distinguish "end of packet" and "bus reset" from any normal data. SE0 is overloaded: a short SE0 marks end-of-packet, a long one (≥ 10 ms) is a bus reset request from the host. Devices listen for both.</p>
+
+    <h2>NRZI: clock recovery without a clock wire</h2>
+    <p>USB has no clock line. The receiver has to recover bit timing from the data itself. To make that possible, USB encodes bits using <strong>NRZI</strong> — Non-Return-to-Zero Inverted:</p>
+
+    <ul>
+      <li>A bit value of <strong>0</strong> causes the line to <strong>toggle</strong> (J → K, or K → J).</li>
+      <li>A bit value of <strong>1</strong> causes the line to <strong>hold</strong> its current state.</li>
+    </ul>
+
+    <p>Edges give the receiver something to align its clock against. So a stream like <code>00000000</code> is full of edges and easy to track. But <code>11111111</code> is a flat line for 8 bit-times — the receiver could drift.</p>
+
+    <p>The fix is <strong>bit-stuffing</strong>: after 6 consecutive 1s, the transmitter inserts a 0. The receiver knows the rule and strips it back out. Worst case becomes <code>11111101111110...</code> — never more than 6 same-direction bits in a row, always at least one edge per 7 bit-times.</p>
+
+    <div class="callout info">
+      <div class="callout-title">Why you'll never write NRZI code</div>
+      <p>The RP2350's USB PHY does NRZI encode/decode and bit-stuffing in hardware. Your firmware sees clean bytes. The reason this matters anyway: when something looks corrupt on a logic analyzer or oscilloscope, knowing about NRZI explains why "the wire shows 11111110 but the spec says 11111111" — that trailing 0 is a stuffed bit, not a payload bit.</p>
+    </div>
+
+    <h2>How the host knows what speed you are</h2>
+    <p>This is one of the cleverest pieces of USB. Before any packet is sent, the host needs to know whether to drive the bus at 1.5 Mbps (low-speed), 12 Mbps (full-speed), or attempt a 480 Mbps (high-speed) handshake. There's no "negotiation packet" — the device tells the host its speed by <em>which D wire it pulls up</em>:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Device speed</th><th>1.5 kΩ pull-up on</th><th>Pulled to V<sub>TERM</sub></th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">Low-speed (1.5 Mbps)</td><td class="hex">D-</td><td class="meaning">3.0–3.6 V</td></tr>
+        <tr><td class="field">Full-speed (12 Mbps)</td><td class="hex">D+</td><td class="meaning">3.0–3.6 V</td></tr>
+        <tr><td class="field">High-speed (480 Mbps)</td><td class="hex">D+ initially, then "chirp"</td><td class="meaning">FS pull-up, then HS handshake</td></tr>
+      </tbody>
+    </table>
+
+    <p>The pull-up voltage is the spec's V<sub>TERM</sub> — anywhere in the range <strong>3.0–3.6 V</strong> is compliant (USB 2.0 §7.1.5.1). Most designs tie the resistor to a 3.3 V rail because that's already on the board for the MCU; if your board only has 3.0 V or 3.6 V available, you don't need a level translator just for this.</p>
+
+    <p>When you plug a USB device in, the host sees one of D+ or D- rise (against its own 15 kΩ pull-down on each line). That single transition tells it the device exists and what speed to start at. The host then drives an SE0 for ≥ 10 ms (bus reset), and the conversation begins.</p>
+
+    <p>For HS devices, the handshake is more involved: the device starts as FS (D+ pulled up), then during reset it generates a J-K toggle pattern (a "chirp") to advertise HS capability. If the host is HS-capable, it chirps back, both sides drop their pull-ups (HS is purely differential), and operation continues at 480 Mbps. If the host doesn't respond, the device stays FS. This is why an HS device never fails to connect to an FS-only host — it gracefully falls back.</p>
+
+    <h2>End-of-packet, bus reset, suspend, resume</h2>
+    <p>Beyond data bits, four bus-level events matter:</p>
+
+    <ul>
+      <li><strong>End-of-Packet (EOP)</strong> — host or device drives <code>SE0</code> for <strong>2 bit-times</strong>, followed by <strong>J for 1 bit-time</strong>, then releases the bus to idle (USB 2.0 §7.1.7.4.1). Marks "this packet ends here." Receiver looks for SE0 rather than counting bytes.</li>
+      <li><strong>Bus reset</strong> — host drives SE0 for ≥ 10 ms. Device firmware sees a bus-reset interrupt; address goes back to 0; configuration is forgotten. Standard part of enumeration (Chapter 05).</li>
+      <li><strong>Suspend</strong> — bus is idle (J, no SOF) for &gt; 3 ms. Devices recognize suspend and must drop their current draw within 10 ms. The exact suspend-current limit depends on configuration state (see "Suspend current — what the spec actually requires" below). SOF tokens themselves keep the bus from suspending; the absence of SOFs is the suspend signal.</li>
+      <li><strong>Resume</strong> — host or device drives K for <strong>at least</strong> 20 ms to wake the bus, then sends a low-speed EOP. Device-initiated resume is "remote wakeup" and must be enabled by the host first; remote-wakeup signaling is shorter (1–15 ms) and has additional preconditions (see below).</li>
+    </ul>
+
+    <p>You'll meet all of these from your firmware as USB stack callbacks: <code>USBD_MSG_RESET</code>, <code>USBD_MSG_SUSPEND</code>, <code>USBD_MSG_RESUME</code>. Knowing what's happening on the wire makes it obvious why those callbacks fire when they do.</p>
+
+    <h3>Suspend current — what the spec actually requires</h3>
+    <p>The often-quoted "2.5 mA suspend limit" is a half-truth. Per USB 2.0 §7.2.3 (table 7-7) the actual limits depend on what state the device is in:</p>
+    <table class="byte-table">
+      <thead>
+        <tr><th>Device state</th><th>Max suspend current</th><th>Symbol</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">Unconfigured / low-power configured</td><td class="hex">500 µA</td><td class="meaning">I<sub>CCSL</sub></td></tr>
+        <tr><td class="field">High-power configured, remote-wakeup disabled</td><td class="hex">500 µA</td><td class="meaning">I<sub>CCSL</sub></td></tr>
+        <tr><td class="field">High-power configured, remote-wakeup enabled</td><td class="hex">2.5 mA</td><td class="meaning">I<sub>CCSH</sub></td></tr>
+      </tbody>
+    </table>
+    <p>For most edevkit-style devices in the field — bus-powered, remote-wakeup enabled while configured — the budget is the 2.5 mA number. But before the host enables your configuration, you only get 500 µA in suspend. Plan your sleep mode for the lower of the two.</p>
+
+    <h3>Remote wakeup — three rules to get right</h3>
+    <p>Devices initiating remote wakeup must obey three timing rules from USB 2.0 §7.1.7.7:</p>
+    <ol>
+      <li><strong>Wait for 5 ms continuous idle</strong> (T<sub>WTRSM</sub>) before driving any signal. Skipping this step makes the device fight ongoing bus activity.</li>
+      <li><strong>Drive K for 1–15 ms</strong>, no longer. (Hosts driving a global resume drive K for ≥ 20 ms — different number for a different actor.)</li>
+      <li>After releasing K, the host takes over and must <strong>begin sending SOF tokens within 3 ms</strong> or the bus would re-suspend. Your firmware doesn't drive that part — but if the host's stack is buggy and re-suspends immediately, knowing this rule helps you recognize the symptom.</li>
+    </ol>
+
+    <h2>The USB connector family — what you'll see in the wild</h2>
+
+    <p>Everything above is about <em>signals</em>. The same D+/D-/VBUS/GND four wires (plus, on USB 3.x, a second pair) get packaged into a surprising number of mechanical connectors. Here are the ones you'll meet on real hardware. The "current / legacy / deprecated" labels are how the USB-IF currently classifies them; "deprecated" means new designs should not use it, not that existing devices stop working.</p>
+
+    <div class="connector-grid">
+
+      <figure class="connector-card">
+        <div class="photo"><img src="../_assets/connectors/usb-a.jpg" alt="USB Standard-A plug, the rectangular connector found on most desktop PCs and chargers" loading="lazy"></div>
+        <figcaption class="body">
+          <div class="name">Standard-A <span class="tag legacy">Legacy</span></div>
+          <div class="pins">4 contacts · 12 × 4.5 mm</div>
+          <p>The big rectangular "USB" plug everyone recognises. Always on the host end of a USB 2.0 cable. Mechanically keyed but un-keyed visually, which is why it famously takes three tries to insert. White or black plastic tongue → USB 2.0; blue tongue → USB 3.x SuperSpeed (next card).</p>
+        </figcaption>
+      </figure>
+
+      <figure class="connector-card">
+        <div class="photo"><img src="../_assets/connectors/usb-a-superspeed.jpg" alt="USB 3.x Standard-A plug — same outer shell as Type-A but with a blue plastic tongue and an extra row of five SuperSpeed contacts at the back" loading="lazy"></div>
+        <figcaption class="body">
+          <div class="name">Standard-A SuperSpeed <span class="tag legacy">Legacy</span></div>
+          <div class="pins">9 contacts · 12 × 4.5 mm</div>
+          <p>Mechanically backwards-compatible with Standard-A. The blue plastic tongue is a USB-IF convention, not a spec requirement — assume nothing from colour alone. Five extra contacts at the back of the tongue carry the SuperSpeed differential pairs. Plug into a USB 2.0 port and only the front four contacts engage.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="connector-card">
+        <div class="photo"><img src="../_assets/connectors/usb-b.jpg" alt="Three USB plugs side by side: Standard-A on the left, Standard-B square plug in the middle, Micro-B on the right" loading="lazy"></div>
+        <figcaption class="body">
+          <div class="name">Standard-B <span class="tag legacy">Legacy</span></div>
+          <div class="pins">4 contacts · 11.5 × 10.5 mm</div>
+          <p>The almost-square plug shown here in the centre (Standard-A on the left, Micro-B on the right for scale). Found on printers, audio interfaces, USB hubs, and bench instruments. Always on the device end. Survives because it's mechanically robust and obviously asymmetric — there's no wrong way to insert it.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="connector-card">
+        <div class="photo"><img src="../_assets/connectors/usb-b-superspeed.jpg" alt="USB 3.0 Standard-B plug, similar shape to Standard-B but taller with an extra blue contact block on top" loading="lazy"></div>
+        <figcaption class="body">
+          <div class="name">Standard-B SuperSpeed <span class="tag legacy">Legacy</span></div>
+          <div class="pins">9 contacts · 11.5 × 12.5 mm</div>
+          <p>Standard-B with an extension on top for the five SuperSpeed contacts. Backwards-compatible: a USB 2.0 Standard-B cable physically fits the lower half of a USB 3.0 Standard-B receptacle. The reverse is not true — a USB 3.0 plug won't fit a USB 2.0 receptacle. Found on USB 3.0 docks and external HDD enclosures.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="connector-card">
+        <div class="photo"><img src="../_assets/connectors/usb-mini.jpg" alt="USB Mini-B plug and matching receptacle, trapezoidal in cross-section" loading="lazy"></div>
+        <figcaption class="body">
+          <div class="name">Mini-B <span class="tag deprecated">Deprecated</span></div>
+          <div class="pins">5 contacts · 6.85 × 3 mm</div>
+          <p>Trapezoidal cross-section. Dominated digital cameras, MP3 players, and early smartphones (2003 – 2010). Officially deprecated by USB-IF in 2007 in favour of Micro-B but you'll still meet it on legacy hardware and on some bench tools (multimeters, dataloggers). Mini-A existed too, but was withdrawn in 2007 and is essentially extinct.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="connector-card">
+        <div class="photo"><img src="../_assets/connectors/usb-micro-b.jpg" alt="USB Micro-B plug — small black trapezoidal connector at the end of a charging cable" loading="lazy"></div>
+        <figcaption class="body">
+          <div class="name">Micro-B <span class="tag legacy">Legacy</span></div>
+          <div class="pins">5 contacts · 6.85 × 1.8 mm</div>
+          <p>The Android-charger plug from roughly 2010 – 2017. Thinner than Mini-B (1.8 mm vs 3 mm) — the difference exists because Micro was designed for ultra-thin phones. Spec-rated for 10 000 insertions vs Mini-B's 5 000. Largely displaced by USB-C in new designs but still ubiquitous on cheap dev boards (e.g., classic Raspberry Pi Zero), e-readers, and budget peripherals.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="connector-card">
+        <div class="photo"><img src="../_assets/connectors/usb-micro-b-superspeed.jpg" alt="USB 3.0 Micro-B plug — Micro-B with a second contact block extending sideways for the SuperSpeed pairs" loading="lazy"></div>
+        <figcaption class="body">
+          <div class="name">Micro-B SuperSpeed <span class="tag niche">Niche</span></div>
+          <div class="pins">10 contacts · 12.25 × 1.8 mm</div>
+          <p>The widest connector in this family for its height — Micro-B with an extra block stuck on the side carrying the SuperSpeed pairs. Backwards-compatible with USB 2.0 Micro-B (which fits in the left half of the receptacle). Mostly seen on USB 3.0 portable hard drives circa 2013 – 2018; almost never used on new designs.</p>
+        </figcaption>
+      </figure>
+
+      <figure class="connector-card">
+        <div class="photo"><img src="../_assets/connectors/usb-c.jpg" alt="USB Type-C plug — small reversible oval connector with 24 contacts in two rows" loading="lazy"></div>
+        <figcaption class="body">
+          <div class="name">Type-C <span class="tag current">Current</span></div>
+          <div class="pins">24 contacts · 8.4 × 2.6 mm</div>
+          <p>The current and (by EU mandate from 2024) statutory connector for almost everything new. Reversible — there is no "wrong way up". The same shell carries USB 2.0, USB 3.x SuperSpeed, USB4, Power Delivery up to 240 W, DisplayPort, Thunderbolt, and PCIe alternate modes. As a device-side designer most of those go unused; the next H2 explains the minimum you actually need to wire up. <strong>edevkit1 uses Type-C exclusively.</strong></p>
+        </figcaption>
+      </figure>
+
+    </div>
+
+    <div class="callout info">
+      <div class="callout-title">"Type-A" vs "Standard-A" — same thing</div>
+      <p>The USB-IF documents call them "Standard-A" and "Standard-B" but everyone in practice says "Type-A" and "Type-B". Both are fine; they refer to the same connectors. "Type-C" is also the spec name — confusingly, the only one of these where colloquial and official names match.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Pitfall — colour-coding is a convention, not a spec</div>
+      <p>Black plastic tongues are USB 2.0 "by convention", blue is USB 3.0 SuperSpeed, teal is USB 3.1 Gen 2 (10 Gbps), red is "always-on charging port". None of this is required by the USB spec. A vendor can ship any colour they want and the device will still work; conversely, a blue port is no guarantee of SuperSpeed if the vendor cheaped out. Always read the markings or the spec sheet, never trust the colour alone.</p>
+    </div>
+
+    <h3>Choosing for a new device</h3>
+    <p>For anything new in 2026, the answer is almost always <strong>Type-C</strong>: the EU's Common Charger Directive (2022/2380, in force since 28 December 2024) requires it on most consumer electronics sold in the EU, and the rest of the world has converged on the same choice for non-regulatory reasons. The remaining cases for picking something else are narrow:</p>
+    <ul>
+      <li><strong>Bench / industrial gear</strong> may keep Standard-B because its mechanical ruggedness and tactile click outweigh the size penalty on a non-portable device.</li>
+      <li><strong>Field-replaceable cables on locked-down appliances</strong> sometimes use Standard-B specifically because Type-C cables are too easy for an end user to substitute.</li>
+      <li><strong>Cost-driven dev boards</strong> targeting hobby use sometimes still ship Micro-B, since the receptacle is ~$0.10 cheaper than a properly-engineered Type-C port. This is a false economy on anything that will ship to customers — Micro-B fatigues mechanically much faster than Type-C.</li>
+    </ul>
+    <p>For edevkit1, Type-C was the obvious pick: regulatory cover, every modern host supports it, and the connector itself is more durable than any of the legacy options.</p>
+
+    <h2>USB-C: more pins, but only a few you care about as a device</h2>
+
+    <p>USB-C has 24 contacts on the connector versus USB 2.0 Type-A's 4. Most of those extras are for SuperSpeed lanes, alternate modes (DisplayPort, Thunderbolt), and Power Delivery — none of which we use. For a USB-2.0-only device with a USB-C port, the active pins are:</p>
+
+    <table class="byte-table">
+      <thead>
+        <tr><th>Pin pair</th><th>Function</th><th>Notes for a device-only port</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="field">VBUS, GND</td><td class="meaning">Power (5 V default)</td><td>Multiple pins, parallel them. Add VBUS-detect to a GPIO/ADC.</td></tr>
+        <tr><td class="field">D+, D- (×2)</td><td class="meaning">USB 2.0 differential pair</td><td>Two pairs on the connector — for cable-orientation flipping. Wire either pair, or both, to your PHY.</td></tr>
+        <tr><td class="field">CC1, CC2</td><td class="meaning">Configuration channel</td><td>Carries Type-C orientation, role, and PD signaling. As a device, install 5.1 kΩ pull-downs on each.</td></tr>
+        <tr><td class="field">SBU1, SBU2</td><td class="meaning">Sideband (DP, audio, etc.)</td><td>Leave unconnected for USB-2.0-only.</td></tr>
+        <tr><td class="field">TX1±, RX1±, TX2±, RX2±</td><td class="meaning">SuperSpeed lanes</td><td>Leave unconnected for USB-2.0-only.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>The CC pull-down rule</h3>
+    <p>This is the most-often-screwed-up part of a USB-C device design. A USB-C device-only port (called <em>UFP</em>, Upstream-Facing Port) <strong>must</strong> install a 5.1 kΩ pull-down to GND on each CC line:</p>
+
+    <pre><code>             VBUS
+   USB-C       ↑
+   port       ┃ host applies 56 kΩ pull-up
+   ───────────┻─── CC1 ─── 5.1 kΩ ── GND   ← in your device
+              ┃
+   ───────────┻─── CC2 ─── 5.1 kΩ ── GND   ← in your device
+</code></pre>
+
+    <p>Why two? Because USB-C is reversible — the user can plug in either way up. Whichever CC line your device's pull-down is detected on tells the host which orientation the cable is in. The host's PHY then routes its TX/RX lanes to the correct connector pins. Without those pull-downs, the host doesn't see a device and won't even apply VBUS — your "broken" board is actually electrically invisible.</p>
+
+    <div class="callout warn">
+      <div class="callout-title">Common mistake</div>
+      <p>Do <strong>not</strong> use a single 5.1 kΩ shared between CC1 and CC2. Each line needs its own dedicated pull-down. Sharing one resistor breaks orientation detection and will confuse some hosts into thinking they're seeing a powered cable instead of a device.</p>
+    </div>
+
+    <h3>VBUS detect</h3>
+    <p>USB-C ports may be on hosts that supply VBUS only when they detect a device (after CC handshake). Your firmware should not assume VBUS is present whenever the cable is connected. Route VBUS through a divider (e.g., 100 kΩ / 100 kΩ to halve to ~2.5 V) into an ADC pin and check it before enabling the USB PHY. This also gives you the input you need to support self-powered modes.</p>
+
+    <h3>"E-marked" cables and what to ignore</h3>
+    <p>USB-C cables &gt; 3 A or with USB-PD &gt; 60 W contain a small chip ("e-marker") that the host can query over CC for the cable's capabilities. As a device, you don't need to know or care — your CC pull-downs and VBUS-detect work the same with or without an e-marker. The complexity exists for hosts negotiating power, not for devices.</p>
+
+    <h2>Things we are explicitly not doing</h2>
+    <p>USB-C can carry a lot more than USB 2.0. We're not doing any of it on edevkit1:</p>
+    <ul>
+      <li><strong>USB-PD (Power Delivery)</strong> — voltage / current negotiation up to 240 W. Out of scope; we run on default 5 V VBUS at 250 mA.</li>
+      <li><strong>USB SuperSpeed (3.x)</strong> — additional differential lanes at 5/10/20 Gbps. Not supported by RP2350.</li>
+      <li><strong>Alternate modes (DP Alt, Thunderbolt)</strong> — repurpose SS lanes for video/PCIe. Not applicable to a device-only USB-2.0 port.</li>
+      <li><strong>USB-C-to-A or USB-C-to-B passive adapters</strong> — these shortcut CC and don't follow the orientation rules. Most work, but some hosts will refuse to enumerate. Use a real C-to-C cable when in doubt.</li>
+    </ul>
+
+    <h2>Signal integrity — what actually matters at FS</h2>
+
+    <p>At 12 Mbps full-speed, USB is forgiving. The main failure modes you'll see on a hand-soldered prototype are:</p>
+
+    <h3>Trace length and impedance</h3>
+    <p>Aim for &lt; 80 mm of D+/D- trace from connector to PHY. Match D+ and D- lengths within 0.5 mm. Target ~90 Ω differential impedance — on a typical 4-layer 1.6 mm FR4 stack, that's roughly 0.13 mm trace width with 0.18 mm gap on the outer layer. Your PCB fab can spit out a stackup and you can use their controlled-impedance calculator. At FS this is "nice to have, not catastrophic if missed by 20%". At HS it's mandatory.</p>
+
+    <h3>Common-mode chokes (CMCs)</h3>
+    <p>A small CMC (e.g., Murata DLW21SN900HQ2) in series with D+/D- right at the connector helps EMI without affecting differential signal. Not required for prototype, but most production designs include one. Be sure to pick a part rated for USB (90 Ω at 100 MHz is the typical spec) — a generic CMC will distort the signal.</p>
+
+    <h3>ESD diodes</h3>
+    <p>USB is the most-likely path for ESD events on a portable device — a user touches the connector with a charged finger. Add a low-capacitance TVS diode array (e.g., USBLC6-2) on D+/D-/VBUS at the connector. RP2350's PHY pins are already moderately ESD-tolerant, but the diode is cheap insurance.</p>
+
+    <h3>Decoupling and ferrites</h3>
+    <p>VBUS-to-3.3V regulator: a 10 µF bulk + 0.1 µF decoupling at the regulator input is enough. If your host is sensitive (rare), add a ferrite bead in the VBUS line to attenuate switching noise from your 3.3 V regulator back into the host.</p>
+
+    <h2>The picture for edevkit1</h2>
+    <p>Putting it together for the edevkit1 board:</p>
+    <ul>
+      <li>USB-C receptacle, USB-2.0-only wiring (D+/D- on the primary pair, second pair tied to first or terminated, SS lanes NC, SBU NC).</li>
+      <li>5.1 kΩ from each of CC1 and CC2 to GND.</li>
+      <li>VBUS through a TVS-array (USBLC6-2 or equivalent), bulk capacitor, into a TPS62933 buck for 3.3 V.</li>
+      <li>VBUS divider into an ADC pin for VBUS-present detection.</li>
+      <li>D+/D- through the same TVS-array, then ≤ 80 mm of length-matched, ~90 Ω-differential trace into RP2350's USB pins (<code>USB_DP</code> = pin 48, <code>USB_DM</code> = pin 46 on the QFN-80 package — datasheet §1.2.2).</li>
+      <li><strong>27 Ω series termination resistor on each of D+ and D-, between the chip and the connector.</strong> The RP2350 datasheet §1.2.2 calls this out as required: <em>"A 27 Ω series termination resistor is required on each pin, but bus pullups and pulldowns are provided internally."</em> Many other MCU USB blocks include the series resistance on-die; RP2350 does not. Omit them and you'll see eye-pattern violations and intermittent enumeration with longer cables.</li>
+      <li>RP2350's USB PHY runs natively at FS — no external transceiver needed.</li>
+    </ul>
+    <p>That's the complete USB-C-side checklist. Seven components, a couple of trace rules, and you're done. Most of the difficulty in USB is on the protocol side (the rest of this book), not the wires. <a href="../partIII/14_rp2350_usb.html">Ch 14</a> opens up the RP2350 USB block from the firmware side.</p>
+
+    <h2>Common pitfalls</h2>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"Plugging in does nothing — host sees no device, no VBUS even applied."</strong> CC pull-downs missing or shorted. With no 5.1 kΩ, the host doesn't see a UFP and won't enable VBUS. Multimeter the CC1 and CC2 pins to GND with the cable disconnected: each should read ~5.1 kΩ.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"Works on Linux laptop, fails on a USB-C wall hub."</strong> The wall hub is more strict about CC orientation. Check that you have a pull-down on <em>both</em> CC1 and CC2, not just one — single-CC designs work on lenient hosts and fail on strict ones.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"Random enumeration failures, especially with longer cables."</strong> Trace length, common-mode noise, or marginal impedance. Try a short, known-good 1 m cable. If that fixes it, your D+/D- trace tuning is borderline. If it doesn't, look at VBUS noise.</p>
+    </div>
+
+    <div class="callout pitfall">
+      <div class="callout-title">Symptom → Fix</div>
+      <p><strong>"My device gets enumerated as low-speed when I expected full-speed."</strong> Pull-up is on D- instead of D+, or has the wrong value. RP2350 manages its own pull-up in firmware via <code>SIE_CTRL.PULLUP_EN</code>; the strength is selectable via <code>SIE_CTRL.RPU_OPT</code> (0 = ~1.2 kΩ default, 1 = ~2.3 kΩ — the USB 2.0 spec target is 1.5 kΩ ± 5 %, so RP2350's default is intentionally softer). Confirm the speed configuration in <code>$ZEPHYR_BASE/drivers/usb/udc/udc_rpi_pico.c</code> or see <a href="../partIII/14_rp2350_usb.html#piece-phy">Ch 14 §3b</a>.</p>
+    </div>
+
+    <h2>Going deeper</h2>
+    <ul>
+      <li>USB 2.0 Specification §7 (Electrical) — definitive but dense. <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a>.</li>
+      <li>USB Type-C Cable and Connector Specification, R2.4 §4.5 (CC functional model). <a href="https://www.usb.org/document-library/usb-type-cr-cable-and-connector-specification-release-24">usb.org</a>.</li>
+      <li>FTDI's <a href="https://ftdichip.com/wp-content/uploads/2020/08/AN_146_USB_Hardware_Design_Guidelines_for_FTDI_ICs.pdf">USB Hardware Design Guidelines</a> — vendor-neutral despite the title; great for layout intuition.</li>
+      <li>Raspberry Pi <a href="https://github.com/raspberrypi/hardware-design-guide">Hardware Design Guide</a> — RP2040/RP2350-specific layout examples for USB-C.</li>
+    </ul>
+
+    <aside class="image-credits" aria-label="Image credits">
+      <strong>Photo credits.</strong> Connector photographs in this chapter are reproduced from Wikimedia Commons under their original free licences. Full per-image attribution is in <a href="../_assets/connectors/IMAGE_CREDITS.md"><code>_assets/connectors/IMAGE_CREDITS.md</code></a>. Photographers, in card order: SparkFun Electronics (CC&nbsp;BY&nbsp;2.0), Johannes Kalliauer (CC&nbsp;BY-SA&nbsp;4.0), Mrsurrender (CC&nbsp;BY-SA&nbsp;3.0), Anıl Öztaş (CC&nbsp;BY-SA&nbsp;4.0), 9MKR (CC&nbsp;BY-SA&nbsp;4.0), masamic (CC&nbsp;BY-SA&nbsp;3.0), smial (FAL), Tomato86 (CC&nbsp;BY-SA&nbsp;4.0).
+    </aside>
+
+    <nav class="chapter-nav" aria-label="Chapter navigation">
+      <a class="prev" href="01_why_usb.html">
+        <div class="nav-label">← Previous</div>
+        <div class="nav-title">Ch 01: Why USB is the way it is</div>
+      </a>
+      <a class="next" href="03_packets.html">
+        <div class="nav-label">Next →</div>
+        <div class="nav-title">Ch 03: Packets &amp; framing</div>
+      </a>
+    </nav>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

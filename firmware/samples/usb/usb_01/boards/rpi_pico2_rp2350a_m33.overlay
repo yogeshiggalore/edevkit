@@ -1,0 +1,9 @@
+  /{
+    chosen {
+        zephyr,uart-mcumgr = &usbd;
+    };                                                                                                                                                                                                             
+};                         
+
+&usbd {
+    status = "okay";
+};

@@ -1180,23 +1180,60 @@ rustup default stable</code></pre>
 # If it doesn't, download from https://developer.microsoft.com/microsoft-edge/webview2</code></pre>
 </div>
 
-<h4>7c. Install <code>cargo-tauri</code> and probe-rs</h4>
+<h4 id="step7c">7c. Install <code>cargo-tauri</code> and probe-rs</h4>
 
 <pre><code># Install the Tauri CLI (used for building/dev-running the GUI):
 cargo install tauri-cli --version "^2.0"     # version pin matches Tauri 2.x
-
-# probe-rs — Rust-native debug probe driver. Used by the host for SWD/JTAG:
-cargo install --locked probe-rs-tools
 
 # (Optional but useful) cargo-make / cargo-binstall for faster installs of
 # pre-built binaries:
 cargo install cargo-binstall</code></pre>
 
+<p><strong>probe-rs</strong> — Rust-native debug probe driver, used by the host for SWD/JTAG and by the <code>edev_flash</code> helper. Pick one install path:</p>
+
+<div class="os-card mac">
+  <span class="os-tag">macOS — recommended</span>
+  <pre><code>brew install probe-rs/probe-rs/probe-rs</code></pre>
+  <p class="small">≈10 seconds, no Rust toolchain needed, easy upgrades via <code>brew upgrade probe-rs</code>. The tap is maintained by the probe-rs team and tracks releases promptly.</p>
+</div>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux — recommended</span>
+  <pre><code>curl --proto '=https' --tlsv1.2 -LsSf \
+    https://github.com/probe-rs/probe-rs/releases/latest/download/probe-rs-tools-installer.sh | sh</code></pre>
+  <p class="small">Installs pre-built binaries to <code>~/.cargo/bin</code> (or <code>~/.local/bin</code>). No compile time. Pair with the udev rules in <a href="#udev">USB permissions</a> below.</p>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows — recommended</span>
+  <pre><code>powershell -c "irm https://github.com/probe-rs/probe-rs/releases/latest/download/probe-rs-tools-installer.ps1 | iex"</code></pre>
+  <p class="small">Pre-built binaries; no Rust toolchain compile required. Plug-and-play with the Raspberry Pi Debug Probe over USB (CMSIS-DAP is HID-class, no driver work).</p>
+</div>
+
+<p class="small"><strong>Fallback (any OS):</strong> <code>cargo install --locked probe-rs-tools</code>. Compiles probe-rs from source — takes 5–10 minutes and pulls in a large dependency tree. Only needed if the package/installer paths above don't work for you, or if you specifically want a bleeding-edge build.</p>
+
 <h4>Verify step 7</h4>
 <pre><code>cargo --version          # 1.7x.x or newer
 rustc --version          # matching
 cargo tauri --version    # 2.x
-probe-rs --version       # any 0.x or 1.x</code></pre>
+probe-rs --version       # 0.31.x or newer
+
+# Plug in your Raspberry Pi Debug Probe and confirm it enumerates:
+probe-rs list
+# Expected:
+#   [0]: Debug Probe (CMSIS-DAP) -- 2e8a:000c-0:E66... (CMSIS-DAP)</code></pre>
+
+<div class="callout info">
+  <span class="label">Raspberry Pi Debug Probe wiring</span>
+  <p>The Pi Debug Probe ships with a 3-pin debug cable (SWD). Wire it to edevkit1 like this:</p>
+  <table>
+    <tr><th>Pi probe pin</th><th>edevkit1 pin</th><th>Notes</th></tr>
+    <tr><td>SWCLK (orange)</td><td>GPIO 12</td><td>SWD clock</td></tr>
+    <tr><td>SWDIO (yellow)</td><td>GPIO 13</td><td>SWD bidirectional data</td></tr>
+    <tr><td>GND (black)</td><td>GND</td><td>signal ground</td></tr>
+  </table>
+  <p class="small">The probe's 6-pin header carries an additional <strong>VTREF</strong> (probe-side voltage reference; tie to <code>3V3</code>) and an <strong>nRESET</strong> line that maps to GPIO 16 on edevkit1. Neither is required for normal flashing, but wire nRESET if you need <code>--connect-under-reset</code> to attach to a chip with a misbehaving image. Keep the SWD cable ≤6": signal integrity on RP2350 degrades fast past that (CLAUDE.md gotcha #9).</p>
+</div>
 
 <!-- =========================================================================== -->
 <h2 id="step8">Step 8 — KiCad 9 + KiBot (hardware)</h2>
@@ -1509,10 +1546,11 @@ edev_help</code></pre>
   <tr><td><code>edev_activate</code></td><td>enter the Python venv at <code>$EDEV_VENV</code></td></tr>
   <tr><td><code>westz &lt;args…&gt;</code></td><td>run <code>west</code> from inside <code>$ZEPHYR_WORKSPACE</code> regardless of <code>$PWD</code></td></tr>
   <tr><td><code>edev_create_app &lt;name&gt; [parent]</code></td><td>scaffold a new Zephyr app at <code>$PWD/&lt;name&gt;/</code> (override the parent dir with the second arg)</td></tr>
-  <tr><td><code>edev_build [src] [board]</code></td><td>pristine sysbuild build (MCUboot + signed app); default board <code>rpi_pico2/rp2350a/m33</code></td></tr>
+  <tr><td><code>edev_build [src] [board]</code></td><td>pristine sysbuild build (MCUboot + signed app); default board <code>rpi_pico2/rp2350a/m33</code>. When sysbuild stitches multiple images, also emits a single <code>merged.uf2</code> at the build-dir root for one-drop BOOTSEL recovery. <em>Slow but always correct.</em></td></tr>
+  <tr><td><code>edev_rebuild [src] [board]</code></td><td>incremental sysbuild — reuses the existing build directory for ~5 s rebuilds on source-only edits. Falls back to <code>edev_build</code> automatically if no build dir exists yet. Switch back to <code>edev_build</code> after editing <code>prj.conf</code>, devicetree overlays, or <code>CMakeLists.txt</code>.</td></tr>
   <tr><td><code>edev_build_simple</code></td><td>pristine non-sysbuild build for ad-hoc samples</td></tr>
-  <tr><td><code>edev_flash</code></td><td>flash via probe-rs over SWD</td></tr>
-  <tr><td><code>edev_flash_uf2</code></td><td>UF2 drag-and-drop flash for BOOTSEL mode (volume <code>RP2350</code>)</td></tr>
+  <tr><td><code>edev_flash</code></td><td>flash via probe-rs over SWD; defaults to the Raspberry Pi Debug Probe (<code>2e8a:000c</code>). Override with <code>EDEV_PROBE</code> / <code>EDEV_PROBE_PROTOCOL</code> / <code>EDEV_PROBE_SPEED</code>. Writes both bootloader and signed app, then resets the chip.</td></tr>
+  <tr><td><code>edev_flash_uf2</code></td><td>UF2 drag-and-drop flash for BOOTSEL mode (volume <code>RP2350</code>); prefers <code>merged.uf2</code> when present</td></tr>
   <tr><td><code>edev_ota</code></td><td>push signed image via <code>mcumgr</code> to a running kit</td></tr>
   <tr><td><code>edev_console</code></td><td>open serial console (tio if available, else screen)</td></tr>
   <tr><td><code>edev_doc</code></td><td>open the local docs hub in a browser</td></tr>

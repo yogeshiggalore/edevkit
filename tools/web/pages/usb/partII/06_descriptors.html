@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="The four-level USB descriptor tree — device, configuration, interface, endpoint — dissected byte-by-byte. How the host walks the tree on a single GET_DESCRIPTOR(configuration) request.">
+  <title>edevkit USB Book — Part II · Ch 06: Device, configuration, interface, endpoint</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Part II · Ch 06</span>
+      <span class="grow"></span>
+      <span class="last-verified">Verified · Zephyr 4.4 · 2026-05-11</span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · part II · ch 06</div>
+    <h1>Device, configuration, interface, endpoint</h1>
+    <p class="lede">The four-level tree that every USB device speaks — and the one request that reads the entire tree in a single transfer.</p>
+  </header>
+
+  <section class="chapter-meta" aria-label="Chapter metadata">
+    <div class="meta-row">
+      <div class="meta-label">You'll learn</div>
+      <div>
+        <ul>
+          <li>The four descriptor types and how they nest into a tree.</li>
+          <li>Why a single <code>GET_DESCRIPTOR(configuration)</code> returns the configuration descriptor <em>and</em> every interface and endpoint descriptor that follows.</li>
+          <li>What <code>wTotalLength</code> measures, and why it's the single field most likely to be miscalculated.</li>
+          <li>The bit-level layout of <code>bEndpointAddress</code> and <code>bmAttributes</code> — direction, EP number, transfer type, sync, usage.</li>
+          <li>The difference between the device-level class triple and the interface-level class triple, and which one drivers actually look at.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Prereqs</div>
+      <div>Chapters 01–05. You know what a control transfer is and have watched the enumeration sequence.</div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Sample</div>
+      <div><code class="sample-link">firmware/samples/usb/usb_02/</code> · <a href="/docs/firmware_sample_usb_02.html">design doc</a> — vendor class, 1 interface, 2 declared-but-NAK-forever bulk endpoints. Smallest descriptor tree that exercises every descriptor type in this chapter.</div>
+    </div>
+    <div class="meta-row">
+      <div class="meta-label">Verified</div>
+      <div>2026-05-11 · USB 2.0 spec §9.5–9.6.6, Zephyr 4.4 USB-Device-Next.</div>
+    </div>
+  </section>
+
+  <!-- ─────────────── 1. THE HIERARCHY ─────────────── -->
+
+  <h2>1. The descriptor hierarchy</h2>
+
+  <p>A USB device describes itself with a nested tree of <strong>descriptors</strong>. Each descriptor is a small fixed-format byte blob; the first two bytes are always <code>bLength</code> (size in bytes) and <code>bDescriptorType</code> (what kind of descriptor this is). The tree has exactly four levels:</p>
+
+  <div class="mermaid-wrap">
+    <pre class="mermaid">
+graph TD
+  D[Device descriptor<br/>18 bytes<br/>type 0x01]
+  C1[Configuration descriptor<br/>9 bytes + sub-tree<br/>type 0x02]
+  C2[Configuration descriptor 2..N<br/>optional<br/>type 0x02]
+  I1[Interface descriptor<br/>9 bytes<br/>type 0x04]
+  I2[Interface descriptor 2..M<br/>optional<br/>type 0x04]
+  E1[Endpoint descriptor<br/>7 bytes<br/>type 0x05]
+  E2[Endpoint descriptor 2..K<br/>per interface<br/>type 0x05]
+
+  D --> C1
+  D --> C2
+  C1 --> I1
+  C1 --> I2
+  I1 --> E1
+  I1 --> E2
+    </pre>
+  </div>
+
+  <p>Three facts to internalise before going further:</p>
+
+  <ol>
+    <li><strong>Exactly one device descriptor per device.</strong> No alternatives, no plurals. It carries vendor / product / class identifiers and tells the host how many configurations exist.</li>
+    <li><strong>One configuration is "active" at a time.</strong> Multi-config devices exist (USB-Ethernet adapters often ship one config for "Ethernet-only" and another for "Ethernet + serial"), but only one is selected at any moment. 90% of devices, including usb_02, ship a single configuration.</li>
+    <li><strong>Endpoints belong to interfaces, not devices.</strong> An interface is a logical function (e.g., "serial port", "mass storage"); its endpoints are the data pipes that function uses. Endpoint 0 is implicit and shared by every interface — it's the control pipe and is never listed in any descriptor.</li>
+  </ol>
+
+  <div class="callout info">
+    <div class="callout-title">Why this matters</div>
+    <p>Drivers bind to <em>interfaces</em>, not to devices. A single physical USB device can have multiple interfaces, each loaded by a different driver — that's how a USB headset can simultaneously present an audio interface (claimed by the audio driver) and an HID interface for the volume buttons (claimed by the HID driver) without anybody coordinating.</p>
+  </div>
+
+  <!-- ─────────────── 2. DEVICE DESCRIPTOR ─────────────── -->
+
+  <h2>2. The device descriptor</h2>
+
+  <p>18 bytes. Read in two control transfers during enumeration (see Ch 05): first 8 bytes to discover <code>bMaxPacketSize0</code>, then the full 18 bytes after addressing. The bytes <em>usb_02</em> returns:</p>
+
+  <table class="byte-table">
+    <thead>
+      <tr><th>Offset</th><th>Hex</th><th>Field</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="offset">0x00</td><td class="hex">12</td><td class="field">bLength</td><td class="meaning">18 — the entire device descriptor is exactly 18 bytes.</td></tr>
+      <tr><td class="offset">0x01</td><td class="hex">01</td><td class="field">bDescriptorType</td><td class="meaning">DEVICE (0x01).</td></tr>
+      <tr><td class="offset">0x02</td><td class="hex">00 02</td><td class="field">bcdUSB</td><td class="meaning">USB 2.0.0 in BCD, little-endian (<code>0x0200</code>). Required to be 2.x even for a Full-Speed-only device.</td></tr>
+      <tr><td class="offset">0x04</td><td class="hex">00</td><td class="field">bDeviceClass</td><td class="meaning">0 — "see interface descriptors." Forces the host to look one level deeper for class info.</td></tr>
+      <tr><td class="offset">0x05</td><td class="hex">00</td><td class="field">bDeviceSubClass</td><td class="meaning">0 — meaningful only when bDeviceClass ≠ 0.</td></tr>
+      <tr><td class="offset">0x06</td><td class="hex">00</td><td class="field">bDeviceProtocol</td><td class="meaning">0 — same.</td></tr>
+      <tr><td class="offset">0x07</td><td class="hex">40</td><td class="field">bMaxPacketSize0</td><td class="meaning">64 — max packet size for EP0 (control pipe). Valid values for FS: 8, 16, 32, 64.</td></tr>
+      <tr><td class="offset">0x08</td><td class="hex">09 12</td><td class="field">idVendor</td><td class="meaning"><code>0x1209</code> (pid.codes open-hardware umbrella). LE on wire so bytes are <code>09 12</code>.</td></tr>
+      <tr><td class="offset">0x0A</td><td class="hex">E2 ED</td><td class="field">idProduct</td><td class="meaning"><code>0xede2</code> for usb_02. LE.</td></tr>
+      <tr><td class="offset">0x0C</td><td class="hex">00 01</td><td class="field">bcdDevice</td><td class="meaning"><code>0x0100</code> — device revision. Increment to bust the macOS string-descriptor cache when iterating during development.</td></tr>
+      <tr><td class="offset">0x0E</td><td class="hex">00</td><td class="field">iManufacturer</td><td class="meaning">String index 0 → no manufacturer string. (Ch 07 turns this on.)</td></tr>
+      <tr><td class="offset">0x0F</td><td class="hex">00</td><td class="field">iProduct</td><td class="meaning">0 → no product string.</td></tr>
+      <tr><td class="offset">0x10</td><td class="hex">00</td><td class="field">iSerialNumber</td><td class="meaning">0 → no serial number string.</td></tr>
+      <tr><td class="offset">0x11</td><td class="hex">01</td><td class="field">bNumConfigurations</td><td class="meaning">1 — single config. The host iterates <code>1..bNumConfigurations</code> to discover all configs.</td></tr>
+    </tbody>
+  </table>
+
+  <p>The first byte of <em>every</em> descriptor type is <code>bLength</code> and the second is <code>bDescriptorType</code>. That two-byte prefix lets the host parse a flat byte stream into a tree without needing a separate length-prefixed structure — every descriptor is self-delimiting.</p>
+
+  <!-- ─────────────── 3. CONFIGURATION DESCRIPTOR ─────────────── -->
+
+  <h2>3. The configuration descriptor</h2>
+
+  <p>9 bytes — and yet the entire sub-tree (every interface and endpoint below this config) is read in a single <code>GET_DESCRIPTOR(configuration)</code> transfer. That's because of <code>wTotalLength</code>:</p>
+
+  <table class="byte-table">
+    <thead>
+      <tr><th>Offset</th><th>Hex</th><th>Field</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="offset">0x00</td><td class="hex">09</td><td class="field">bLength</td><td class="meaning">9 — this descriptor alone is 9 bytes…</td></tr>
+      <tr><td class="offset">0x01</td><td class="hex">02</td><td class="field">bDescriptorType</td><td class="meaning">CONFIGURATION (0x02).</td></tr>
+      <tr><td class="offset">0x02</td><td class="hex">20 00</td><td class="field">wTotalLength</td><td class="meaning"><strong>32</strong> — total bytes for this config + every interface + every endpoint that follows. For usb_02: 9 (config) + 9 (iface) + 7 (ep_out) + 7 (ep_in) = 32.</td></tr>
+      <tr><td class="offset">0x04</td><td class="hex">01</td><td class="field">bNumInterfaces</td><td class="meaning">1 interface in this configuration.</td></tr>
+      <tr><td class="offset">0x05</td><td class="hex">01</td><td class="field">bConfigurationValue</td><td class="meaning">1 — the value the host passes to <code>SET_CONFIGURATION</code> to activate this config. Configurations are 1-indexed (0 means "unconfigured").</td></tr>
+      <tr><td class="offset">0x06</td><td class="hex">00</td><td class="field">iConfiguration</td><td class="meaning">String index 0 → no config string. Ch 07 turns this on.</td></tr>
+      <tr><td class="offset">0x07</td><td class="hex">A0</td><td class="field">bmAttributes</td><td class="meaning">Bit 7 = 1 (reserved, must be set); bit 5 = 1 (Remote Wakeup); bit 6 = 0 (not self-powered).</td></tr>
+      <tr><td class="offset">0x08</td><td class="hex">32</td><td class="field">bMaxPower</td><td class="meaning">50 — in <strong>2 mA units</strong>. 50 × 2 = 100 mA, the default per USB 2.0 §9.6.3.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>3a. <code>wTotalLength</code> — the one field most likely to break</h3>
+
+  <p>When the host issues <code>GET_DESCRIPTOR(configuration, wLength=0xFFFF)</code>, the device returns <code>wTotalLength</code> bytes — the configuration descriptor itself, immediately followed by every interface descriptor, followed by every endpoint descriptor (and any class-specific descriptors interspersed). The host parses the resulting byte stream into a tree using each descriptor's <code>bLength</code> prefix.</p>
+
+  <p>This means <strong>wTotalLength must equal the sum of every descriptor byte the device emits in the response.</strong> Get it wrong by even one byte and one of two failures happens:</p>
+
+  <ul>
+    <li><strong>Too small</strong> → host parses only the first <code>wTotalLength</code> bytes; trailing endpoints are silently dropped. Symptom: device enumerates, but pipes don't open.</li>
+    <li><strong>Too large</strong> → host waits for bytes that never arrive, the IN transfer times out. Symptom: device "won't enumerate."</li>
+  </ul>
+
+  <div class="callout info">
+    <div class="callout-title">Zephyr writes wTotalLength for you</div>
+    <p>In Zephyr USB-Device-Next, <code>wTotalLength</code> is computed by the core at <code>usbd_init()</code> time by walking the class's <code>fs_desc[]</code> array and summing each descriptor's <code>bLength</code>. You initialise the field to <code>0</code> in <code>USBD_CONFIGURATION_DEFINE</code> and the core fills it in. Hand-rolling a USB stack? Compute this yourself, get it wrong, and you'll spend a day debugging.</p>
+  </div>
+
+  <!-- ─────────────── 4. INTERFACE DESCRIPTOR ─────────────── -->
+
+  <h2>4. The interface descriptor</h2>
+
+  <table class="byte-table">
+    <thead>
+      <tr><th>Offset</th><th>Hex</th><th>Field</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="offset">0x00</td><td class="hex">09</td><td class="field">bLength</td><td class="meaning">9.</td></tr>
+      <tr><td class="offset">0x01</td><td class="hex">04</td><td class="field">bDescriptorType</td><td class="meaning">INTERFACE (0x04).</td></tr>
+      <tr><td class="offset">0x02</td><td class="hex">00</td><td class="field">bInterfaceNumber</td><td class="meaning">0 — interfaces are 0-indexed within a configuration.</td></tr>
+      <tr><td class="offset">0x03</td><td class="hex">00</td><td class="field">bAlternateSetting</td><td class="meaning">0 — default alternate setting. Multi-alt interfaces (e.g., audio bandwidth modes) use higher values; not relevant for usb_02.</td></tr>
+      <tr><td class="offset">0x04</td><td class="hex">02</td><td class="field">bNumEndpoints</td><td class="meaning">2 — number of endpoints this interface uses, <em>not counting</em> EP0 (which is shared).</td></tr>
+      <tr><td class="offset">0x05</td><td class="hex">FF</td><td class="field">bInterfaceClass</td><td class="meaning"><code>0xFF</code> — Vendor Specific. No standard driver loads.</td></tr>
+      <tr><td class="offset">0x06</td><td class="hex">FF</td><td class="field">bInterfaceSubClass</td><td class="meaning"><code>0xFF</code> — vendor-defined.</td></tr>
+      <tr><td class="offset">0x07</td><td class="hex">FF</td><td class="field">bInterfaceProtocol</td><td class="meaning"><code>0xFF</code> — vendor-defined.</td></tr>
+      <tr><td class="offset">0x08</td><td class="hex">00</td><td class="field">iInterface</td><td class="meaning">String index 0 → no interface name. Ch 07 turns this on.</td></tr>
+    </tbody>
+  </table>
+
+  <p>The interface descriptor is the level where <strong>drivers bind</strong>. Linux's <code>usb-storage</code> looks for any interface with class <code>0x08</code>; the HID core looks for class <code>0x03</code>; Windows' <code>WinUSB</code> matches on a custom <code>0xFF</code> with a particular GUID. A device's "personality" is decided by the interface class triple, not the device class triple.</p>
+
+  <h3>4a. Alternate settings</h3>
+
+  <p>A single interface number can appear multiple times in the descriptor tree, distinguished by <code>bAlternateSetting</code>. Each alternate carries its own endpoint set. The host issues <code>SET_INTERFACE(alt)</code> to switch between them — typically used by isochronous classes (audio, video) to swap between idle (zero endpoints, zero bandwidth) and active (1+ endpoints, reserved bandwidth) modes. usb_02 has only the default alt setting; multi-alt examples land in later samples.</p>
+
+  <!-- ─────────────── 5. ENDPOINT DESCRIPTOR ─────────────── -->
+
+  <h2>5. The endpoint descriptor</h2>
+
+  <p>7 bytes — the smallest descriptor type — but the highest bit-density:</p>
+
+  <table class="byte-table">
+    <thead>
+      <tr><th>Offset</th><th>Hex</th><th>Field</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr class="spec-section"><td colspan="4">EP OUT (bulk, address 0x01)</td></tr>
+      <tr><td class="offset">0x00</td><td class="hex">07</td><td class="field">bLength</td><td class="meaning">7.</td></tr>
+      <tr><td class="offset">0x01</td><td class="hex">05</td><td class="field">bDescriptorType</td><td class="meaning">ENDPOINT (0x05).</td></tr>
+      <tr><td class="offset">0x02</td><td class="hex">01</td><td class="field">bEndpointAddress</td><td class="meaning">EP1 OUT. Bit 7 = 0 (OUT), bits 0–3 = 1 (EP number). See §5a.</td></tr>
+      <tr><td class="offset">0x03</td><td class="hex">02</td><td class="field">bmAttributes</td><td class="meaning">Bulk. See §5b for the bit decoding.</td></tr>
+      <tr><td class="offset">0x04</td><td class="hex">40 00</td><td class="field">wMaxPacketSize</td><td class="meaning"><code>64</code> bytes (LE). Max payload per packet on this EP.</td></tr>
+      <tr><td class="offset">0x06</td><td class="hex">00</td><td class="field">bInterval</td><td class="meaning"><code>0</code> for bulk and isochronous; for interrupt EPs this is the polling interval in (FS) ms or (HS) 125-µs microframes.</td></tr>
+      <tr class="spec-section"><td colspan="4">EP IN (bulk, address 0x81) — same shape</td></tr>
+      <tr><td class="offset">0x00</td><td class="hex">07</td><td class="field">bLength</td><td class="meaning">7.</td></tr>
+      <tr><td class="offset">0x01</td><td class="hex">05</td><td class="field">bDescriptorType</td><td class="meaning">ENDPOINT.</td></tr>
+      <tr><td class="offset">0x02</td><td class="hex">81</td><td class="field">bEndpointAddress</td><td class="meaning">EP1 IN. Bit 7 = 1 (IN), bits 0–3 = 1.</td></tr>
+      <tr><td class="offset">0x03</td><td class="hex">02</td><td class="field">bmAttributes</td><td class="meaning">Bulk.</td></tr>
+      <tr><td class="offset">0x04</td><td class="hex">40 00</td><td class="field">wMaxPacketSize</td><td class="meaning">64.</td></tr>
+      <tr><td class="offset">0x06</td><td class="hex">00</td><td class="field">bInterval</td><td class="meaning">0.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>5a. <code>bEndpointAddress</code> bit layout</h3>
+
+  <pre><code>bit:    7    6 5 4    3 2 1 0
+        ─    ─────    ───────
+       DIR  reserved  EP number (0..15)
+
+DIR = 1 → IN  (device → host)
+DIR = 0 → OUT (host → device)
+</code></pre>
+
+  <p>Two endpoint descriptors sharing the same EP number but different directions form an <strong>IN/OUT pair</strong> at the controller level. They consume <em>one</em> hardware endpoint slot on most controllers (including the RP2350's), so pairing IN and OUT on the same number is the common idiom for bulk-data classes (see usb_02 — EP1 OUT and EP1 IN).</p>
+
+  <h3>5b. <code>bmAttributes</code> bit layout</h3>
+
+  <pre><code>bit:    7 6     5 4         3 2          1 0
+        ─ ─     ─ ─         ─ ─          ─ ─
+       reserved usage     sync           transfer type
+
+Transfer type (bits 0-1):
+  00 = Control     (only used for EP0, never declared in descriptors)
+  01 = Isochronous
+  10 = Bulk        ← usb_02 uses this
+  11 = Interrupt
+
+Sync (bits 2-3) — only meaningful for isochronous:
+  00 = No sync   01 = Async    10 = Adaptive   11 = Sync
+
+Usage (bits 4-5) — only meaningful for isochronous:
+  00 = Data      01 = Feedback 10 = Implicit feedback data
+</code></pre>
+
+  <p>For bulk and interrupt endpoints, bits 2–7 are reserved-zero. Only bits 0–1 carry information. The rich sync/usage encoding exists for isochronous audio/video endpoints — covered in Ch 25.</p>
+
+  <h3>5c. <code>wMaxPacketSize</code> — the size of one packet, not one transfer</h3>
+
+  <p>USB transfers are made of multiple packets. <code>wMaxPacketSize</code> caps the size of an individual packet on the wire; a larger transfer is split into <code>ceil(transfer_size / wMaxPacketSize)</code> packets, terminated by a short packet (or a ZLP if the transfer is an exact multiple of <code>wMaxPacketSize</code>). For Full-Speed bulk endpoints, only 8, 16, 32, 64 are legal; 64 is the standard pick because anything smaller leaves throughput on the table.</p>
+
+  <!-- ─────────────── 6. HOW THE HOST WALKS ─────────────── -->
+
+  <h2>6. How the host walks the tree</h2>
+
+  <p>The device descriptor is read first (during enumeration; see Ch 05). To discover the rest of the tree, the host issues a <strong>single</strong> control transfer:</p>
+
+  <div class="mermaid-wrap">
+    <pre class="mermaid">
+sequenceDiagram
+  participant H as Host
+  participant D as Device
+
+  Note over H,D: After SET_ADDRESS and partial device-descriptor read
+  H->>D: GET_DESCRIPTOR(configuration, index=0, wLength=9)
+  D-->>H: 9 bytes — config descriptor only
+  Note over H: Reads wTotalLength = 32 from the response
+  H->>D: GET_DESCRIPTOR(configuration, index=0, wLength=32)
+  D-->>H: 32 bytes — config + iface + ep_out + ep_in concatenated
+  Note over H: Parses byte-by-byte using each bLength prefix
+    </pre>
+  </div>
+
+  <p>Two-phase to avoid blind big reads: first 9 bytes to learn the real size, then the full <code>wTotalLength</code>. Some hosts skip the first phase and request a large fixed value (e.g., 255) up front; the device truncates if it has less, so both approaches work.</p>
+
+  <p>The full byte-stream the host receives in the second transfer is:</p>
+
+  <pre><code>byte  meaning
+  0    bLength = 9   (configuration descriptor begins)
+  1    bDescriptorType = 0x02 (CONFIGURATION)
+  ...
+  8    end of configuration descriptor
+  9    bLength = 9   (interface descriptor begins — host knows it's an interface from byte 10)
+ 10    bDescriptorType = 0x04 (INTERFACE)
+  ...
+ 17    end of interface descriptor
+ 18    bLength = 7   (endpoint descriptor begins)
+ 19    bDescriptorType = 0x05 (ENDPOINT)
+  ...
+ 24    end of EP OUT
+ 25    bLength = 7   (next endpoint)
+ 26    bDescriptorType = 0x05
+  ...
+ 31    end of EP IN — done (wTotalLength = 32)
+</code></pre>
+
+  <p>This is why every descriptor's first byte is <code>bLength</code>: <strong>it makes the byte stream walkable without an external length array.</strong> The host advances by the current descriptor's <code>bLength</code>, reads the next descriptor's first two bytes, dispatches on <code>bDescriptorType</code>.</p>
+
+  <!-- ─────────────── 7. CLASS TRIPLES ─────────────── -->
+
+  <h2>7. Class triples — device-level vs interface-level</h2>
+
+  <p>Both the device descriptor (§2) and the interface descriptor (§4) carry a <code>(class, subclass, protocol)</code> triple. Which one drivers consult depends on the value of the <strong>device-level</strong> bDeviceClass:</p>
+
+  <table>
+    <thead>
+      <tr><th>bDeviceClass</th><th>Meaning</th><th>Drivers consult</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>0x00</code></td><td>"See interface descriptors"</td><td><strong>Interface</strong> class triple — one driver per interface.</td></tr>
+      <tr><td><code>0xEF</code> + subclass <code>0x02</code> + proto <code>0x01</code></td><td>Interface Association (composite)</td><td>Interface class triple, but interfaces are grouped via IADs (Ch 19).</td></tr>
+      <tr><td><code>0x09</code></td><td>Hub</td><td>Device-level — hub class is special-cased.</td></tr>
+      <tr><td>Other (e.g., <code>0x02</code> CDC)</td><td>Device is a single-function device of that class</td><td>Device-level. Rare in modern devices.</td></tr>
+    </tbody>
+  </table>
+
+  <p>The overwhelming convention is <strong>bDeviceClass = 0x00</strong> and let each interface declare its own class. This lets multi-function (composite) devices have a CDC interface and an HID interface in the same configuration without conflict. usb_02 follows the convention.</p>
+
+  <div class="callout warn">
+    <div class="callout-title">Zephyr's default is not the convention</div>
+    <p>Zephyr USB-Device-Next defaults the device-level triple to <code>0xEF / 0x02 / 0x01</code> (IAD) on every device, even single-interface ones. Most hosts accept this without complaint, but lsusb output will read "Miscellaneous Device" instead of "Vendor Specific Device" until you call <code>usbd_device_set_code_triple(&amp;ctx, USBD_SPEED_FS, 0, 0, 0)</code> between <code>usbd_init</code> and <code>usbd_enable</code> (see the <a href="/docs/firmware_zephyr_usbd.html">Zephyr USBD reference</a>).</p>
+  </div>
+
+  <!-- ─────────────── BUILD THIS ─────────────── -->
+
+  <div class="build-this">
+    <h3>Build this</h3>
+    <p>Sample: <code class="sample-link">firmware/samples/usb/usb_02/</code> · <a href="/docs/firmware_sample_usb_02.html">design doc</a></p>
+    <p>The sample defines the entire descriptor tree shown in this chapter in C, lets Zephyr compute <code>wTotalLength</code> automatically, and registers a vendor class with two declared-but-unused bulk endpoints. After building and flashing, <code>lsusb -v -d 1209:ede2</code> on Linux should print every byte from §2–§5 exactly. If even one byte differs, the design doc's §3 (descriptor-tree byte-level table) is the cross-reference.</p>
+  </div>
+
+  <!-- ─────────────── VERIFY ─────────────── -->
+
+  <section class="verify">
+    <h2>Verify</h2>
+    <p>Read the descriptor tree back from the host and confirm every byte matches the tables above.</p>
+    <div>
+      <div class="os-card linux">
+        <span class="os-tag">Linux</span>
+        <pre><code># human-readable
+lsusb -v -d 1209:ede2
+
+# raw 32 bytes (configuration response)
+sudo cat /sys/bus/usb/devices/*/descriptors | xxd | grep -A 4 "ede2"</code></pre>
+      </div>
+      <div class="os-card mac">
+        <span class="os-tag">macOS</span>
+        <pre><code># system_profiler caches aggressively; ioreg is live
+ioreg -p IOUSB -l -w 0 | grep -A 30 'usb_02'
+
+# raw descriptors (kernel access)
+sudo lsusb -v -d 1209:ede2   # if Homebrew lsusb is installed</code></pre>
+      </div>
+      <div class="os-card win">
+        <span class="os-tag">Windows</span>
+        <pre><code>:: USB Tree View (download from uwe-sieber.de) → click usb_02
+:: ─ shows every descriptor field decoded
+
+powershell -Command "Get-PnpDevice -PresentOnly | Where { $_.HardwareID -like '*VID_1209*PID_EDE2*' }"</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <h2>Common pitfalls</h2>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Device shows in lsusb but no endpoints are listed."</strong> Either <code>bNumEndpoints</code> on the interface descriptor is 0, or <code>wTotalLength</code> on the configuration is too small to include the endpoint descriptors. Re-count <code>wTotalLength</code>: it's the byte-sum of <em>every</em> descriptor in the sub-tree, not just the configuration descriptor itself.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"<code>GET_DESCRIPTOR(configuration)</code> never returns."</strong> <code>wTotalLength</code> is larger than the bytes you actually emit. The host waits for more bytes that the device will never send; the IN transfer times out. Recount; if you're hand-rolling a USB stack, this is the most common bug in the first week.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"Two endpoints with the same address show as one."</strong> EP IN and EP OUT with the same number (e.g., <code>0x01</code> and <code>0x81</code>) are <em>two distinct endpoints</em>, not duplicates — they share the EP number, not the address. lsusb prints them separately. If a tool collapses them, it's a tool bug.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"<code>bmAttributes</code> looks right but the EP behaves wrong."</strong> Check the <em>full</em> byte, not just bits 0–1. A stray bit in 4–5 turns "bulk" into "bulk with isochronous-usage", which most hosts handle gracefully but some sniffers misdecode. Use <code>0x02</code> for plain bulk OUT/IN, <code>0x03</code> for plain interrupt, <code>0x01</code> for isochronous with no sync.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <div class="callout-title">Symptom → Fix</div>
+    <p><strong>"<code>bMaxPower</code> is reported in mA but my <code>50</code> shows as 100 mA."</strong> Correct — the field is in 2 mA units (USB 2.0 §9.6.3). A value of <code>250</code> means 500 mA, the FS bus maximum. Setting it to <code>100</code> requests 200 mA.</p>
+  </div>
+
+  <!-- ─────────────── GOING DEEPER ─────────────── -->
+
+  <h2>Going deeper</h2>
+  <ul>
+    <li>USB 2.0 spec §9.5 (Descriptors) and §9.6.1–9.6.6 (the five standard descriptor types) — <a href="https://www.usb.org/document-library/usb-20-specification">usb.org</a>.</li>
+    <li><a href="/docs/firmware_sample_usb_02.html">firmware_sample_usb_02.html</a> — the implementation side: how this tree is constructed in C, plus gotchas G1–G10 from Zephyr USB-Device-Next bring-up.</li>
+    <li><a href="/docs/usb/appendix/cheatsheet.html">Descriptor cheatsheet</a> — one-page summary of every field offset.</li>
+    <li>Linux kernel: <code>drivers/usb/core/config.c</code> — the host-side parser that consumes everything in this chapter. Worth a read once you've shipped a device.</li>
+  </ul>
+
+  <nav class="chapter-nav" aria-label="Chapter navigation">
+    <a class="prev" href="../partI/05_enumeration.html">
+      <div class="nav-label">← Previous</div>
+      <div class="nav-title">Ch 05: Enumeration walkthrough</div>
+    </a>
+    <a class="next" href="07_strings.html">
+      <div class="nav-label">Next →</div>
+      <div class="nav-title">Ch 07: String descriptors &amp; per-unit identity</div>
+    </a>
+  </nav>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

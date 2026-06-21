@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1730" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="description" content="USB terminology reference — appendix to the edevkit USB Book.">
+  <title>edevkit USB Book — Glossary</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="../_assets/book.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('edev_theme');
+        if (t === 'dark' || t === 'light')
+          document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* private mode etc. */ }
+    })();
+  </script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/docs/usb_book.html" title="Back to USB Book">
+        <span class="mark" aria-hidden="true"></span>
+        <span><span aria-hidden="true">←</span> USB Book</span>
+      </a>
+      <span class="doc-tag">Glossary</span>
+      <span class="grow"></span>
+      <button class="theme-btn" type="button" aria-label="Toggle theme">
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">edevkit · USB Book · appendix</div>
+    <h1>Glossary</h1>
+    <p class="lede">USB terminology, distilled.</p>
+  </header>
+
+<div class="callout info">
+      <div class="callout-title">Status</div>
+      <p>This appendix is filled out as terms appear in chapters. Each chapter that introduces a new term adds a definition here. Once Part I ships, expect ~30 entries; once the book is complete, ~120.</p>
+    </div>
+
+    <p>Until then, a few high-frequency terms readers tend to look up first:</p>
+
+    <h2>A few starters</h2>
+    <p><strong>BOS (Binary Object Store)</strong> — A USB 3.x-introduced descriptor format that lets a device declare extended capabilities (including driverless-Windows hooks via Microsoft OS 2.0 platform descriptor). Required for modern WinUSB binding. See Chapter 09.</p>
+    <p><strong>IAD (Interface Association Descriptor)</strong> — Glue descriptor that tells the host "interfaces N..N+k belong together as one logical function." Without it, composite devices like dual-CDC fall apart on Windows. See Chapter 18.</p>
+    <p><strong>MPS (Max Packet Size)</strong> — The largest single-transaction payload the endpoint accepts. 8/16/32/64 for FS endpoints, 512 for HS bulk. Wrong MPS = silent data corruption. See Chapter 13.</p>
+    <p><strong>NRZI (Non-Return-to-Zero Inverted)</strong> — The line-coding USB uses on D+/D-. A '0' bit toggles the line; a '1' bit holds it. Combined with bit-stuffing, this provides clock recovery. See Chapter 02.</p>
+    <p><strong>SETUP packet</strong> — The 8-byte fixed-size token that opens every control transfer. Carries bmRequestType, bRequest, wValue, wIndex, wLength. See Chapters 03 and 08.</p>
+    <p><strong>ZLP (Zero-Length Packet)</strong> — A bulk transfer that's an exact multiple of MPS needs an empty terminating packet so the host knows the transfer is complete. Forgetting it is the #1 silent-stall bug. See Chapter 13.</p>
+
+  </div>
+
+  <script src="../_assets/book.js" defer></script>
+</body>
+</html>

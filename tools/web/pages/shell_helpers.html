@@ -237,8 +237,11 @@ probe-rs download --chip RP2350 --binary-format bin --base-address 0x10040000 \
 <p>With it:</p>
 <pre><code>edev_activate
 cd "$EDEVKIT_REPO/firmware/app"
-edev_build
-edev_flash</code></pre>
+edev_build       # first time on a fresh checkout (pristine, slow)
+edev_flash       # via Raspberry Pi Debug Probe over SWD
+
+# tight inner loop after that:
+edev_rebuild &amp;&amp; edev_flash       # incremental, ~5 s</code></pre>
 <p>Same effect. Less typing. Layout-vars are the only knobs — no path is hardcoded.</p>
 
 <!-- ───────────────────────────── -->
@@ -280,6 +283,11 @@ fi</code></pre>
 
 <p>The actual helpers <strong>stay in the repo</strong> at <code>$EDEVKIT_REPO/tools/env_helpers.sh</code>. <code>git pull</code> updates them; the venv's <code>activate</code> picks up the new version on the next session. If you ever <code>rm -rf $EDEV_VENV</code> and re-create it, re-run <code>setup_venv.sh</code> to restore the source line.</p>
 
+<div class="callout warn">
+  <span class="label">Don't duplicate helpers — avoid shadowing</span>
+  <p><code>$EDEVKIT_REPO/tools/env_helpers.sh</code> is the <strong>single source of truth</strong>. Do not add <code>edev_*</code> function definitions to your <code>~/.zshrc</code>, <code>~/.bashrc</code>, or duplicate them into the venv's <code>activate</code> script. If you see stale or inconsistent <code>edev_*</code> behavior, run <code>type -a edev_flash</code> (or any function name) to find shadowing definitions, then remove them. Pattern B (shell rc sourcing) sources the repo file directly; Pattern C (venv activate) sources it after login. Both patterns prevent shadowing by design.</p>
+</div>
+
 <details>
   <summary class="small" style="cursor: pointer; color: var(--brand);">Alternative — Pattern B (source from shell rc)</summary>
   <p class="small">If you want the helpers loaded in <em>every</em> shell (not just inside the venv) — for example, you switch in and out of the venv often and don't want to remember <code>edev_activate</code> — append this to your <code>~/.bashrc</code> / <code>~/.zshrc</code> instead:</p>
@@ -319,7 +327,14 @@ fi</code></pre>
   <div class="helper-card">
     <div class="name"><span aria-hidden="true">🧱</span>edev_build</div>
     <div class="sig">edev_build [src] [board]</div>
-    <p>Pristine <strong>sysbuild</strong> build (MCUboot + signed app). Defaults: <code>src=$PWD</code>, <code>board=$EDEV_BOARD_DEFAULT</code> (<code>rpi_pico2/rp2350a/m33</code>). Output lands at <code>./build-&lt;board-with-slashes-as-underscores&gt;/</code> (e.g. <code>./build-rpi_pico2_rp2350a_m33/</code>).</p>
+    <p>Pristine <strong>sysbuild</strong> build (MCUboot + signed app). Defaults: <code>src=$PWD</code>, <code>board=$EDEV_BOARD_DEFAULT</code> (<code>rpi_pico2/rp2350a/m33</code>). Output lands at <code>./build-&lt;board-with-slashes-as-underscores&gt;/</code> (e.g. <code>./build-rpi_pico2_rp2350a_m33/</code>). When sysbuild stitches multiple images (MCUboot + app), edev_build also emits a single <code>merged.uf2</code> at the build-dir root — <code>edev_flash_uf2</code> picks it up automatically so BOOTSEL recovery is one drag-and-drop, not two. <strong>Slow but always correct</strong>; for source-only edits use <code>edev_rebuild</code> instead.</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">🔁</span>edev_rebuild</div>
+    <div class="sig">edev_rebuild [src] [board]</div>
+    <p><strong>Incremental</strong> sysbuild — same output paths as <code>edev_build</code>, but reuses the existing build directory instead of wiping it. Typical inner-loop time is 2–5 seconds for a one-line source edit, vs. 30–180 s for a pristine rebuild. Falls back transparently to <code>edev_build</code> if no build dir exists yet, so you can always start with <code>edev_rebuild</code>.</p>
+    <p class="small"><strong>When to fall back to <code>edev_build</code>:</strong> after editing <code>prj.conf</code>, Kconfig fragments, devicetree overlays (<code>boards/*.overlay</code>), <code>CMakeLists.txt</code>, switching git branches, or whenever a build is acting weird. Incremental builds can silently miss those changes and produce a stale binary that boots but behaves wrong.</p>
   </div>
 
   <div class="helper-card">
@@ -331,13 +346,28 @@ fi</code></pre>
   <div class="helper-card">
     <div class="name"><span aria-hidden="true">🚀</span>edev_flash</div>
     <div class="sig">edev_flash [src] [board]</div>
-    <p>Flash via <strong>probe-rs</strong> over SWD. Writes both <code>mcuboot.bin</code> at <code>0x10000000</code> and the signed app at <code>0x10040000</code>. Falls back to a single image if the build is non-sysbuild.</p>
+    <p>Flash via <strong>probe-rs</strong> over SWD using the <strong>Raspberry Pi Debug Probe</strong> (CMSIS-DAP, USB <code>2e8a:000c</code>) by default. Writes <code>mcuboot.bin</code> at <code>0x10000000</code> and the signed app at <code>0x10040000</code>; falls back to a single image if the build is non-sysbuild. Issues a <code>probe-rs reset</code> after flashing so the new image starts running without re-plugging USB.</p>
+    <p class="small"><strong>Reset behavior (RP2350-specific):</strong> On RP2350, a soft <code>SYSRESETREQ</code> does not always re-run the bootrom cleanly — the core can come up halted or with incomplete XIP/secure-boot initialization, leaving the image not running. If <code>probe-rs reset</code> fails or if the firmware doesn't appear to run after a successful flash, do a <strong>cold boot</strong>: power-cycle USB, or briefly short the RUN pin (pin 30) to GND. The helper will print a reminder if reset fails.</p>
+    <p class="small"><strong>Pinning the probe</strong> avoids ambiguity when a second probe is plugged in (e.g. another edevkit running CMSIS-DAP). Override via <code>EDEV_PROBE</code> / <code>EDEV_PROBE_PROTOCOL</code> / <code>EDEV_PROBE_SPEED</code> — see <a href="#defaults">Defaults &amp; overrides</a>.</p>
+    <p class="small"><strong>Prerequisite:</strong> <code>probe-rs</code> on PATH. On macOS the fastest install is <code>brew install probe-rs/probe-rs/probe-rs</code> (≈10 s, no Rust toolchain needed). See <a href="installation.html#step7c">installation.html § 7c</a> for the cross-platform options.</p>
   </div>
 
   <div class="helper-card">
     <div class="name"><span aria-hidden="true">🪄</span>edev_flash_uf2</div>
     <div class="sig">edev_flash_uf2 [src] [board]</div>
-    <p>UF2 drag-and-drop flash for BOOTSEL mode. Polls <code>/Volumes/$EDEV_UF2_VOLUME</code> (macOS) or <code>/media/$USER/$EDEV_UF2_VOLUME</code> (Linux) for up to 30 s, then copies the signed UF2 across. Default volume label: <code>RP2350</code>.</p>
+    <p>UF2 drag-and-drop flash for BOOTSEL mode. Polls <code>/Volumes/$EDEV_UF2_VOLUME</code> (macOS) or <code>/media/$USER/$EDEV_UF2_VOLUME</code> (Linux) for up to 30 s, then copies a UF2 across. Default volume label: <code>RP2350</code>. Picks the first file that exists, in order: <code>merged.uf2</code> (sysbuild + MCUboot) → <code>&lt;app&gt;/zephyr/zephyr.signed.uf2</code> (sysbuild app slot) → <code>&lt;app&gt;/zephyr/zephyr.uf2</code> (sysbuild without signing) → <code>zephyr/zephyr.uf2</code> (plain non-sysbuild build).</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">▶️</span>edev_run</div>
+    <div class="sig">edev_run [src] [board]</div>
+    <p>Inner-loop helper: <code>edev_flash</code> followed by <code>probe-rs attach</code> for RTT, in one command. Goes through <code>edev_flash</code> (not <code>probe-rs run</code>) so the proper MCUboot + signed-app split flash happens — important when sysbuild is in use. Ctrl-C to detach RTT (the target keeps running).</p>
+  </div>
+
+  <div class="helper-card">
+    <div class="name"><span aria-hidden="true">📺</span>edev_rtt_monit</div>
+    <div class="sig">edev_rtt_monit [src] [board]</div>
+    <p>Pure RTT attach — connect to a target that's already programmed and running, stream Segger RTT log over SWD, do <strong>not</strong> reset or re-flash. Use to peek at logs without the cost of a flash cycle, or to re-attach after Ctrl-C-ing out of <code>edev_run</code>. Reads the RTT control block address from the build's <code>zephyr.elf</code>; falls back through the same sysbuild → plain ladder as <code>edev_flash</code>.</p>
   </div>
 
   <div class="helper-card">
@@ -372,6 +402,9 @@ fi</code></pre>
   <tr><th>Variable</th><th>Default</th><th>Override</th></tr>
   <tr><td><code>EDEV_BOARD_DEFAULT</code></td><td><code>rpi_pico2/rp2350a/m33</code> (Cortex-M33 cores; same family as edevkit1's RP2350B)</td><td><code>export EDEV_BOARD_DEFAULT=rpi_pico2/rp2350a/hazard3</code> for the RISC-V cores; or <code>rpi_pico_w</code> for a Pico-W detour, etc.</td></tr>
   <tr><td><code>EDEV_UF2_VOLUME</code></td><td><code>RP2350</code> (the BOOTSEL volume label on RP2350)</td><td>Change if your kit firmware advertises a different label.</td></tr>
+  <tr><td><code>EDEV_PROBE</code></td><td><code>2e8a:000c</code> (Raspberry Pi Debug Probe, CMSIS-DAP)</td><td>Use <code>VID:PID</code> or <code>VID:PID:serial</code> to pin a specific probe — handy when two probes are plugged in. Find the serial via <code>probe-rs list</code>.</td></tr>
+  <tr><td><code>EDEV_PROBE_PROTOCOL</code></td><td><code>swd</code></td><td><code>jtag</code> for JTAG-only probes / targets. Forced explicitly so probe-rs doesn't auto-pick the wrong wire protocol.</td></tr>
+  <tr><td><code>EDEV_PROBE_SPEED</code></td><td><code>5000</code> kHz (5 MHz)</td><td>Drop to <code>2000</code> or lower if your SWD ribbon is &gt; 6" (signal integrity on RP2350 degrades fast past that — see CLAUDE.md gotcha #9).</td></tr>
   <tr><td><code>EDEVKIT_REPO</code></td><td>required, no default</td><td>set in <code>.bashrc</code> per the install guide.</td></tr>
   <tr><td><code>EDEV_VENV</code></td><td>required</td><td>ditto.</td></tr>
   <tr><td><code>ZEPHYR_WORKSPACE</code></td><td>required</td><td>ditto.</td></tr>
@@ -381,10 +414,16 @@ fi</code></pre>
 <!-- ───────────────────────────── -->
 <h2 id="workflows">Typical workflows</h2>
 
-<h3>Daily firmware iteration (with SWD probe)</h3>
+<h3>Daily firmware iteration (with Pi Debug Probe)</h3>
+<p class="small">First time on a fresh checkout — pristine build, then flash and watch RTT:</p>
 <pre><code>edev_activate
 cd "$EDEVKIT_REPO/firmware/app"
-edev_build &amp;&amp; edev_flash &amp;&amp; edev_console</code></pre>
+edev_build &amp;&amp; edev_run             # = edev_build, then edev_flash + RTT attach</code></pre>
+<p class="small">After that, the tight inner loop (source-only edits) is:</p>
+<pre><code># edit src/main.c …
+edev_rebuild &amp;&amp; edev_run           # 2–5 s build + a few seconds to flash + RTT</code></pre>
+<p class="small">If you only want to peek at RTT without re-flashing (target is already running): <code>edev_rtt_monit</code>.</p>
+<p class="small">If you change <code>prj.conf</code>, devicetree overlay, or <code>CMakeLists.txt</code>, swap <code>edev_rebuild</code> back for <code>edev_build</code> on that one iteration — incremental builds can miss those.</p>
 
 <h3>First-flash via BOOTSEL (no probe yet)</h3>
 <pre><code>edev_activate
@@ -422,6 +461,7 @@ edev_build_simple &amp;&amp; edev_flash_uf2</code></pre>
   <tr><td><code>EDEV_UF2_VOLUME=RPI-RP2</code></td><td><code>RP2350</code></td><td>Different BOOTSEL volume label on RP2350 silicon.</td></tr>
   <tr><td><code>edev_build</code> (single image)</td><td><code>edev_build</code> (sysbuild) + <code>edev_build_simple</code></td><td>edevkit1 ships with MCUboot for OTA. Sysbuild is the default; the simple flavor is still there for ad-hoc samples.</td></tr>
   <tr><td><code>edev_flash</code> (UF2 only)</td><td><code>edev_flash</code> (probe-rs) + <code>edev_flash_uf2</code> (BOOTSEL)</td><td>Once you have a kit, you'll mostly use SWD. UF2 stays as the recovery path.</td></tr>
+  <tr><td>—</td><td><code>edev_run</code>, <code>edev_rtt_monit</code></td><td>Combined flash+RTT and pure-RTT helpers, going through <code>edev_flash</code> for the proper MCUboot+app split. Ported back into <code>env_helpers.sh</code> on 2026-05-08 after the shadow-cleanup unification.</td></tr>
   <tr><td>—</td><td><code>edev_ota</code>, <code>edev_console</code>, <code>edev_doc</code>, <code>edev_help</code></td><td>New surface area for OTA, serial, and the docs hub.</td></tr>
 </table>
 

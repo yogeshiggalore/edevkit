@@ -26,8 +26,9 @@
 #   - UF2 volume:       RP2350,    not RPI-RP2
 #   - Variable names:   EDEVKIT_REPO / EDEV_VENV / ZEPHYR_WORKSPACE
 #                       (not ZEPHYR_WORKSPACE_EDEV)
-#   - Adds:             edev_flash (probe-rs), edev_flash_uf2 (BOOTSEL),
-#                       edev_ota, edev_console
+#   - Adds:             edev_rebuild (incremental sysbuild, fast),
+#                       edev_flash (probe-rs via Pi Debug Probe by default),
+#                       edev_flash_uf2 (BOOTSEL), edev_ota, edev_console
 #   - Idempotent:       safe to source multiple times.
 # =============================================================================
 
@@ -37,6 +38,15 @@
 # edevkit1 uses the M33 cores, so the default is the M33 variant.
 export EDEV_BOARD_DEFAULT="${EDEV_BOARD_DEFAULT:-rpi_pico2/rp2350a/m33}"
 export EDEV_UF2_VOLUME="${EDEV_UF2_VOLUME:-RP2350}"
+
+# ─── SWD probe defaults ──────────────────────────────────────────────────────
+# Programming via the Raspberry Pi Debug Probe (CMSIS-DAP firmware).
+# USB VID:PID is 2e8a:000c. Pinning the probe avoids ambiguity when another
+# probe (e.g. a second edevkit running CMSIS-DAP) is also plugged in.
+# Override any of these in your shell rc if you swap probes.
+export EDEV_PROBE="${EDEV_PROBE:-2e8a:000c}"          # VID:PID[:serial]
+export EDEV_PROBE_PROTOCOL="${EDEV_PROBE_PROTOCOL:-swd}"
+export EDEV_PROBE_SPEED="${EDEV_PROBE_SPEED:-5000}"   # kHz; conservative for RP2350
 
 # ─── _edev_board_dir — path-safe form of a board target ──────────────────────
 # Zephyr uses '/' in fully-qualified board targets (e.g. rpi_pico2/rp2350a/m33).
@@ -144,6 +154,54 @@ EOF
     echo "   Next:  cd \"$app_dir\" && edev_build && edev_flash_uf2"
 }
 
+# ─── _edev_emit_merged_uf2 — convert sysbuild's merged.hex → merged.uf2 ──────
+# Sysbuild emits merged.hex at the top of the build directory whenever multiple
+# images are stitched together (e.g. MCUboot + app). UF2 drag-and-drop in
+# BOOTSEL mode wants a single file, so we convert merged.hex → merged.uf2 here.
+#
+# Family ID: RP2XXX_ABSOLUTE (0xe48bff57). This matches what Zephyr's bin2uf2
+# already produces for individual images, and is the right family for a
+# multi-region image — it tells BOOTSEL "write blocks at literal addresses",
+# which is what we need for an image spanning bootloader + app slot.
+#
+# Silently skips if merged.hex isn't present (build had only one image).
+_edev_emit_merged_uf2 () {
+    local builddir="$1"
+    local hex
+    for hex in "${builddir}/merged.hex" "${builddir}/zephyr/merged.hex"; do
+        [ -f "$hex" ] || continue
+        local uf2="${builddir}/merged.uf2"
+        local conv="${EDEVKIT_REPO}/tools/uf2/uf2conv.py"
+        if [ ! -f "$conv" ]; then
+            echo "⚠️  uf2conv.py missing at $conv — skipping merged.uf2 emit." >&2
+            return 0
+        fi
+        echo "🧬 Emitting merged.uf2 from $(basename "$hex")"
+        python3 "$conv" -c -f RP2XXX_ABSOLUTE -o "$uf2" "$hex" >/dev/null || {
+            echo "⚠️  merged.uf2 conversion failed; SWD flash still works." >&2
+            return 0
+        }
+        echo "   → $uf2"
+        return 0
+    done
+}
+
+# ─── _edev_link_compile_db — expose compile_commands.json at the sample root ─
+# Sysbuild nests each image's compile DB at:
+#   <builddir>/<image>/compile_commands.json
+# clangd discovers compile_commands.json by walking up from the source file, so
+# it never finds the nested path. We symlink it to the sample root once per
+# build; clangd then auto-indexes on the next file open. Idempotent.
+_edev_link_compile_db () {
+    local src="$1"
+    local builddir="$2"
+    local image_name
+    image_name="$(basename "$src")"
+    local nested="${builddir}/${image_name}/compile_commands.json"
+    [ -f "$nested" ] || return 0   # silently skip on non-sysbuild / failed configure
+    ln -sf "$nested" "${src}/compile_commands.json"
+}
+
 # ─── edev_build — pristine build using sysbuild (MCUboot + app) ───────────────
 # Usage: edev_build [src] [board]
 #   src   defaults to $PWD
@@ -158,7 +216,35 @@ edev_build () {
     echo "   Source: $src"
     echo "   Build:  $builddir"
 
-    westz build -p always -b "$board" --sysbuild -s "$src" -d "$builddir"
+    westz build -p always -b "$board" --sysbuild -s "$src" -d "$builddir" || return $?
+    _edev_emit_merged_uf2 "$builddir"
+    _edev_link_compile_db "$src" "$builddir"
+}
+
+# ─── edev_rebuild — incremental sysbuild (fast inner-loop iteration) ─────────
+# Same as edev_build, but reuses the existing build directory instead of
+# wiping it. Use this for source-only edits (e.g., tweaking a constant in
+# main.c). If you change prj.conf, Kconfig, devicetree overlay, or
+# CMakeLists.txt, fall back to edev_build for a guaranteed-clean rebuild.
+#
+# Usage: edev_rebuild [src] [board]
+edev_rebuild () {
+    _edev_check || return 1
+    local src="${1:-$PWD}"
+    local board="${2:-$EDEV_BOARD_DEFAULT}"
+    local builddir="${src}/build-$(_edev_board_dir "$board")"
+
+    if [ ! -f "${builddir}/CMakeCache.txt" ]; then
+        echo "ℹ️  no existing build dir at $builddir — running full edev_build first."
+        edev_build "$src" "$board" || return $?
+        return 0
+    fi
+
+    echo "🔁 Incremental build (board: $board)"
+    echo "   Build:  $builddir"
+    westz build -d "$builddir" || return $?
+    _edev_emit_merged_uf2 "$builddir"
+    _edev_link_compile_db "$src" "$builddir"
 }
 
 # ─── edev_build_simple — build without sysbuild (single image, no MCUboot) ───
@@ -173,9 +259,10 @@ edev_build_simple () {
     westz build -p always -b "$board" -s "$src" -d "$builddir"
 }
 
-# ─── edev_flash — flash via probe-rs (SWD probe required) ────────────────────
-# Used during normal dev when a probe is connected. For BOOTSEL/UF2,
-# use edev_flash_uf2 instead.
+# ─── edev_flash — flash via probe-rs (Raspberry Pi Debug Probe / SWD) ────────
+# Default probe is the Raspberry Pi Debug Probe (CMSIS-DAP, VID:PID 2e8a:000c).
+# Override EDEV_PROBE / EDEV_PROBE_PROTOCOL / EDEV_PROBE_SPEED to use a
+# different probe. For BOOTSEL/UF2 recovery, use edev_flash_uf2 instead.
 edev_flash () {
     _edev_check || return 1
     local src="${1:-$PWD}"
@@ -184,7 +271,8 @@ edev_flash () {
     local image_name="$(basename "$src")"     # sysbuild names the per-image dir after the CMake project()
     local mcuboot_bin="${builddir}/mcuboot/zephyr/zephyr.bin"
     local app_bin="${builddir}/${image_name}/zephyr/zephyr.signed.bin"
-    # Fallback for non-sysbuild builds:
+    # Fallbacks: sysbuild without MCUboot signing, then plain (non-sysbuild) build.
+    [ -f "$app_bin" ] || app_bin="${builddir}/${image_name}/zephyr/zephyr.bin"
     [ -f "$app_bin" ] || app_bin="${builddir}/zephyr/zephyr.bin"
 
     if ! command -v probe-rs >/dev/null 2>&1; then
@@ -192,14 +280,33 @@ edev_flash () {
         return 1
     fi
 
-    echo "🚀 Flashing via probe-rs (chip: RP2350)"
+    # Common probe-rs args — pin to the Pi Debug Probe so it doesn't pick a
+    # nearby second probe by accident, and force SWD at a known-good speed.
+    local probe_args=(--chip RP2350 --probe "$EDEV_PROBE" \
+                      --protocol "$EDEV_PROBE_PROTOCOL" --speed "$EDEV_PROBE_SPEED")
+
+    echo "🚀 Flashing via probe-rs (chip: RP2350, probe: $EDEV_PROBE @ ${EDEV_PROBE_SPEED}kHz ${EDEV_PROBE_PROTOCOL})"
     if [ -f "$mcuboot_bin" ]; then
-        probe-rs download --chip RP2350 --binary-format bin --base-address 0x10000000 "$mcuboot_bin" || return $?
-        probe-rs download --chip RP2350 --binary-format bin --base-address 0x10040000 "$app_bin"     || return $?
+        probe-rs download "${probe_args[@]}" --binary-format bin --base-address 0x10000000 "$mcuboot_bin" || return $?
+        probe-rs download "${probe_args[@]}" --binary-format bin --base-address 0x10040000 "$app_bin"     || return $?
     else
-        probe-rs download --chip RP2350 --binary-format bin --base-address 0x10000000 "$app_bin"     || return $?
+        probe-rs download "${probe_args[@]}" --binary-format bin --base-address 0x10000000 "$app_bin"     || return $?
     fi
-    echo "✅ flashed via probe-rs"
+    # Reset the chip so the freshly-flashed image actually starts running.
+    # NOTE: on RP2350, probe-rs's SYSRESETREQ does not always re-run the bootrom
+    # cleanly — the core can come up halted or with an incomplete XIP/secure-boot
+    # init, leaving the image not running. If that happens, power-cycle USB or
+    # briefly pulse the RUN pin to GND. Surface any reset error so it's not silent.
+    local reset_args=(--chip RP2350 --probe "$EDEV_PROBE" --protocol "$EDEV_PROBE_PROTOCOL")
+    if probe-rs reset "${reset_args[@]}"; then
+        echo "✅ flashed via probe-rs"
+    else
+        local rc=$?
+        echo "⚠️  probe-rs reset returned $rc — image is flashed but may not be running." >&2
+        echo "    Power-cycle USB, or briefly short RUN (pin 30) to GND, to cold-boot." >&2
+        return $rc
+    fi
+    echo "   If the LED/console doesn't start, cold-boot: unplug USB or pulse RUN→GND."
 }
 
 # ─── edev_flash_uf2 — UF2 drag-and-drop flash for BOOTSEL mode ───────────────
@@ -211,7 +318,14 @@ edev_flash_uf2 () {
     local board="${2:-$EDEV_BOARD_DEFAULT}"
     local builddir="${src}/build-$(_edev_board_dir "$board")"
     local image_name="$(basename "$src")"
-    local uf2="${builddir}/${image_name}/zephyr/zephyr.signed.uf2"
+    # Preference order:
+    #   1. merged.uf2          — sysbuild + MCUboot stitched into one drop
+    #   2. zephyr.signed.uf2   — sysbuild app slot only (no bootloader)
+    #   3. zephyr.uf2 (sysbuild dir) — sysbuild without MCUboot signing
+    #   4. zephyr.uf2 (plain)  — non-sysbuild build
+    local uf2="${builddir}/merged.uf2"
+    [ -f "$uf2" ] || uf2="${builddir}/${image_name}/zephyr/zephyr.signed.uf2"
+    [ -f "$uf2" ] || uf2="${builddir}/${image_name}/zephyr/zephyr.uf2"
     [ -f "$uf2" ] || uf2="${builddir}/zephyr/zephyr.uf2"
 
     [ -f "$uf2" ] || { echo "❌ UF2 not found: $uf2 (run edev_build first)" >&2; return 1; }
@@ -237,6 +351,65 @@ edev_flash_uf2 () {
     cp "$uf2" "$mountpoint/" || return $?
     echo "✅ Copied $(basename "$uf2") → $mountpoint"
     echo "   Kit will reboot into the new firmware automatically."
+}
+
+# ─── _edev_find_elf — locate the ELF that matches a given build dir ──────────
+# Used by edev_run / edev_rtt_monit. Mirrors the .bin fallback ladder in
+# edev_flash: prefers the sysbuild app-image ELF, then non-sysbuild plain.
+# Echoes the first existing path; returns 1 if nothing is found.
+_edev_find_elf () {
+    local builddir="$1"
+    local image_name="$2"
+    local elf="${builddir}/${image_name}/zephyr/zephyr.elf"
+    [ -f "$elf" ] || elf="${builddir}/zephyr/zephyr.elf"
+    [ -f "$elf" ] || return 1
+    printf '%s' "$elf"
+}
+
+# ─── edev_rtt_monit — stream RTT from a running target (no flash) ────────────
+# Connects to a target that's already programmed and running, and tails RTT
+# (Segger Real-Time Transfer) over SWD via the Pi Debug Probe. Does NOT reset
+# the target — pure read-only attach. Ctrl-C to detach.
+#
+# Usage: edev_rtt_monit [src] [board]
+edev_rtt_monit () {
+    _edev_check || return 1
+    local src="${1:-$PWD}"
+    local board="${2:-$EDEV_BOARD_DEFAULT}"
+    local builddir="${src}/build-$(_edev_board_dir "$board")"
+    local image_name="$(basename "$src")"
+
+    local elf
+    elf="$(_edev_find_elf "$builddir" "$image_name")" || {
+        echo "❌ no zephyr.elf under $builddir — run edev_build first." >&2
+        return 1
+    }
+
+    if ! command -v probe-rs >/dev/null 2>&1; then
+        echo "❌ probe-rs not found on PATH. Install via 'cargo install --locked probe-rs-tools'." >&2
+        return 1
+    fi
+
+    echo "📺 Streaming RTT (chip: RP2350, probe: $EDEV_PROBE @ ${EDEV_PROBE_SPEED}kHz ${EDEV_PROBE_PROTOCOL})"
+    echo "   ELF:   $elf"
+    echo "   Ctrl-C to detach (target keeps running)."
+    probe-rs attach --chip RP2350 --probe "$EDEV_PROBE" \
+                    --protocol "$EDEV_PROBE_PROTOCOL" --speed "$EDEV_PROBE_SPEED" \
+                    "$elf"
+}
+
+# ─── edev_run — flash + stream RTT in one shot (the inner-loop helper) ───────
+# Combines edev_flash (proper MCUboot + app SWD download with reset) and
+# probe-rs attach (RTT stream). Same flash semantics as edev_flash, so the
+# bootloader stays in sync — does NOT use `probe-rs run`, which would bypass
+# the mcuboot+app split. Ctrl-C to detach RTT.
+#
+# Usage: edev_run [src] [board]
+edev_run () {
+    _edev_check || return 1
+    edev_flash "$@" || return $?
+    # After flash, attach to the now-running target and tail RTT.
+    edev_rtt_monit "$@"
 }
 
 # ─── edev_ota — push a signed image to a running edevkit via mcumgr ──────────
@@ -312,21 +485,27 @@ edevkit shell helpers
   edev_activate         enter the Python venv ($EDEV_VENV)
   westz <args…>         run `west` from inside the Zephyr workspace
   edev_create_app <n>   scaffold a new Zephyr app at $PWD/<n>/ (override: arg 2)
-  edev_build [src] [b]  pristine sysbuild build (MCUboot + app)
+  edev_build [src] [b]  pristine sysbuild build (MCUboot + app, slow & safe)
+  edev_rebuild [src][b] incremental sysbuild build (fast, source-only edits)
   edev_build_simple     pristine non-sysbuild build (single image)
-  edev_flash [src] [b]  flash via probe-rs (SWD probe attached)
+  edev_flash [src] [b]  flash via probe-rs (Pi Debug Probe / SWD)
   edev_flash_uf2        UF2 drag-and-drop flash (kit in BOOTSEL mode)
+  edev_run [src] [b]    edev_flash + stream RTT (the inner-loop helper)
+  edev_rtt_monit [src]  stream RTT only — attach to a running target, no flash
   edev_ota              push signed image via mcumgr (running kit)
   edev_console [port]   open serial console (tio if available, else screen)
   edev_doc              open the local docs hub in a browser
   edev_help             this message
 
 Defaults:
-  EDEV_BOARD_DEFAULT = $EDEV_BOARD_DEFAULT
-  EDEV_UF2_VOLUME    = $EDEV_UF2_VOLUME
-  EDEVKIT_REPO       = $EDEVKIT_REPO
-  EDEV_VENV          = $EDEV_VENV
-  ZEPHYR_WORKSPACE   = $ZEPHYR_WORKSPACE
+  EDEV_BOARD_DEFAULT     = $EDEV_BOARD_DEFAULT
+  EDEV_UF2_VOLUME        = $EDEV_UF2_VOLUME
+  EDEV_PROBE             = $EDEV_PROBE          (Raspberry Pi Debug Probe = 2e8a:000c)
+  EDEV_PROBE_PROTOCOL    = $EDEV_PROBE_PROTOCOL
+  EDEV_PROBE_SPEED       = ${EDEV_PROBE_SPEED} kHz
+  EDEVKIT_REPO           = $EDEVKIT_REPO
+  EDEV_VENV              = $EDEV_VENV
+  ZEPHYR_WORKSPACE       = $ZEPHYR_WORKSPACE
   ZEPHYR_SDK_INSTALL_DIR = $ZEPHYR_SDK_INSTALL_DIR
 EOF
 }
