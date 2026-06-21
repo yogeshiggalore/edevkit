@@ -1,0 +1,1436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — SWD (Serial Wire Debug) protocol</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A focused reference on Arm Serial Wire Debug — the 2-wire SWCLK/SWDIO protocol that has replaced JTAG on every modern Cortex-M. Wire-level packet structure, DP/AP register model, JTAG-to-SWD switch, dormant state, multi-drop SWDv2, and how edevkit1 implements SWD on RP2350B PIO0 SM0.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    /* graticule background — top-faded so it doesn't overwhelm */
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar (sticky nav + theme toggle) ────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── OS cards (Linux / macOS / Windows) ────────────────────────────── */
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  /* ── numbered step ─────────────────────────────────────────────────── */
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── checklist ─────────────────────────────────────────────────────── */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  // pre-paint theme — prevents FOUC
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">&larr;</span> edevkit</span>
+    </a>
+    <span class="doc-tag">SWD protocol reference</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit &middot; debug &middot; SWD</div>
+  <h1>SWD &mdash; Serial Wire Debug, the 2-wire protocol every Cortex-M speaks</h1>
+  <p class="small"><strong>Serial Wire Debug (SWD)</strong> is Arm's compact, 2-wire alternative to JTAG &mdash; one clock (<code>SWCLK</code>) and one bidirectional data line (<code>SWDIO</code>). It first appeared with Arm's CoreSight architecture in 2006 and is now the only debug interface most modern Cortex-M parts physically expose. Probe-rs, OpenOCD, J-Link, ST-Link, CMSIS-DAP, Black Magic Probe, and edevkit itself all speak it. This page is the document you read when you need to <em>understand</em> SWD &mdash; not just use it &mdash; well enough to bring up a custom probe, debug a stuck target, or read OpenOCD source without a glossary.</p>
+  <p class="small"><strong>Audience.</strong> A firmware engineer who has used SWD via a probe but never looked at the wires. Or someone bringing up the edevkit CMSIS-DAP probe and wondering why <code>WAIT</code> responses keep happening, what the <code>0xE79E</code> magic number means, or how to reach core 1 on an RP2040. By the end you should be able to follow an ADIv5 packet trace on a logic analyser, hand-write a register-read sequence, and reason about edge cases like multi-drop, dormant state, and sticky errors.</p>
+  <p class="small"><strong>What's not in this doc.</strong> JTAG (see <a href="debug_jtag.html">debug_jtag.html</a>), the SWO trace pin and CoreSight ITM/TPIU (see <a href="debug_swo.html">debug_swo.html</a>), CMSIS-DAP USB framing (see <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a>), or the RP2350 PIO programming model used by edevkit's bit-banged SWD engine (see <a href="platform_pio.html">platform_pio.html</a>). General Cortex-M debug architecture is in <a href="arm_architecture.html">arm_architecture.html</a> and <a href="arm_cortex_m33.html">arm_cortex_m33.html</a>. The v1 design context for edevkit is in <a href="edevkit1.html">edevkit1.html</a>.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Positioning</span>
+  <ol>
+    <li><a href="#about">What SWD is &mdash; and why every Cortex-M ships it</a></li>
+    <li><a href="#electrical">Physical &amp; electrical &mdash; pins, voltages, speed, cabling</a></li>
+  </ol>
+  <span class="heading">Wire-level protocol</span>
+  <ol>
+    <li><a href="#wire">Wire-level transaction structure</a></li>
+    <li><a href="#request">The 8-bit request packet, field by field</a></li>
+    <li><a href="#ack">ACK codes &mdash; OK / WAIT / FAULT</a></li>
+    <li><a href="#data">Data phase, parity, turnaround</a></li>
+  </ol>
+  <span class="heading">Register model</span>
+  <ol>
+    <li><a href="#dp-ap">DP and AP &mdash; the two register banks</a></li>
+    <li><a href="#dp-regs">DP registers &mdash; IDCODE, ABORT, CTRL/STAT, SELECT, RDBUFF</a></li>
+    <li><a href="#ap-regs">MEM-AP registers &mdash; CSW, TAR, DRW, BD0..BD3</a></li>
+    <li><a href="#worked">Worked example &mdash; reading 0x20000000</a></li>
+  </ol>
+  <span class="heading">Bring-up &amp; recovery</span>
+  <ol>
+    <li><a href="#switch">JTAG-to-SWD switch &mdash; 0xE79E and dormant state</a></li>
+    <li><a href="#linereset">Line reset, idle, and sticky-error recovery</a></li>
+    <li><a href="#multidrop">Multi-drop SWD (SWDv2) and TARGETSEL</a></li>
+  </ol>
+  <span class="heading">edevkit &amp; pitfalls</span>
+  <ol>
+    <li><a href="#edevkit">edevkit1's SWD implementation &mdash; PIO0 SM0</a></li>
+    <li><a href="#pitfalls">Common pitfalls when bit-banging SWD</a></li>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="about">What SWD is &mdash; and why every Cortex-M ships it</h2>
+
+<p>SWD is an Arm-defined synchronous serial debug protocol that carries the <em>same</em> Debug Access Port transactions JTAG carries, over <strong>two wires instead of four (or five)</strong>:</p>
+
+<ul>
+  <li><strong>SWCLK</strong> &mdash; clock from probe to target. The probe is always the clock master; the target is always the slave. Idle state is low.</li>
+  <li><strong>SWDIO</strong> &mdash; bidirectional data, sampled on the rising edge of SWCLK. Direction switches mid-transaction and is governed by an explicit <em>turnaround</em> period.</li>
+</ul>
+
+<p>Compare to JTAG, which needs <code>TCK</code>, <code>TMS</code>, <code>TDI</code>, <code>TDO</code> and (optionally) <code>nTRST</code>. On a 48-pin LQFP that's 4&ndash;5 dedicated debug pins; on SWD it's 2. Cortex-M parts ship in packages as small as QFN-12 (Cortex-M0+ in some Microchip parts), so SWD is often the <em>only</em> debug interface physically exposed &mdash; the chip simply does not have enough pins for JTAG.</p>
+
+<p>That said, SWD is not a separate protocol stack. The <strong>Debug Access Port (DAP)</strong> &mdash; the register interface a debugger pokes to read memory, halt the core, set breakpoints &mdash; is identical between JTAG and SWD. SWD is a different <em>physical layer</em> for the same logical transactions. Arm calls the DAP block "SWJ-DP" when the silicon supports both physical layers and lets you switch between them at runtime. Most modern Cortex-M parts (M3 onward) integrate SWJ-DP. M0/M0+ often integrate SW-DP (SWD-only) to save area.</p>
+
+<div class="callout info">
+  <span class="label">key idea</span>
+  <strong>SWD = JTAG's logical transactions, on 2 wires instead of 4.</strong> A probe that "speaks SWD" is doing the same DAP register reads/writes as the JTAG-equivalent probe; the difference is purely how those reads/writes are framed on the wire. This is why probe-rs, OpenOCD, and CMSIS-DAP all share most of their code paths between the two transports &mdash; only the lowest layer changes.
+</div>
+
+<h3 id="why-it-exists">Why SWD exists at all</h3>
+
+<p>Pin economy. The Cortex-M family was designed for cost-sensitive embedded MCUs where every pin you can save is a pin you can sell to the customer as GPIO. Arm's design brief for SWD (originally documented in DDI 0316 for Cortex-M3, then formalised across the family in the <strong>Arm Debug Interface Architecture Specification</strong>, IHI 0031) was: keep the JTAG <em>register interface</em> (so existing tooling and silicon IP could be reused) but replace the <em>transport</em> with a 2-wire serial bus so MCU vendors could put debug on a 6-pin connector (Vcc, GND, SWCLK, SWDIO, SWO, nRESET) instead of a 20-pin connector.</p>
+
+<p>The original 20-pin Arm debug header is now legacy; the modern standard is the <strong>Cortex Debug Connector</strong> (Arm's "10-pin Cortex" header) or its even smaller <strong>Cortex Debug + ETM</strong> variant. edevkit1 supports both (see <a href="edevkit1.html#sec-debug-header">edevkit1.html &sect;6</a>).</p>
+
+<h3 id="versions">SWD versions and where they appear</h3>
+
+<table>
+  <tr><th>Version</th><th>First introduced</th><th>Spec</th><th>Highlights</th></tr>
+  <tr>
+    <td><strong>SW-DP / SWJ-DP v1</strong></td>
+    <td>~2006 (Cortex-M3, ADIv5.0)</td>
+    <td>IHI 0031A</td>
+    <td>The original. Single target on the bus. Switch from JTAG via the <code>0xE79E</code> sequence. ACK codes, parity, turnaround all defined here.</td>
+  </tr>
+  <tr>
+    <td><strong>SWDv2 (multi-drop)</strong></td>
+    <td>~2013 (ADIv5.2)</td>
+    <td>IHI 0031C</td>
+    <td>Adds <code>TARGETSEL</code> register and a connection-handshake sequence so multiple targets can share one SWCLK/SWDIO bus. Used by RP2040, RP2350, multi-die SoCs, and stacked debuggable chiplets.</td>
+  </tr>
+  <tr>
+    <td><strong>Dormant state &amp; selection alert</strong></td>
+    <td>~2016 (Armv8-M, ADIv5.2)</td>
+    <td>IHI 0031C/D</td>
+    <td>A power-on state where neither JTAG nor SWD responds until you transmit a 128-bit "selection alert" + activation code. Required on Armv8-M parts that share the debug pins with non-Arm interfaces.</td>
+  </tr>
+  <tr>
+    <td><strong>ADIv6</strong></td>
+    <td>~2020</td>
+    <td>IHI 0074</td>
+    <td>Modernises addressing (DP/AP both move to a flat 64-bit space), adds new packet types, retains the SWD wire format. Used on Armv8.1-M (M52/M55/M85) and large CoreSight SoCs. Most M-class MCUs in 2026 are still ADIv5.2.</td>
+  </tr>
+</table>
+
+<p class="small">For day-to-day Cortex-M0/M3/M4/M33 work, you're talking ADIv5 over SWDv1 or SWDv2. ADIv6 only matters if you're targeting a Cortex-M55/M85 or a large Cortex-A SoC.</p>
+
+<!-- =========================================================== -->
+<h2 id="electrical">Physical &amp; electrical &mdash; pins, voltages, speed, cabling</h2>
+
+<h3 id="signals">The two signals</h3>
+
+<table>
+  <tr><th>Signal</th><th>Direction</th><th>Idle</th><th>Drive</th><th>Notes</th></tr>
+  <tr>
+    <td><code>SWCLK</code></td>
+    <td>Probe &rarr; Target</td>
+    <td>Low</td>
+    <td>Push-pull</td>
+    <td>Probe is always the clock master. Target sees this as an input. The clock can be stopped indefinitely between transactions &mdash; SWD is not free-running. Many probes will gate the clock when no transaction is pending; targets must tolerate that.</td>
+  </tr>
+  <tr>
+    <td><code>SWDIO</code></td>
+    <td>Bidirectional</td>
+    <td>High (pull-up)</td>
+    <td>Push-pull or open-collector</td>
+    <td>Direction is controlled by the protocol &mdash; turnaround periods (1 SWCLK by default, configurable to 1/2/3/4 via the DP <code>WCR</code> register) hand the line off. A pull-up on the target side keeps the line at a defined level during turnaround.</td>
+  </tr>
+</table>
+
+<p>Two more signals are part of every real-world SWD connector but aren't strictly part of the protocol:</p>
+
+<ul>
+  <li><code>nRESET</code> &mdash; the target's reset pin, driven open-drain by the probe. Used to recover wedged targets and to align the very first SWD transaction with a clean reset. edevkit1 GPIO 16 (see <a href="edevkit1.html#sec-pinmap">edevkit1.html pinmap</a>).</li>
+  <li><code>SWO</code> &mdash; an asynchronous trace-output pin (UART-encoded ITM frames). Not part of the SWD register protocol; it just happens to be on the same connector. Covered fully in <a href="debug_swo.html">debug_swo.html</a>.</li>
+</ul>
+
+<h3 id="voltages">Voltage levels &mdash; everything is referenced to Vtgt</h3>
+
+<p>SWD has no defined voltage. The signal level is whatever the target's I/O Vcc is. Modern Cortex-M targets run anywhere from <strong>1.62 V to 5.5 V</strong>, and the probe must match. A probe that drives 3.3 V into a 1.8 V target will, at minimum, exceed the target's input voltage spec; at worst it back-feeds the target's power rail and damages the chip. <strong>Always sense Vtgt and shift levels accordingly.</strong></p>
+
+<p>edevkit1 senses Vtgt on <code>ADC0</code> (see <a href="edevkit1.html#sec-power">edevkit1.html &sect;7</a>) and gates SWCLK/SWDIO through an <strong>SN74LVC8T245</strong> 8-bit dual-supply translator (Vcc<sub>A</sub> = 3.3 V from the probe, Vcc<sub>B</sub> = Vtgt). The LVC family works down to about 1.65 V; below that, the firmware switches the active level shifters to a <strong>TXS0108E</strong> auto-direction translator which works down to 1.2 V (at the cost of slower edges and lower max frequency).</p>
+
+<div class="callout warn">
+  <span class="label">gotcha</span>
+  Vtgt sensed below ~1.65 V means LVC8T245 will not drive logic levels reliably at full speed. edevkit1's firmware will detect this and either downshift the SWD frequency, route through TXS0108E channels, or refuse to attach until the user confirms the low-V mode.
+</div>
+
+<h3 id="pullup">SWDIO pull-up &mdash; non-negotiable</h3>
+
+<p>The Arm spec requires a pull-up on SWDIO (typical 100 k&Omega;, sometimes 10 k&Omega; on noisy boards). During turnaround periods <em>both</em> ends are tristate; without a pull-up the line floats and any noise can corrupt the next sample. Most MCUs include an internal pull-up that's enabled out of reset, but you cannot rely on it &mdash; some chips disable internal pulls during deep sleep, and your probe board must work even before the target is responsive. <strong>Put an explicit pull-up on the probe side.</strong> edevkit1 puts a 22 k&Omega; pull-up on the SWDIO line at the probe-side translator output (see <a href="edevkit1.html#sec-debug-header">edevkit1.html &sect;6</a>).</p>
+
+<h3 id="speed">Maximum speed and cable length</h3>
+
+<table>
+  <tr><th>Cable length</th><th>Practical max SWCLK</th><th>Notes</th></tr>
+  <tr><td>&le;3 inch (PCB or short flex)</td><td>50 MHz</td><td>QFN-direct probing during board bring-up. Some probes (DAPLink, SEGGER) advertise this.</td></tr>
+  <tr><td>~6 inch (typical 10-pin Cortex ribbon)</td><td>25 MHz</td><td>The edevkit1 default. Comfortable margin against ringing.</td></tr>
+  <tr><td>~12 inch (loose jumpers, breadboard)</td><td>10 MHz</td><td>Above this, signal integrity falls off fast. Reflections + cross-talk start eating the margin on SWDIO.</td></tr>
+  <tr><td>&ge;18 inch</td><td>1&ndash;5 MHz</td><td>You're now using SWD as a slow-and-tolerant bring-up tool, not a debug speed.</td></tr>
+</table>
+
+<p>edevkit1 targets <strong>25 MHz nominal, 50 MHz best-case</strong> on its bit-banged PIO0 SM0 SWD engine, with the firmware auto-falling back to lower speeds when it detects errors or sees a long cable.</p>
+
+<div class="callout">
+  <span class="label">rule of thumb</span>
+  Halve the SWCLK frequency every time the cable doubles. If you're seeing intermittent <code>FAULT</code> or unsynced packets, the first thing to try is to drop SWCLK by 2&times; and see if the problem disappears.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="wire">Wire-level transaction structure</h2>
+
+<p>Every SWD transaction is exactly the same five-phase shape:</p>
+
+<pre><code>  &lt;----- host drives ------&gt;|&lt;trn&gt;|&lt;-target-&gt;|&lt;trn?&gt;|&lt;----- 33 bits -----&gt;|
+
+  1. Request   (8  bits)    | TRN | ACK (3) | TRN | DATA (32) + parity (1)
+                                              ^
+                                              only on read; not on write
+
+  Read:  HOST &rarr; req &rarr; TRN &rarr; TGT &rarr; ack &rarr; TGT &rarr; data+parity &rarr; TRN &rarr; HOST idle
+  Write: HOST &rarr; req &rarr; TRN &rarr; TGT &rarr; ack &rarr; TRN &rarr; HOST &rarr; data+parity &rarr; HOST idle
+</code></pre>
+
+<p>The five phases:</p>
+
+<ol>
+  <li><strong>Request</strong> &mdash; 8 bits, host drives. Selects DP-vs-AP, R-vs-W, the register address, and carries an odd-parity bit. Always ends with the host having driven exactly 8 SWCLK cycles. (Detail: <a href="#request">&sect; The 8-bit request packet</a>.)</li>
+  <li><strong>Turnaround (TRN)</strong> &mdash; 1 SWCLK cycle (default). Both ends tristate; the SWDIO pull-up holds the line high. This is the moment direction reverses.</li>
+  <li><strong>ACK</strong> &mdash; 3 bits, target drives. Encodes <code>OK</code>, <code>WAIT</code>, or <code>FAULT</code>. (Detail: <a href="#ack">&sect; ACK codes</a>.)</li>
+  <li><strong>Data + parity</strong> &mdash; 32 bits LSB-first, plus 1 parity bit. On a <strong>read</strong>, the target drives this; on a <strong>write</strong> the host drives it (after another turnaround following the ACK).</li>
+  <li><strong>Trailing turnaround / idle</strong> &mdash; on a read, one more TRN cycle hands the line back to the host. On a write, no extra TRN is needed because the host already had control after the post-ACK TRN. The host then drops idle clocks (SWCLK low, SWDIO low) until the next request, or sends the next request immediately back-to-back.</li>
+</ol>
+
+<p>"LSB-first" is the rule for everything except the request packet's parity/stop/park, which are positional. All multi-bit fields go out least-significant-bit first.</p>
+
+<div class="callout info">
+  <span class="label">tip</span>
+  On a logic analyser, an SWD bus during steady-state debug looks like clusters of ~46-bit bursts (8 req + 1 trn + 3 ack + 1 trn + 32 data + 1 par + 1 trn) separated by SWCLK quiet periods. If you see sustained activity longer than that, you're probably looking at a JTAG-to-SWD switch, a line reset, or a multi-drop handshake.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="request">The 8-bit request packet, field by field</h2>
+
+<p>The request is the only host-driven phase that has structured fields beyond raw data. Each request is exactly 8 SWCLK cycles long; the bits go LSB-first on SWDIO:</p>
+
+<pre><code>bit:      0     1      2     3      4     5     6     7
+field:  Start  APnDP  RnW   A[2]   A[3]   Par  Stop  Park
+value:   1      X      X     X      X      X    0     1
+
+   Start  = 1   (always)
+   APnDP  = 1 selects an AP register
+            0 selects a DP register
+   RnW    = 1 read,  0 write
+   A[2:3] = the 2-bit field that picks one of 4 register slots
+            within the bank selected by SELECT
+   Par    = odd parity over {APnDP, RnW, A[2], A[3]}
+   Stop   = 0   (always)
+   Park   = 1   (always)
+</code></pre>
+
+<p>Two oddities worth flagging:</p>
+
+<ul>
+  <li><strong>Only 2 address bits.</strong> SWD lets you address only 4 registers per bank. Bigger register sets are reached by writing the <code>SELECT</code> DP register first to choose <em>which</em> AP and which register bank within that AP. We come back to this in <a href="#dp-ap">&sect; DP and AP</a>.</li>
+  <li><strong>Address bits are <code>A[2]</code> and <code>A[3]</code>,</strong> not <code>A[0]</code> and <code>A[1]</code>. Why: the underlying register space is 32-bit-word addressed, so bits [1:0] are always zero, and the spec just numbers the on-the-wire bits using the byte-address convention. Annoying but harmless once you internalise it.</li>
+</ul>
+
+<h3 id="example-byte">Example &mdash; "read DP register 0xC (RDBUFF)"</h3>
+
+<p>Read DP register at byte offset <code>0xC</code> (the <code>RDBUFF</code> register; we'll come back to what it does):</p>
+
+<pre><code>APnDP = 0   (DP)
+RnW   = 1   (read)
+A[2]  = 1   ; 0xC = bits [3:2] = 11
+A[3]  = 1
+Parity over {0, 1, 1, 1} = 1 (odd parity = sum of 1s mod 2)
+Start = 1, Stop = 0, Park = 1
+
+Bits LSB-first: 1 0 1 1 1 1 0 1   (start, APnDP, RnW, A2, A3, par, stop, park)
+
+As a byte (MSB on left, conventional notation): 0b10111101 = 0xBD
+</code></pre>
+
+<p>So a "read RDBUFF" request is the literal byte <code>0xBD</code> shifted out LSB-first. Many SWD implementations precompute the eight legal request bytes (4 reg &times; 2 R/W &times; AP/DP) into a small lookup table:</p>
+
+<pre><code>// DP requests              // AP requests
+DP_RD_IDCODE  = 0xA5         AP_RD_CSW   = 0x87
+DP_WR_ABORT   = 0x81         AP_WR_CSW   = 0xA3
+DP_RD_CTRLSTAT= 0x8D         AP_RD_TAR   = 0x8F
+DP_WR_CTRLSTAT= 0xA9         AP_WR_TAR   = 0xAB
+DP_WR_SELECT  = 0xB1         AP_RD_DRW   = 0x9F
+DP_RD_RDBUFF  = 0xBD         AP_WR_DRW   = 0xBB
+</code></pre>
+
+<p class="small">(Verify the exact values for your project &mdash; off-by-one parity bugs are a classic source of "my probe doesn't work" issues. The CMSIS-DAP firmware source is the canonical reference for these constants.)</p>
+
+<h3 id="parity-rule">Parity: odd over four bits</h3>
+
+<p>Parity in the request packet is <strong>odd parity over {APnDP, RnW, A[2], A[3]}</strong>:</p>
+
+<pre><code>par = APnDP ^ RnW ^ A[2] ^ A[3]
+</code></pre>
+
+<p>Result: the <strong>five-bit field {APnDP, RnW, A[2], A[3], Par}</strong> always contains an odd number of ones. The target will compute the same XOR over the bits it received and compare; if they differ, the target sets a sticky error and the next ACK will be <code>FAULT</code> (or, on some implementations, the target ignores the request entirely, leading to a host-side timeout).</p>
+
+<!-- =========================================================== -->
+<h2 id="ack">ACK codes &mdash; OK / WAIT / FAULT</h2>
+
+<p>After the host's request and one turnaround cycle, the target drives 3 ACK bits LSB-first:</p>
+
+<table>
+  <tr><th>Code</th><th>Bits (LSB-first on the wire)</th><th>Binary value</th><th>Meaning</th></tr>
+  <tr><td><strong>OK</strong></td><td><code>1 0 0</code></td><td><code>0b001</code></td><td>Request accepted. Continue with the data phase. <em>Important caveat below.</em></td></tr>
+  <tr><td><strong>WAIT</strong></td><td><code>0 1 0</code></td><td><code>0b010</code></td><td>Target is busy &mdash; usually because the previous AP transaction hasn't completed (e.g. an in-flight bus access on a slow memory). The host should retry the same request after a short delay, or issue a <code>WRITE ABORT</code> if the wait persists.</td></tr>
+  <tr><td><strong>FAULT</strong></td><td><code>0 0 1</code></td><td><code>0b100</code></td><td>A sticky error bit is set in CTRL/STAT &mdash; either parity error, AP error, or overrun. The host must clear the relevant sticky bit via a <code>WRITE ABORT</code> before any more AP transactions will succeed.</td></tr>
+  <tr><td><em>NoResponse / Protocol Error</em></td><td><code>0 0 0</code> or <code>1 1 1</code> (etc.)</td><td><code>0b000 / 0b111 / other</code></td><td>Not a defined ACK; usually means the target is unreachable, the line was glitched, or you got out of sync with a half-eaten request. Recover with a <strong>line reset</strong>.</td></tr>
+</table>
+
+<div class="callout warn">
+  <span class="label">important</span>
+  <strong>An <code>OK</code> on a <em>read</em> does <em>not</em> mean the requested value has reached the host yet.</strong> AP reads are <em>posted</em> &mdash; the data field that follows an AP-read request is the <em>previous</em> read's result. To get the value you actually asked for, you have to either issue another AP read (and discard or use the now-arrived earlier value) or read the DP <code>RDBUFF</code> register, which holds "the most recent AP read result". This is the single biggest pitfall when hand-writing SWD.
+</div>
+
+<h3 id="wait-loop">The WAIT loop pattern</h3>
+
+<pre><code>repeat:
+    drive request
+    read ack
+    if ack == OK:    proceed with data phase
+    if ack == WAIT:  small delay; loop (with a max-retry count)
+    if ack == FAULT: read CTRL/STAT, write ABORT, propagate error
+    if ack == 0b000: line reset, re-attach
+</code></pre>
+
+<p>OpenOCD, probe-rs, and CMSIS-DAP all follow this pattern. The retry count is typically ~64 retries with exponentially increasing delays, totalling on the order of milliseconds before giving up.</p>
+
+<!-- =========================================================== -->
+<h2 id="data">Data phase, parity, turnaround</h2>
+
+<p>If <code>ACK == OK</code>, the request and target are now committed to a 32-bit data exchange:</p>
+
+<ul>
+  <li><strong>Read:</strong> target continues to drive SWDIO immediately after the ACK &mdash; no extra turnaround &mdash; and shifts out 32 data bits LSB-first plus 1 parity bit. Parity is the XOR of all 32 data bits (even parity over data: a 1 if the data has an odd number of 1s). After the parity bit there's one more TRN cycle handing the line back to the host.</li>
+  <li><strong>Write:</strong> after the ACK, the target tristates and a <em>second</em> turnaround happens (1 SWCLK cycle by default). Then the host drives 32 data bits LSB-first plus 1 parity bit. No final turnaround needed &mdash; the host already owns the line.</li>
+</ul>
+
+<p>The default turnaround is <strong>1 cycle</strong>. The host can change it for the whole link by writing the <code>WCR</code> register in the DP (1, 2, 3, or 4 cycles &mdash; useful on long cables where the wire-direction reversal needs more settling time). The target reports its supported value in the <code>WCR</code> read; the actual in-use value is the smaller of host and target capability. Most probes leave it at the default 1.</p>
+
+<h3 id="ascii-timing">ASCII timing &mdash; one full read transaction</h3>
+
+<pre><code>SWCLK : __|&macr;|_|&macr;|_|&macr;|_|&macr;|_|&macr;|_|&macr;|_|&macr;|_|&macr;|_   (8 cycles, request)
+SWDIO : ...d0  d1  d2  d3  d4  d5  d6  d7....    host drives, LSB-first
+
+         |&macr;|_                                       turnaround = 1 cycle
+SWDIO :   z..    line floats, pull-up holds high
+
+         |&macr;|_|&macr;|_|&macr;|_                              ack = 3 cycles
+SWDIO :   a0 a1 a2     target drives
+
+         |&macr;|_|&macr;|_|&macr;|_ ... |&macr;|_|&macr;|_       data + parity = 33 cycles
+SWDIO :   d0 d1 d2 ... d31 par      target drives, LSB-first
+
+         |&macr;|_                                       trailing turnaround = 1 cycle
+SWDIO :   z..    line floats, host takes over for next request
+</code></pre>
+
+<p>Total: <strong>8 + 1 + 3 + 33 + 1 = 46 SWCLK cycles</strong> per read, <strong>8 + 1 + 3 + 1 + 33 = 46 cycles</strong> per write (with the post-ACK TRN replacing the read's trailing TRN). At 25 MHz that's ~1.84 &mu;s per transaction &mdash; ~540 k transactions/second peak, before any host-side overhead. A "read 1 KB of memory" is roughly 256 word transactions &asymp; 0.5 ms.</p>
+
+<!-- =========================================================== -->
+<h2 id="dp-ap">DP and AP &mdash; the two register banks</h2>
+
+<p>Logically, the DAP is a tree:</p>
+
+<pre><code>          SWD wire (SWCLK / SWDIO)
+                    |
+         +----------+----------+
+         |  Debug Port (DP)    |    one per chip (or one per core in multi-drop)
+         +----------+----------+
+                    |
+         +----------+----------+
+         |    AP bus (APBUS)   |    addressed by SELECT.APSEL (8 bits = up to 256 APs)
+         +-----+----+-----+----+
+               |    |     |
+             AP0   AP1   AP2 ...
+              |     |     |
+         MEM-AP  JTAG-AP  custom-AP
+              |
+         MCU memory bus &mdash; this is where you read 0x20000000
+</code></pre>
+
+<p>Two banks of registers visible to the SWD layer:</p>
+
+<ul>
+  <li><strong>Debug Port (DP)</strong> &mdash; a small set of registers controlling the wire itself: identity, power-up, sticky errors, AP bus select. Always reachable directly via <code>APnDP=0</code> in the request packet.</li>
+  <li><strong>Access Port (AP)</strong> &mdash; one of up to 256 sub-blocks behind the DP, addressed via <code>SELECT.APSEL</code>. The most common AP is the <strong>MEM-AP</strong> (a memory-mapped bridge to AHB or APB on the chip), but you may also see JTAG-AP (carries JTAG-style scan chains over the DAP &mdash; useful when the chip has a JTAG-only legacy block), or vendor-specific APs.</li>
+</ul>
+
+<h3 id="select-banking">Banked register access via SELECT</h3>
+
+<p>SWD's request packet only carries 2 address bits, so each bank exposes 4 registers at a time. The <code>SELECT</code> DP register chooses:</p>
+
+<pre><code>SELECT @ DP 0x8 (write only)
++-------+--------+----------+----------+
+| 31:24 | 23:8   | 7:4      | 3:0      |
+| APSEL | (rsvd) | APBANKSEL| DPBANKSEL|
++-------+--------+----------+----------+
+
+  APSEL     = which AP we're talking to        (0..255)
+  APBANKSEL = which bank of 4 registers within that AP   (0..15)
+  DPBANKSEL = which bank within the DP itself  (0..15; mostly 0)
+</code></pre>
+
+<p>So to read MEM-AP register at offset <code>0x10</code> (TAR), you'd write <code>SELECT</code> with <code>APSEL=0, APBANKSEL=1</code>, then issue an AP-read with <code>A[3:2]=00</code> &mdash; the first slot of bank 1. Most debuggers maintain a software shadow of <code>SELECT</code> and only re-write it when the bank actually changes, to save round-trips.</p>
+
+<h3 id="posted-reads">Posted reads &mdash; why RDBUFF exists</h3>
+
+<p>AP reads are <em>pipelined</em>. When you issue an AP-read request, the target starts fetching the value (which may take a bus cycle on the chip's internal AHB), but the data field that comes back on the SWD wire after the ACK is the result of <em>the previous</em> AP read. So:</p>
+
+<pre><code>1. host: AP-read CSW              -&gt; data phase carries OLD value (garbage on first read)
+2. host: AP-read CSW              -&gt; data phase carries CSW value from step 1
+3. host: DP-read RDBUFF           -&gt; data phase carries CSW value from step 2
+                                     (RDBUFF "drains" the pipeline; no new AP read)
+</code></pre>
+
+<p>The standard idiom is: issue the AP read you want, then read RDBUFF to retrieve the result. The total cost of one logical AP read is therefore <em>two</em> SWD transactions (one AP-read, one RDBUFF read).</p>
+
+<p>For burst reads, debuggers chain AP-reads back-to-back and only read RDBUFF once at the end &mdash; each AP-read returns the previous one's value, so a sequence of N AP-reads followed by 1 RDBUFF gives you N usable values with N+1 transactions. This is the basis of how a <code>memcpy</code> from target memory becomes ~3.5 SWCLK cycles per byte at peak (much faster than the naive 46-cycles-per-32-bits would suggest).</p>
+
+<!-- =========================================================== -->
+<h2 id="dp-regs">DP registers &mdash; IDCODE, ABORT, CTRL/STAT, SELECT, RDBUFF</h2>
+
+<p>The DP register set in ADIv5.2:</p>
+
+<table>
+  <tr><th>Offset</th><th>Read</th><th>Write</th><th>Purpose</th></tr>
+  <tr><td><code>0x0</code></td><td><strong>IDCODE</strong></td><td><strong>ABORT</strong></td><td>Read &mdash; chip-level identifier (vendor + part + version). Write &mdash; clear sticky bits and abort outstanding AP transaction.</td></tr>
+  <tr><td><code>0x4</code></td><td><strong>CTRL/STAT</strong></td><td><strong>CTRL/STAT</strong></td><td>Power-up requests &amp; acknowledgements; sticky error bits; transfer count. The single most-poked DP register during attach.</td></tr>
+  <tr><td><code>0x8</code></td><td><strong>RESEND</strong> (or <strong>WCR</strong> in DPBANK 1)</td><td><strong>SELECT</strong></td><td>Read &mdash; resend the previous AP-read result without re-issuing it (used after CRC failures). Write &mdash; choose AP and bank.</td></tr>
+  <tr><td><code>0xC</code></td><td><strong>RDBUFF</strong></td><td>(reserved)</td><td>Read &mdash; drain the AP-read pipeline. The "give me the value of the last AP-read I asked for" register.</td></tr>
+</table>
+
+<h3 id="idcode">IDCODE</h3>
+
+<p>The first thing any SWD attach does is read IDCODE. The format is:</p>
+
+<pre><code>bit  31         28 27         12 11          1  0
+    +-------------+---------------+-------------+--+
+    | VERSION (4) | PARTNO   (16) | DESIGNER(11)| 1|
+    +-------------+---------------+-------------+--+
+
+  bit 0 = always 1 (legacy from JTAG IDCODE convention)
+  DESIGNER = JEDEC continuation code + JEP106 ID (Arm = 0x23B, ST = 0x020, etc.)
+  PARTNO   = vendor-defined part identifier
+  VERSION  = silicon revision
+</code></pre>
+
+<p>Common IDCODEs you'll see:</p>
+
+<table>
+  <tr><th>Chip</th><th>IDCODE (typical)</th></tr>
+  <tr><td>Cortex-M0+ DP (generic)</td><td><code>0x0BB11477</code></td></tr>
+  <tr><td>Cortex-M3 DP (generic)</td><td><code>0x2BA01477</code></td></tr>
+  <tr><td>Cortex-M4 DP (generic)</td><td><code>0x2BA01477</code></td></tr>
+  <tr><td>Cortex-M33 DP (generic)</td><td><code>0x6BA02477</code></td></tr>
+  <tr><td>RP2040 (per-core)</td><td><code>0x0BC12477</code> (core 0), <code>0x1BC12477</code> (core 1)</td></tr>
+  <tr><td>RP2350 M33</td><td><code>0x0BC27477</code></td></tr>
+</table>
+
+<p class="small">If a probe reads IDCODE = <code>0xFFFFFFFF</code> or <code>0x00000000</code>, the SWD line is hosed: either no target is connected, the JTAG-to-SWD switch hasn't run, the target is in dormant state, or the wires are shorted/swapped. Always check IDCODE first when debugging probe issues.</p>
+
+<h3 id="ctrl-stat">CTRL/STAT &mdash; the workhorse</h3>
+
+<pre><code>CTRL/STAT @ DP 0x4
++-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+
+| 31  | 30  | 29  | 28  | 27:12 | 11 | 10  |  6  |  5  |  4  |  1  | 0
+| CSY | CSY | CDB | CDB |       | WD | RD  | STK | STK | STK | TRN | OR
+| SPW | SPW | GPW | GPW |       | ER | OK  | YOR | YEC | YERR| MOD | UNDETECT
+| UPACK| UPREQ| UPACK| UPREQ|   | RR |     | UN  | MP  |     |     |
++-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+
+</code></pre>
+
+<p>The bits you actually care about:</p>
+
+<ul>
+  <li><strong>CDBGPWRUPREQ / CDBGPWRUPACK</strong> &mdash; "please power up the debug domain". You write 1 to REQ and wait for 1 in ACK. Without this, the debug logic stays off and AP reads will return errors.</li>
+  <li><strong>CSYSPWRUPREQ / CSYSPWRUPACK</strong> &mdash; "please power up the system domain". Same handshake. The MCU will not respond on the AP bus until you complete both power-up requests. <em>Every SWD attach starts with these two writes.</em></li>
+  <li><strong>STICKYERR</strong> &mdash; set when an AP transaction returned an error. While this bit is set, every subsequent AP request answers <code>FAULT</code>. Clear by writing 1 to it via <code>ABORT</code>.</li>
+  <li><strong>STICKYORUN</strong> &mdash; the host pushed a request faster than the target could process it (typical when the previous AP transaction is still in flight and you didn't honour the WAIT response). Clear via <code>ABORT</code>.</li>
+  <li><strong>STICKYCMP</strong> &mdash; sticky compare; used by some advanced trace features. Most debuggers ignore it.</li>
+  <li><strong>WDATAERR</strong> &mdash; a parity error on a write data phase. Indicates SI problems on the cable. Clear via <code>ABORT</code>.</li>
+</ul>
+
+<h3 id="abort">ABORT</h3>
+
+<p>Write-only at DP <code>0x0</code>. The bit fields:</p>
+
+<table>
+  <tr><th>Bit</th><th>Name</th><th>Effect of writing 1</th></tr>
+  <tr><td>0</td><td><code>DAPABORT</code></td><td>Cancel the in-flight AP transaction. Use only after extended WAIT.</td></tr>
+  <tr><td>1</td><td><code>STKCMPCLR</code></td><td>Clear STICKYCMP.</td></tr>
+  <tr><td>2</td><td><code>STKERRCLR</code></td><td>Clear STICKYERR. <em>The most-used abort bit.</em></td></tr>
+  <tr><td>3</td><td><code>WDERRCLR</code></td><td>Clear WDATAERR.</td></tr>
+  <tr><td>4</td><td><code>ORUNERRCLR</code></td><td>Clear STICKYORUN.</td></tr>
+</table>
+
+<p>You'll typically write <code>0x1E</code> to ABORT after a FAULT to clear all sticky bits at once.</p>
+
+<h3 id="rdbuff">RDBUFF</h3>
+
+<p>Read-only at DP <code>0xC</code>. Returns the result of the previous AP read without initiating a new AP transaction. You read this <em>once</em> at the end of any AP-read sequence to drain the pipeline. Reading RDBUFF does not consume an AP-bus cycle, so it cannot cause a new WAIT.</p>
+
+<!-- =========================================================== -->
+<h2 id="ap-regs">MEM-AP registers &mdash; CSW, TAR, DRW, BD0..BD3</h2>
+
+<p>The MEM-AP is the AP variant that exposes the chip's internal memory bus (AHB on Cortex-M3/M4/M33, AHB5 on M33+TZ, APB on some peripherals). To "read 0x20000000" really means "configure CSW + TAR, then read DRW".</p>
+
+<table>
+  <tr><th>Offset</th><th>Bank</th><th>Name</th><th>Purpose</th></tr>
+  <tr><td><code>0x00</code></td><td>0</td><td><strong>CSW</strong> (Control/Status Word)</td><td>Access size (8/16/32-bit), auto-increment mode, privilege bits, in-flight bit. Configured once at attach and rarely changed.</td></tr>
+  <tr><td><code>0x04</code></td><td>0</td><td><strong>TAR</strong> (Transfer Address)</td><td>The memory address. Auto-increments after each DRW access if CSW.AddrInc=01 (saves you from re-writing TAR for sequential reads).</td></tr>
+  <tr><td><code>0x0C</code></td><td>0</td><td><strong>DRW</strong> (Data Read/Write)</td><td>Reading DRW reads memory at TAR; writing DRW writes memory at TAR. The "actual" data port.</td></tr>
+  <tr><td><code>0x10..0x1C</code></td><td>1</td><td><strong>BD0..BD3</strong></td><td>"Banked Data" &mdash; a 4-word window into memory at <code>TAR &amp; ~0xF</code>. Lets you read/write 4 sequential words without re-writing TAR. Useful for register dumps.</td></tr>
+  <tr><td><code>0xF8</code></td><td>F</td><td><strong>BASE</strong></td><td>Pointer to the ROM table for this AP &mdash; a table-of-contents of debug components (DWT, FPB, ITM, etc.). The probe walks this at attach to discover what debug features are present.</td></tr>
+  <tr><td><code>0xFC</code></td><td>F</td><td><strong>IDR</strong> (AP IDentification)</td><td>Identifies what kind of AP this is. <code>IDR == 0</code> means "no AP at this slot"; non-zero = MEM-AP / JTAG-AP / vendor-AP, decoded by class field.</td></tr>
+</table>
+
+<h3 id="csw-detail">CSW &mdash; the access-size register</h3>
+
+<pre><code>CSW @ AP 0x00
++----+-----+----+----+-----+-----+-----+-----+-----+
+| 31 | 30  | 29 | 28 | 27:24 | 23:12 | 11:8 |  7  | 5:4 | 2:0 |
+| DBG| TRN | RES| SPI| Type  | Mode  | Type | Bus | AddrInc | Size |
+| SWE|     |    |DEN |       |       |      | ENT |         |      |
++----+-----+----+----+-----+-----+-----+-----+-----+
+
+  Size:    000=byte, 001=halfword, 010=word (default for Cortex-M)
+  AddrInc: 00=off, 01=single (TAR auto-inc), 10=packed (size-aware)
+  Mode:    typically 0; debugger-defined access semantics
+  Type:    AHB-AP class-specific (Cortex-M MEM-APs ignore mostly)
+</code></pre>
+
+<p>The two fields you'll touch:</p>
+
+<ul>
+  <li><strong>Size</strong> &mdash; almost always 010 (word) for Cortex-M memory access.</li>
+  <li><strong>AddrInc</strong> &mdash; 01 lets the debugger chain reads through sequential addresses without re-writing TAR. Burst <code>memcpy</code> uses this.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="worked">Worked example &mdash; reading 0x20000000</h2>
+
+<p>Concrete sequence to read the first word of SRAM at <code>0x20000000</code> on a Cortex-M target. Assume SWD is already up (line reset done, JTAG-to-SWD switch done). All transactions are SWD; "DP/AP" refers to <code>APnDP</code>; "R/W" is <code>RnW</code>.</p>
+
+<pre><code>tx#  type      reg      value           ack    notes
+---  --------  -------  --------------  -----  -----------------------------
+ 1   DP read   IDCODE   ----            OK     verify chip is alive
+ 2   DP write  ABORT    0x0000001E      OK     clear all sticky bits (just in case)
+ 3   DP write  CTRL/    0x50000000      OK     CDBGPWRUPREQ | CSYSPWRUPREQ
+                STAT
+ 4   DP read   CTRL/    ----            OK     wait for ...PWRUPACK = 1 in bits 31, 29
+                STAT                                  (loop until both ACKs are set)
+ 5   DP write  SELECT   0x00000000      OK     APSEL=0 (MEM-AP), APBANKSEL=0, DPBANKSEL=0
+ 6   AP write  CSW      0x23000052      OK     word size, AddrInc=single, debug-priv
+ 7   AP write  TAR      0x20000000      OK     target address
+ 8   AP read   DRW      ----            OK     posted: starts the read of 0x20000000
+ 9   DP read   RDBUFF   ----            OK     ... and now we get the value
+                                               -&gt; data field carries the word
+                                                  contents at 0x20000000
+
+bonus  AP read  DRW    ----             OK     because TAR auto-incremented to
+                                                  0x20000004, this posts a read of it
+       DP read  RDBUFF ----             OK     -&gt; gets the value at 0x20000004
+       ... and so on for sequential reads
+</code></pre>
+
+<p>To <strong>write</strong> 0xDEADBEEF to 0x20000000 instead, replace tx 8&ndash;9 with:</p>
+
+<pre><code> 8   AP write  DRW      0xDEADBEEF      OK     write goes through; no RDBUFF needed
+ 9   DP read   CTRL/    ----            OK     check STICKYERR cleared; if set, the
+                STAT                                  write hit a fault (e.g. unmapped addr)
+</code></pre>
+
+<p>This is the canonical pattern. Every probe in existence eventually boils down to sequences of CSW/TAR/DRW writes and DRW/RDBUFF reads.</p>
+
+<!-- =========================================================== -->
+<h2 id="switch">JTAG-to-SWD switch &mdash; 0xE79E and dormant state</h2>
+
+<p>Multi-protocol parts (i.e., parts with SWJ-DP) power up in <em>some</em> default state &mdash; usually JTAG, occasionally SWD, occasionally <em>dormant</em>. To get into SWD reliably regardless of the power-up default, the host transmits a known protocol-switch sequence on SWCLK/SWDIO. The probe must do this at every attach.</p>
+
+<h3 id="classic-switch">Classic JTAG-to-SWD switch (ADIv5)</h3>
+
+<p>The legacy sequence works on every Cortex-M3/M4 part with SWJ-DP:</p>
+
+<pre><code>1. Send &gt;= 50 SWCLK cycles with SWDIO = 1                  ; line reset (puts both
+                                                              JTAG and SWD into a known
+                                                              "ready to listen" state)
+
+2. Send the magic 16-bit JTAG-to-SWD select code:
+       0x79E7 LSB-first (which is the byte sequence 0x9E, 0xE7
+       on the wire, MSB-first that's 0xE79E)
+
+3. Send another &gt;= 50 SWCLK cycles with SWDIO = 1          ; line reset to
+                                                              re-sync SWD
+
+4. Send 1+ idle cycles with SWDIO = 0                      ; SWD now ready
+
+5. Read DP IDCODE                                          ; verify reception
+</code></pre>
+
+<p>The "0xE79E vs 0x79E7" confusion is real: the bits go on the wire LSB-first. Many people quote the byte order they see on a logic analyser (which is MSB on the left, so they read 0xE79E); others quote the value as it appears in shift-register notation (0x79E7). Both refer to the same physical bit sequence: <code>0,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1</code> on the wire. <strong>Most CMSIS-DAP firmware uses <code>0xE79E</code> in the source.</strong></p>
+
+<h3 id="dormant">Dormant state and selection alert (Armv8-M)</h3>
+
+<p>From Armv8-M onward, Arm added a "dormant" power-up state where neither JTAG nor SWD responds to anything until the probe transmits a 128-bit <strong>selection alert</strong> followed by an 8-bit <strong>activation code</strong>. This was needed because Armv8-M parts often share the debug pins with other functions (e.g. boot ROM modes, vendor-proprietary serial protocols), and Arm wanted a sequence so distinctive that random toggling of the pins won't accidentally enter SWD.</p>
+
+<pre><code>1. &gt;= 8 SWCLK cycles with SWDIO = 1                       ; abort any in-flight selection
+                                                              alert from a previous attempt
+
+2. 128-bit Selection Alert (constants from ADIv5.2 / ADIv6):
+       bits   0..63 : 0x86852D956209F392 (LSB-first on wire)
+       bits  64..127: 0x19BC0EA2E3DDAFE9 (LSB-first on wire)
+
+3. 4 SWCLK cycles with SWDIO = 0                          ; gap
+
+4. 8-bit activation code:
+       For SWD: 0x1A   (LSB-first on wire)
+       For JTAG-DP: 0x0A
+       For JTAG-Serial: 0x?? (vendor)
+
+5. Standard SWD line reset (&gt;= 50 SWCLK with SWDIO = 1)
+6. Read DP IDCODE
+</code></pre>
+
+<p>If the chip <em>only</em> supports dormant state (e.g. RP2040 and RP2350 on power-up), the classic 0xE79E switch will not work and you <em>must</em> issue the dormant-to-SWD activation. Most modern debuggers issue both sequences in succession at attach &mdash; the first works on legacy parts, the second on Armv8-M parts, and either is harmless on the wrong chip.</p>
+
+<div class="callout info">
+  <span class="label">edevkit firmware behaviour</span>
+  edevkit1's CMSIS-DAP implementation issues, in order: <em>line reset &rarr; 0xE79E classic switch &rarr; line reset &rarr; dormant deactivate (0xB3) &rarr; selection alert &rarr; SWD activation 0x1A &rarr; line reset &rarr; IDCODE read</em>. Each step is harmless on a chip that doesn't need it. This is the same pattern used by OpenOCD's <code>swd</code> driver and CMSIS-DAP firmware v2.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="linereset">Line reset, idle, and sticky-error recovery</h2>
+
+<p>SWD has <em>two</em> distinct "reset" concepts and they are easy to confuse:</p>
+
+<table>
+  <tr><th>Concept</th><th>What it does</th><th>How to do it</th><th>When to use</th></tr>
+  <tr><td><strong>Line reset</strong></td><td>Resets the SW-DP state machine. Does <em>not</em> clear sticky errors. Does <em>not</em> reset the chip.</td><td>Drive SWDIO high for &ge; 50 SWCLK cycles, then issue an idle SWDIO-low cycle.</td><td>After protocol-switch, after a malformed transaction, after a long idle when you're not sure what state the SW-DP is in.</td></tr>
+  <tr><td><strong>WRITE ABORT</strong> (DP @ 0x0)</td><td>Clears sticky-error bits in CTRL/STAT and optionally cancels an in-flight AP transaction.</td><td>DP-write to register 0 with bits set per the <a href="#abort">ABORT table</a>.</td><td>After receiving a FAULT ACK; periodically as a safety measure during long sessions.</td></tr>
+  <tr><td><strong>nRESET pulse</strong></td><td>Resets the entire chip including the CPU. Does <em>not</em> reset SW-DP unless the chip's reset domain includes the debug logic (rare on modern parts).</td><td>Drive nRESET low for &ge; 100 &mu;s.</td><td>Recovering a wedged target; aligning attach with a fresh boot.</td></tr>
+  <tr><td><strong>Power cycle</strong></td><td>Everything.</td><td>Toggle Vtgt.</td><td>Last resort. Loses any debug state including breakpoints.</td></tr>
+</table>
+
+<h3 id="recovery-algo">Standard recovery algorithm</h3>
+
+<pre><code>after FAULT:
+    1. read CTRL/STAT to inspect which sticky bit fired
+    2. write ABORT with appropriate clear-bit set (usually 0x1E to clear all)
+    3. retry the original transaction; if FAULT persists, escalate
+
+after WAIT (repeated &gt; N times, default ~64):
+    1. write ABORT with DAPABORT=1 to cancel the in-flight AP transaction
+    2. read CTRL/STAT to clear sticky bits
+    3. retry
+
+after no-ACK (0b000 or 0b111 received):
+    1. line reset (50+ SWDIO-high cycles)
+    2. read IDCODE
+    3. if IDCODE looks right, re-do power-up sequence and continue
+       otherwise, drop into JTAG-to-SWD switch retry
+       (probe may have desynced from target's bit position)
+
+after total silence (target offline):
+    1. nRESET pulse
+    2. wait for target reset to complete
+    3. line reset
+    4. JTAG-to-SWD switch
+    5. read IDCODE
+       if still nothing, the target is broken or unpowered
+</code></pre>
+
+<!-- =========================================================== -->
+<h2 id="multidrop">Multi-drop SWD (SWDv2) and TARGETSEL</h2>
+
+<p>SWDv2 lets multiple targets share a single SWCLK/SWDIO bus. The debugger picks which target it's currently talking to by writing a special <strong>TARGETSEL</strong> DP register at attach time; thereafter, only the selected target answers, and the others sit silent.</p>
+
+<p>The use cases:</p>
+
+<ul>
+  <li><strong>Multi-core chips with one DP per core</strong> &mdash; the canonical example is the RP2040, which has three DPs on one SWD bus: core 0, core 1, and a "rescue DP" for force-erasing flash. Each DP has a unique 32-bit instance ID; the debugger writes TARGETSEL with the desired ID before reading IDCODE for the first time.</li>
+  <li><strong>Multiple chips sharing one connector</strong> &mdash; e.g. a board with several MCUs all sharing a single 4-wire SWD trace to save layout area. Each chip's DP gets a unique ID.</li>
+  <li><strong>Stacked debuggable chiplets</strong> &mdash; modern packaging where several die share a debug bus.</li>
+</ul>
+
+<h3 id="targetsel-flow">TARGETSEL handshake</h3>
+
+<p>The handshake is delicate because multiple targets may try to drive ACK at the same time. The protocol works around this by defining the TARGETSEL write as a <em>special, no-ACK</em> transaction:</p>
+
+<pre><code>1. Standard SWD line reset                 (or dormant-&gt;SWD activation)
+2. DP write to TARGETSEL register          (write-only, DP @ 0xC, DPBANK=2)
+   - request bits as normal: APnDP=0, RnW=0, A[3:2]=11, parity, etc.
+   - turnaround
+   - target ACK is **ignored / not driven** by spec - all targets stay silent
+   - turnaround
+   - host drives the 32-bit target ID + parity
+3. After this, only the target whose ID matches will respond to subsequent
+   transactions. Other targets put themselves into a "lurking" state.
+4. Read DP IDCODE to confirm.
+</code></pre>
+
+<h3 id="rp2040-ids">Worked example: RP2040 TARGETSEL</h3>
+
+<p>RP2040 instance IDs (from the RP2040 datasheet &sect;2.3.2):</p>
+
+<pre><code>Core 0    : 0x01002927
+Core 1    : 0x11002927
+Rescue DP : 0xF1002927
+</code></pre>
+
+<p>To attach to core 0 of an RP2040:</p>
+
+<pre><code>1. Line reset (50+ SWDIO-high cycles)
+2. Dormant-&gt;SWD selection alert + activation 0x1A
+3. Line reset
+4. DP write TARGETSEL = 0x01002927  (no ACK; target IDs check against this)
+5. DP read IDCODE -&gt; should return 0x0BC12477 (Cortex-M0+ DP)
+6. Standard CTRL/STAT power-up sequence
+7. AP transactions to core 0's MEM-AP work normally
+</code></pre>
+
+<p>To switch to core 1 mid-session, line-reset and TARGETSEL=0x11002927; the previously-attached core 0 stops responding.</p>
+
+<p class="small">Since RP2350 has a single DP that fronts both M33 cores, multi-drop is <em>optional</em> on RP2350; you can attach without TARGETSEL. The DP supports it for setups with multiple RP2350s on one SWD bus, but for a single-chip edevkit setup, classic SWDv1 attach works.</p>
+
+<!-- =========================================================== -->
+<h2 id="edevkit">edevkit1's SWD implementation &mdash; PIO0 SM0</h2>
+
+<p>edevkit1 is itself a CMSIS-DAP probe. It implements SWD <em>in software, on RP2350 PIO state machines</em>, not via dedicated SWD hardware (RP2350 has no native SWD peripheral). The implementation lives in <code>firmware/app/pio/swd.pio</code> and the C glue in <code>firmware/app/src/cmsis_dap/swd.c</code>. Cross-reference the design rationale in <a href="edevkit1.html#sec-pio-budget">edevkit1.html &sect;5</a> and the PIO programming model overview in <a href="platform_pio.html">platform_pio.html</a>.</p>
+
+<h3 id="pio-allocation">PIO state-machine allocation</h3>
+
+<table>
+  <tr><th>SM</th><th>Function</th><th>GPIO(s)</th><th>Speed</th></tr>
+  <tr><td><strong>PIO0 SM0</strong></td><td>SWD bit-bang &mdash; SWCLK + SWDIO with side-set</td><td>12 (SWCLK), 13 (SWDIO)</td><td>up to 25 MHz nominal, 50 MHz best-case</td></tr>
+  <tr><td><strong>PIO0 SM1</strong></td><td>SWO RX (UART decode of trace stream)</td><td>14</td><td>up to 12 Mbps NRZ</td></tr>
+  <tr><td><strong>PIO0 SM2</strong></td><td>WS2812 status LEDs</td><td>33</td><td>800 kHz</td></tr>
+  <tr><td><strong>PIO0 SM3</strong></td><td>Free</td><td>&mdash;</td><td>Reserved for v1</td></tr>
+</table>
+
+<p>The same <code>swd.pio</code> program is reused for JTAG (TCK on the same physical SWCLK pin, TMS on SWDIO, TDI/TDO multiplexed in firmware) when the user selects JTAG mode in the CLI. See <a href="debug_jtag.html">debug_jtag.html</a> for the JTAG variant.</p>
+
+<h3 id="halfduplex">The half-duplex challenge</h3>
+
+<p>SWDIO is bidirectional and switches direction <em>mid-transaction</em>. PIO state machines can only "side-set" pin directions deterministically as part of an instruction's opcode &mdash; so the PIO program has to flip <code>OEOVER</code> exactly when the protocol says to. The <code>swd.pio</code> program uses side-set to control SWDIO's <code>OE</code>:</p>
+
+<pre><code>; sketch — actual program is more involved
+.program swd
+.side_set 1 opt    ; side-set OE for SWDIO
+
+; -- request phase: drive SWDIO --
+shift_request:
+    pull block               side 1     ; OE=1, host drives
+    set y, 7                            ; 8 bits
+req_loop:
+    out pins, 1     [1]      side 1     ; bit out, hold OE=1
+    jmp y--, req_loop
+
+; -- turnaround: tristate --
+trn1:
+    nop             [1]      side 0     ; OE=0, line floats
+
+; -- ack phase: read 3 bits --
+    set y, 2                            ; 3 bits
+ack_loop:
+    in pins, 1      [1]      side 0     ; sample SWDIO, OE stays 0
+    jmp y--, ack_loop
+    push block
+
+; ... and so on for data phase, with another OE flip on writes
+</code></pre>
+
+<p>The full program assembles to ~24 PIO instructions (the entire SWD wire protocol fits in one of PIO's 32-instruction-per-block memory). At the configured PIO clock divider (typically <code>sys_clk / 5</code> at 150 MHz sysclk &rarr; 30 MHz PIO clock), each SWCLK cycle is 1 PIO instruction, so peak SWCLK = 30 MHz. In practice the firmware caps SWCLK at 25 MHz to leave margin for cable SI.</p>
+
+<h3 id="dma-burst">DMA-driven bursts</h3>
+
+<p>For burst memory reads, the firmware queues up sequences of pre-encoded request bytes in DMA memory, kicks PIO, and reads back the result words via a second DMA channel. End-to-end this lets edevkit1 sustain ~95% of the theoretical peak (~510 k transactions/sec at 25 MHz) without involving the CPU per-transaction. CMSIS-DAP USB framing then carries those results back to the host at the rate the bulk endpoint can drain them &mdash; typically the bottleneck on USB FS at ~10 Mbit/s usable. (See <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> for the USB-side details.)</p>
+
+<h3 id="autosense">Vtgt auto-sense and level shifting</h3>
+
+<p>edevkit1's level-shifter logic flow on a fresh attach:</p>
+
+<ol>
+  <li>Read ADC0 (Vtgt sense) once. If &lt; 0.5 V, declare "no target" and bail.</li>
+  <li>If 1.65 V &le; Vtgt &le; 5.5 V, configure the LVC8T245 translators with Vcc<sub>B</sub> matched and OE asserted.</li>
+  <li>If 1.2 V &le; Vtgt &lt; 1.65 V, switch the muxed channels through the TXS0108E auto-direction translators instead, and lower SWCLK ceiling to 10 MHz.</li>
+  <li>If Vtgt &gt; 5.5 V, halt and warn &mdash; this should never happen on a USB-powered probe.</li>
+  <li>Issue line reset, JTAG-to-SWD switch, and dormant-deactivate sequences.</li>
+  <li>Read IDCODE; if non-zero and non-<code>0xFFFFFFFF</code>, attach is good.</li>
+</ol>
+
+<!-- =========================================================== -->
+<h2 id="pitfalls">Common pitfalls when bit-banging SWD</h2>
+
+<ol>
+  <li><strong>Wrong protocol on power-up.</strong> Multi-protocol parts power up in JTAG (or dormant) and silently ignore SWD requests. Always issue the JTAG-to-SWD switch <em>and</em> the dormant-deactivate sequences before the first IDCODE read. If you see IDCODE = 0 or 0xFFFFFFFF, this is your problem 80% of the time.</li>
+
+  <li><strong>Vtgt below 1.65 V breaking LVC.</strong> Many Cortex-M parts run at 1.8 V; some at 1.2&ndash;1.5 V. LVC8T245 needs &ge; 1.65 V on Vcc<sub>B</sub> to drive valid logic levels. Below that, SWDIO won't reach the target's V<sub>IH</sub> threshold and you'll see intermittent ACKs &mdash; the most maddening symptom because it depends on noise. Detect Vtgt and switch to TXS0108E or refuse to attach.</li>
+
+  <li><strong>Missing pull-up on SWDIO.</strong> During turnaround, both ends are tristate. Without a pull-up the line drifts and any ambient noise can corrupt the next sample. Symptom: random parity errors at high SWCLK rates. Fix: 22&ndash;100 k&Omega; pull-up to Vtgt on the probe side.</li>
+
+  <li><strong>SWCLK clock-stretching when target is asleep.</strong> If the target enters deep sleep (e.g. WFI in low-power mode), the debug-domain clock may stop, and SWD transactions will return WAIT indefinitely. Standard pattern: write CDBGPWRUPREQ in CTRL/STAT to keep the debug clock alive, or wake the target with a dummy AP-read to a peripheral that triggers the wakeup logic. On STM32 parts this is a real headache &mdash; some sleep modes turn off the SWD interface entirely and require nRESET to recover.</li>
+
+  <li><strong>Forgetting RDBUFF on AP-reads.</strong> The ACK after an AP-read says "transaction was accepted" &mdash; but the data field carries the <em>previous</em> AP-read's value. If you forget to chase with an RDBUFF read (or another AP-read), you'll get values that look right except they're one transaction stale.</li>
+
+  <li><strong>Parity bit on writes vs reads.</strong> On reads, the target computes parity over the data it sends and the host checks it. On writes, the host computes parity over the data it sends and the target checks it &mdash; setting WDATAERR in CTRL/STAT on a mismatch. Forgetting to send the write-parity bit (an off-by-one in the host's bit count) is one of the most common bugs in hand-rolled SWD code. Symptom: writes silently fail; reads work.</li>
+
+  <li><strong>Confusing turnaround count.</strong> The default is 1 cycle but some probes negotiate 2 or 3 via WCR. If your code hard-codes 1, it'll desync against any probe that's negotiated otherwise. Keep it at the default unless you have a measured reason.</li>
+
+  <li><strong>Sticky errors persisting across "fixes".</strong> Once STICKYERR is set, every subsequent AP read returns FAULT &mdash; including the AP read you'd think would clear the underlying issue. You must <em>first</em> WRITE ABORT with the appropriate clear bit, <em>then</em> retry. Forgetting this leads to "I fixed the bug but probe still says FAULT" cycles that waste hours.</li>
+
+  <li><strong>nRESET reset domain confusion.</strong> Pulsing nRESET on most modern parts does <em>not</em> reset the debug logic &mdash; SW-DP, AP, and the chip's debug peripherals stay alive across an nRESET event. This is intentional (it's how you single-step out of reset). But it means clearing your in-software notion of debug state requires either a line reset or a power cycle, not just nRESET.</li>
+
+  <li><strong>Cable-length-induced ringing on the rising edge of SWCLK.</strong> Cables longer than ~6" without proper series termination ring on transitions. The target may sample SWDIO during the ringing window and see the wrong value. Symptoms are speed-dependent: works at 1 MHz, fails at 10 MHz. Fix: shorten cable, add 22&ndash;33 &Omega; series termination at the probe-side translator output, or lower SWCLK.</li>
+
+  <li><strong>Multi-drop without TARGETSEL.</strong> On RP2040, attaching without writing TARGETSEL gets you "all DPs answer simultaneously" &mdash; usually a corrupted IDCODE that looks like a legitimate value but isn't (typically OR-ed bits from both cores). Fix: always issue TARGETSEL on RP2040; it's harmless on parts that don't need it (the spec defines TARGETSEL writes as no-ACK, so a non-multi-drop chip will simply not respond, and the line-reset that follows resyncs you).</li>
+
+  <li><strong>Mixing line reset and protocol switch at high speeds.</strong> The 50+ SWDIO-high cycles required for a line reset must be sent at a SWCLK rate the target can sample reliably, even at the slowest expected target clock. Sending them at 25 MHz on a chip that's currently running its core at 1 MHz can fail. Drop SWCLK to &le; 1 MHz for the reset sequence, then ramp back up. CMSIS-DAP firmware handles this automatically.</li>
+</ol>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<p>Reading order if you want to go deep:</p>
+
+<ol>
+  <li><strong><a href="https://developer.arm.com/documentation/ihi0031/latest/">Arm Debug Interface Architecture Specification (IHI 0031, ADIv5.2)</a></strong> &mdash; the canonical reference. Chapters 4 (SWD wire protocol), 6 (DP), 8 (MEM-AP) are the core. Treat it as a reference, not a tutorial. The latest revision (D, 2022) covers SWDv2 and dormant state.</li>
+  <li><strong><a href="https://developer.arm.com/documentation/ihi0074/latest/">Arm ADIv6 Architecture Specification (IHI 0074)</a></strong> &mdash; the next-generation DAP architecture, used on Cortex-M55/M85 and large CoreSight SoCs. Most M-class MCUs in 2026 are still on ADIv5.2; come back here when you hit a part that says "ADIv6".</li>
+  <li><strong><a href="https://github.com/ARM-software/CMSIS_5/tree/master/CMSIS/DAP">CMSIS-DAP firmware source</a></strong> &mdash; Arm's reference implementation of an SWD probe, written in C, running on Cortex-M itself. The <code>DAP_SWD.c</code> and <code>DAP_vendor.c</code> files are the cleanest source for "how do I actually emit these bits". Read this alongside the spec and SWD will click.</li>
+  <li><strong><a href="https://github.com/openocd-org/openocd/tree/master/src/jtag/drivers">OpenOCD SWD drivers</a></strong> &mdash; particularly <code>cmsis_dap.c</code> and the <code>swd_*.c</code> files. Open-source, decades of bug-fixes, exhaustive comments. The reference for "how do real probes handle every edge case".</li>
+  <li><strong><a href="https://github.com/probe-rs/probe-rs">probe-rs source</a></strong> &mdash; the modern Rust implementation. The <code>probe-rs/src/probe</code> tree is well-organised and the SWD layer (<code>arm/communication_interface.rs</code>, <code>arm/sequences.rs</code>) is more readable than OpenOCD for someone coming in fresh.</li>
+  <li><strong><a href="https://github.com/blackmagic-debug/blackmagic">Black Magic Probe firmware</a></strong> &mdash; a tiny, focused SWD/JTAG probe firmware. Fits the entire DAP layer in &lt; 32 KB. Excellent for understanding what's <em>essential</em> vs what CMSIS-DAP layers on top.</li>
+  <li><strong>Joseph Yiu, <em>The Definitive Guide to Arm Cortex-M0/M0+ Processors</em> (2nd ed., Newnes 2015)</strong> &mdash; chapter 14 ("Debug System") is the best long-form treatment of SWD aimed at engineers, not spec-writers. The M3/M4 and M23/M33 books (same author) have parallel chapters.</li>
+  <li><strong><a href="https://www.kernelpicnic.net/2018/12/29/Messing-with-SWD-Part-I.html">"Messing with SWD" by KernelPicnic</a></strong> &mdash; an excellent informal walk-through of bit-banging SWD on an STM32. Reading it after the Arm spec reinforces everything.</li>
+  <li><strong><a href="https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf">RP2040 datasheet, &sect;2.3</a></strong> &mdash; Raspberry Pi's own write-up of multi-drop SWD with TARGETSEL, including the exact magic numbers. The clearest publicly-available description of SWDv2.</li>
+  <li><strong><a href="https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf">RP2350 datasheet, &sect;3.5</a></strong> &mdash; the equivalent for the chip on edevkit1, including dormant state, the optional TARGETSEL, and the M33-side Debug Authentication interface.</li>
+  <li><strong><a href="https://interrupt.memfault.com/blog/a-deep-dive-into-arm-cortex-m-debug-interfaces">Memfault Interrupt blog &mdash; Cortex-M debug interfaces</a></strong> &mdash; bookmark this. Practical, concrete, focused on real-world debugging issues.</li>
+</ol>
+
+<p class="small">Cross-references inside this docs hub: <a href="debug_jtag.html">debug_jtag.html</a> for the JTAG side of SWJ-DP, <a href="debug_swo.html">debug_swo.html</a> for the SWO trace pin, <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> for the USB-side framing, <a href="platform_pio.html">platform_pio.html</a> for the PIO programming model used on RP2350, <a href="arm_architecture.html">arm_architecture.html</a> for the Cortex-M debug architecture overview, <a href="arm_cortex_m33.html">arm_cortex_m33.html</a> for M33-specific debug additions (DHCSR.S_SDE, secure-debug authentication), and <a href="edevkit1.html">edevkit1.html</a> for the v1 edevkit design specification.</p>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="debug_jtag.html"><span class="dir">← Previous</span><span class="cat">Debug</span><span class="title">JTAG (IEEE 1149.1) protocol</span></a>
+<a class="next" href="debug_swo.html"><span class="dir">Next →</span><span class="cat">Debug</span><span class="title">SWO/ITM trace</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit &middot; debug &middot; SWD reference &mdash; part of the edevkit docs hub. See also <a href="edevkit1.html">edevkit1.html</a> for the v1 design spec.
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body>
+</html>

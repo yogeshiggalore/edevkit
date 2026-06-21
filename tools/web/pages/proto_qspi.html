@@ -1,0 +1,1271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — QSPI / Dual / Quad / Octal SPI</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A focused reference on Dual / Quad / Octal SPI — the multi-IO extensions of plain SPI used by every modern serial flash and PSRAM. Covers lane modes (1-1-1 through 8-8-8), the command / address / dummy / data phase split, XIP, DDR, mode bytes, and how edevkit1's PIO-based QSPI engine implements master, slave, and sniffer up to 50 MHz.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar ────────────────────────────────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">QSPI protocol reference</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · protocols · QSPI</div>
+  <h1>QSPI — Dual / Quad / Octal SPI, end-to-end</h1>
+  <p class="small">A focused reference on the <strong>multi-IO extensions of SPI</strong> — the same four-wire bus widened to two, four, or eight data lanes so that a single SPI flash can feed an MCU's instruction stream at hundreds of megabytes per second through five tiny pins. This document covers the full dimensional matrix of lane modes (the "x-y-z" notation), the command / address / dummy / data phase split that makes the modes interoperable, mode bytes and continuous-read, XIP (execute-in-place), DDR / DTR (data on both clock edges), QPI vs Quad-I/O, octal flash, HyperRAM, and how <strong>edevkit1</strong>'s PIO-based QSPI engine drives a master, plays a slave, or sniffs a live bus up to <strong>50 MHz / 200 MT/s</strong> with one connector and three PIO state machines.</p>
+  <p class="small"><strong>Audience.</strong> A firmware engineer who knows plain SPI (see <a href="proto_spi.html">proto_spi.html</a>) and now needs to bring up a quad-flash boot path, drive a HyperRAM cache, decode a QSPI capture from a vendor's reference board, or use the edevkit1 QSPI tester to emulate a flash chip while developing the host driver. By the end you should be able to read any modern serial-flash datasheet's "fast read" matrix, choose the right lane mode from a part's spec, debug the universal "boots in 1-1-1, hangs in 1-4-4" symptom, and configure the edevkit1 QSPI engine for whichever role your bench setup needs.</p>
+  <p class="small"><strong>Sister docs.</strong> Read <a href="proto_spi.html">proto_spi.html</a> first if you are not yet comfortable with CPOL/CPHA, nCS, MOSI/MISO, and the four single-IO modes — almost everything here builds on that foundation. For the underlying RP2350 PIO state machines that implement the bus, see <a href="platform_pio.html">platform_pio.html</a>. For sister protocols on the same edevkit1 connector see <a href="proto_i2c.html">proto_i2c.html</a> and <a href="proto_uart.html">proto_uart.html</a>. For the connector wiring, voltage-domain rules, and overall position of QSPI in the v1 design, see <a href="edevkit1.html">edevkit1.html</a> §6.5 and §6.6.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Background</span>
+  <ol>
+    <li><a href="#what">What "QSPI" actually means — and what it doesn't</a></li>
+    <li><a href="#why">Why multi-IO exists — the bandwidth-vs-pin-count problem</a></li>
+    <li><a href="#wires">The wires — one clock, one nCS, up to eight bidirectional IOs</a></li>
+  </ol>
+  <span class="heading">The lane-mode matrix</span>
+  <ol>
+    <li><a href="#xyz">The x-y-z notation — command / address / data lanes</a></li>
+    <li><a href="#modes">The full mode menu, from 1-1-1 to 8-8-8</a></li>
+    <li><a href="#qpi-vs-qio">QPI vs Quad-I/O — the subtle but breaking difference</a></li>
+  </ol>
+  <span class="heading">Phases of a transaction</span>
+  <ol>
+    <li><a href="#phases">Command, address, mode, dummy, data — the five phases</a></li>
+    <li><a href="#dummy">Dummy cycles — what they are, why they vary, how to count them</a></li>
+    <li><a href="#mode-byte">The mode byte — continuous read and the "stay in fast mode" trick</a></li>
+  </ol>
+  <span class="heading">Going faster</span>
+  <ol>
+    <li><a href="#xip">XIP — execute-in-place from serial flash</a></li>
+    <li><a href="#ddr">DDR / DTR — data on both clock edges</a></li>
+    <li><a href="#octal">Octal SPI &amp; HyperBus — when four lanes still aren't enough</a></li>
+    <li><a href="#psram">QSPI/Octal PSRAM — RAM behind a serial bus</a></li>
+    <li><a href="#speed">Speed bands and the long-cable problem (revisited)</a></li>
+  </ol>
+  <span class="heading">edevkit1 implementation</span>
+  <ol>
+    <li><a href="#edevkit">The edevkit1 QSPI engine — PIO1 SM1 + SM2 + sniffer</a></li>
+    <li><a href="#code">Code — Zephyr API, JEDEC ID, fast-read 1-1-4</a></li>
+    <li><a href="#emulator">Emulator mode — pretending to be a W25Q flash</a></li>
+    <li><a href="#sniffer">Sniffer mode — passively decoding a live QSPI bus</a></li>
+    <li><a href="#pitfalls">Common pitfalls &amp; first-time bugs</a></li>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="what">What "QSPI" actually means — and what it doesn't</h2>
+
+<p><strong>QSPI</strong> is one of the most overloaded acronyms in embedded systems, and that ambiguity is the cause of an enormous amount of bring-up grief. The letter <em>Q</em> stands for <em>Quad</em>, but the term gets used for at least four distinct things by different vendors and different communities:</p>
+
+<ul>
+  <li><strong>QSPI as a wire-level protocol.</strong> A serial bus that uses one clock, one chip-select, and <em>up to four bidirectional data lines</em>, allowing 4 bits to be transferred per clock. This is the meaning that matters at the protocol level. Every modern serial-flash datasheet from Winbond, Macronix, ISSI, Micron, GigaDevice, Cypress, and the rest builds on this. <strong>This is the meaning used everywhere in this document.</strong></li>
+  <li><strong>QSPI as a peripheral name (Microchip, ST, NXP, etc.).</strong> A specific on-chip controller IP that speaks the wire protocol above, usually with built-in support for XIP, DMA, and a "linear address window" so the flash can be read like memory. STM32's QUADSPI peripheral, NXP LPC's SPIFI, Microchip's QSPI controller, and similar are all "QSPI" in this sense, but they have non-trivial differences in how they program the command / address / dummy / data phases.</li>
+  <li><strong>QSPI as a Cypress trademark (now Infineon).</strong> Originally a marketing name for Cypress's "QSPI High Speed" flash family, where the IP and the wire format share branding. Many people use "QSPI" as if it were a Cypress invention; it isn't.</li>
+  <li><strong>QSPI as "anything not single-IO".</strong> Casual usage where someone says "QSPI" but actually means dual-IO, or octal, or PSRAM, or HyperRAM. This is sloppy but extremely common in conference talks and chat threads.</li>
+</ul>
+
+<p>Throughout this doc, when we say <em>QSPI</em> without qualification we mean the wire-level Quad-IO protocol. When we mean the broader family — single, dual, quad, octal — we say <strong>multi-IO SPI</strong>. The single-IO subset is documented in <a href="proto_spi.html">proto_spi.html</a>; here we focus on the dual-, quad-, and octal-lane extensions.</p>
+
+<div class="callout info">
+  <span class="label">Mental model</span>
+  <strong>QSPI is just SPI with the data wires pluralised and made bidirectional.</strong> The clock is the same. The chip-select is the same. CPOL=0, CPHA=0 still applies (almost universally for flash; CPOL=1, CPHA=1 is also accepted by most parts). What changes is: (a) more wires moving data per clock, and (b) every transaction grows a structured "phase" header — command, then address, then dummy cycles, then data — because the slave needs to know <em>when</em> to switch the data wires from "master is driving" to "slave is driving" without anyone explicitly toggling a direction line. There is no MOSI / MISO; there is only IO0..IO3 (or IO0..IO7), all of which can be driven by either side at different times.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="why">Why multi-IO exists — the bandwidth-vs-pin-count problem</h2>
+
+<p>By the late 2000s, single-IO SPI flash had hit a hard ceiling. The fastest commodity parts could be clocked at 80–100 MHz, which works out to about 10–12 MB/s of read throughput — enough for boot data and configuration, but nowhere near enough to feed a Cortex-M-class MCU's instruction stream from external flash without massive caching. Meanwhile, parallel NOR flash, the alternative, demanded 20–32 wires (a full address bus plus a 16-bit data bus plus control), which was unaffordable on a small MCU package and ate critical PCB area.</p>
+
+<p>The industry's answer, around 2009–2011, was to widen SPI rather than parallelise it. The insight was simple: two of the four SPI wires (MOSI and MISO) are <em>already</em> data wires, just driven from opposite sides. If we make all data wires bidirectional, change which side drives them depending on the phase of the transaction, and add two more pins (originally the "WP#" write-protect and "HOLD#" hold pins, which were vestigial on most parts), we get four data wires for the cost of two extra package pins. Quadruple the throughput. No new clock pin. Same nCS.</p>
+
+<p>That's the entire idea behind QSPI. Octal SPI just extends the same trick to eight data lanes, which requires a slightly larger package but is otherwise the same protocol idea.</p>
+
+<table>
+  <tr><th>Bus</th><th>Wires</th><th>Data wires</th><th>Bits per SCK</th><th>Typical max SCK</th><th>Throughput</th></tr>
+  <tr><td>Single-IO SPI (1-1-1)</td><td>4</td><td>2 (MOSI + MISO)</td><td>1 in, 1 out (full-dup)</td><td>50–104 MHz</td><td>~12 MB/s read</td></tr>
+  <tr><td>Dual-IO (1-1-2)</td><td>4</td><td>2 (IO0 + IO1, half-dup)</td><td>2 (during data)</td><td>80–104 MHz</td><td>~25 MB/s read</td></tr>
+  <tr><td>Quad-IO (1-1-4 / 1-4-4)</td><td>6</td><td>4 (IO0..IO3, half-dup)</td><td>4 (during data)</td><td>104–133 MHz</td><td>~50–66 MB/s read</td></tr>
+  <tr><td>QPI (4-4-4)</td><td>6</td><td>4</td><td>4 (every phase)</td><td>104–166 MHz</td><td>~66 MB/s read</td></tr>
+  <tr><td>Octal-IO (1-1-8 / 8-8-8)</td><td>10</td><td>8 (IO0..IO7)</td><td>8 (during data)</td><td>133–200 MHz</td><td>~133–200 MB/s read</td></tr>
+  <tr><td>Octal-DDR (8D-8D-8D)</td><td>10–11</td><td>8 + DQS strobe</td><td>16 (both edges)</td><td>200 MHz</td><td>~400 MB/s read</td></tr>
+  <tr><td>HyperBus / HyperRAM</td><td>11</td><td>8 + RWDS strobe</td><td>16 (both edges)</td><td>200 MHz</td><td>~400 MB/s</td></tr>
+</table>
+
+<p class="small">Throughput numbers above include the fixed protocol overhead (command + address + dummy cycles) for a 1 KiB sequential read, which is the typical XIP burst size. Random-access throughput is much lower because the protocol overhead is paid per access — see <a href="#xip">XIP</a>.</p>
+
+<div class="callout">
+  <span class="label">Sanity check</span>
+  Multi-IO is a <em>throughput</em> trick, not a <em>latency</em> trick. The first byte of any QSPI transaction takes the same number of SCK edges as it would in single-IO (often more, because of mode bytes and dummy cycles). What you save is on the bytes <em>after</em> the first one. For random 4-byte reads, single-IO at 100 MHz can be faster than QSPI at 50 MHz because the protocol overhead dominates. Multi-IO pays off for sustained reads (XIP, DMA bursts, framebuffer fills).
+</div>
+
+<!-- =========================================================== -->
+<h2 id="wires">The wires — one clock, one nCS, up to eight bidirectional IOs</h2>
+
+<table>
+  <tr><th>Wire</th><th>Direction</th><th>Notes</th></tr>
+  <tr><td class="mono">SCK</td><td>master → slave</td><td>Same as single-IO. Push-pull. CPOL/CPHA universally 0/0 for flash; 1/1 also accepted by most parts.</td></tr>
+  <tr><td class="mono">nCS</td><td>master → slave</td><td>Same as single-IO. Active-low. Falling edge starts a transaction; rising edge ends it.</td></tr>
+  <tr><td class="mono">IO0</td><td>bidirectional</td><td>Equivalent to MOSI in single-IO mode. The first data lane in any multi-IO mode. Most flash datasheets label it both <code>IO0</code> and <code>SI/MOSI</code> on the pinout diagram.</td></tr>
+  <tr><td class="mono">IO1</td><td>bidirectional</td><td>Equivalent to MISO in single-IO mode. The second data lane. Labelled <code>IO1</code> and <code>SO/MISO</code>.</td></tr>
+  <tr><td class="mono">IO2</td><td>bidirectional</td><td>Originally the WP# (write-protect) pin on early SPI-flash parts. In multi-IO modes, becomes the third data lane. <strong>Has a pull-up to Vcc inside most flash chips</strong> — needed because in single-IO mode this pin still gates writes; the chip has to see it high to allow programming.</td></tr>
+  <tr><td class="mono">IO3</td><td>bidirectional</td><td>Originally the HOLD# (hold) pin. Becomes the fourth data lane in multi-IO. Same internal pull-up situation as IO2.</td></tr>
+  <tr><td class="mono">IO4..IO7</td><td>bidirectional</td><td>Only present on octal-flash packages (W25M, MT25Q-octal, MX25LM). Otherwise n/a.</td></tr>
+  <tr><td class="mono">DQS / RWDS</td><td>slave → master</td><td>Optional data-strobe pin used in DDR-octal and HyperBus. Acts like an output clock from the slave to the master, used to time-align the data eye when the slave-to-master path has nontrivial flight time. <em>Mandatory</em> above ~100 MHz DDR. See <a href="#ddr">DDR</a>.</td></tr>
+</table>
+
+<h3 id="bidirectional">Why bidirectional matters — and why it's harder</h3>
+
+<p>In single-IO SPI, MOSI and MISO are unidirectional. Each side knows whose turn it is to drive at all times: master always drives MOSI, slave always drives MISO. There's no contention and no need to coordinate "switch direction now".</p>
+
+<p>In multi-IO SPI, the same physical wires <em>change direction</em> mid-transaction. The master drives IO0..IO3 during the command and address phases, then both sides need to <strong>tristate</strong> simultaneously, and then the slave starts driving IO0..IO3 during the data-read phase. If the timing of the handover is wrong — if the master keeps driving for one too many cycles, or the slave starts too early — both sides briefly drive opposite levels on the same wire. This is <strong>bus contention</strong>. It corrupts the first data byte, wastes power, and on extreme cases (faster edges, tighter rise times) can damage the I/O cell.</p>
+
+<p>The protocol's solution is the <strong>dummy cycle</strong> phase, which we'll explore in detail below. The whole purpose of dummy cycles is to give both master and slave a deterministic number of "nobody drives" SCK edges between the master-drives phase and the slave-drives phase. The slave datasheet specifies the minimum required count, the master programs at least that many, and the wires are guaranteed to be at high-Z during the handover. <strong>Getting the dummy-cycle count wrong is the single most common QSPI bring-up bug.</strong></p>
+
+<div class="callout warn">
+  <span class="label">Pull-ups</span>
+  Most QSPI flash datasheets recommend an external <strong>10 kΩ pull-up</strong> on each of IO0..IO3, even though the chip has internal pull-ups on IO2/IO3. Reason: during the brief tristate windows (between phases, and when nCS is high), the data wires would otherwise float, and capacitive coupling from the toggling SCK would inject noise into adjacent traces. External pull-ups bias the wires to a known state during these windows. edevkit1 includes 10 kΩ pull-ups on IO0..IO3 by default, switchable in software for tests where you want to verify the slave's tristate behaviour explicitly.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="xyz">The x-y-z notation — command / address / data lanes</h2>
+
+<p>Every modern serial-flash datasheet describes its supported "fast read" modes using a three-number notation:</p>
+
+<pre><code>  x - y - z
+  │   │   └── number of data lanes used during the data phase
+  │   └────── number of address lanes used during the address phase
+  └────────── number of command lanes used during the command phase
+</code></pre>
+
+<p>So <code>1-4-4</code> means: command sent on 1 lane (single-IO), address sent on 4 lanes (quad-IO), data transferred on 4 lanes (quad-IO). And <code>4-4-4</code> means everything is on 4 lanes — including the command itself, which is what distinguishes <strong>QPI</strong> from <strong>Quad-IO</strong>.</p>
+
+<p>The notation has one quirk: when a part supports DDR for some phase, the lane number is followed by a <code>D</code>. So <code>8D-8D-8D</code> is "octal lanes, double data rate, all phases". This is the format that the Macronix Octa-Flash datasheets and JEDEC SFDP use.</p>
+
+<table>
+  <tr><th>Notation</th><th>Meaning</th><th>Other names you may see</th></tr>
+  <tr><td class="mono">1-1-1</td><td>Plain SPI. Command, address, data all on single lane.</td><td>"Standard SPI", "single-IO"</td></tr>
+  <tr><td class="mono">1-1-2</td><td>Cmd + addr on 1 lane, data on 2 lanes (Dual Output).</td><td>"DOR", "Dual Output Read"</td></tr>
+  <tr><td class="mono">1-2-2</td><td>Cmd on 1 lane, addr + data on 2 lanes (Dual I/O).</td><td>"DIOR"</td></tr>
+  <tr><td class="mono">2-2-2</td><td>All phases on 2 lanes ("DPI" — Dual Programming Interface). Rare.</td><td>"DPI"</td></tr>
+  <tr><td class="mono">1-1-4</td><td>Cmd + addr on 1 lane, data on 4 lanes (Quad Output).</td><td>"QOR", "QOFR", cmd 0x6B</td></tr>
+  <tr><td class="mono">1-4-4</td><td>Cmd on 1 lane, addr + data on 4 lanes (Quad I/O). Most common high-speed mode.</td><td>"QIOR", cmd 0xEB</td></tr>
+  <tr><td class="mono">4-4-4</td><td>Everything on 4 lanes (QPI mode). Slave must be put into QPI mode first.</td><td>"QPI", "Quad Programming Interface"</td></tr>
+  <tr><td class="mono">1-1-8</td><td>Cmd + addr on 1 lane, data on 8 lanes (Octal Output).</td><td>"8OR"</td></tr>
+  <tr><td class="mono">1-8-8</td><td>Cmd on 1 lane, addr + data on 8 lanes.</td><td>"8IO"</td></tr>
+  <tr><td class="mono">8-8-8</td><td>Everything on 8 lanes ("OPI"). Slave must be put into OPI mode.</td><td>"OPI", "Octal Programming Interface"</td></tr>
+  <tr><td class="mono">8D-8D-8D</td><td>Octal everything, DDR. The fastest mode in commodity serial flash today.</td><td>"OPI-DDR", "OctaFlash"</td></tr>
+</table>
+
+<h3 id="why-1-4-4">Why 1-4-4 is the workhorse</h3>
+
+<p>The vast majority of QSPI bring-ups settle on <strong>1-4-4 mode with command 0xEB</strong> ("Quad I/O Fast Read") because:</p>
+
+<ul>
+  <li>The command is sent on a single lane, matching the slave's power-on state. No "QPI mode enable" sequence is required. The same flash that boots the MCU can later be reprogrammed using single-IO commands without ever leaving 1-4-4.</li>
+  <li>Once the address phase starts, the bus is on 4 lanes — so the address (3 bytes for 24-bit, 4 bytes for 32-bit) finishes 4× faster than in 1-1-4. For random-access reads of 32-byte or smaller chunks, this saves enough time that 1-4-4 beats 4-4-4 even though 4-4-4 sends the command faster.</li>
+  <li>The mode-byte mechanism (see <a href="#mode-byte">below</a>) lets you skip the command on subsequent transactions, giving QPI-like throughput for random-access reads without ever entering QPI mode.</li>
+</ul>
+
+<p>If you are bringing up a board for the first time, configure your flash driver for <strong>1-4-4 with 6 dummy cycles, 24-bit addressing</strong> — that's the universal "works on every part" combo for read-only XIP at 50–80 MHz. Tune from there.</p>
+
+<!-- =========================================================== -->
+<h2 id="modes">The full mode menu, from 1-1-1 to 8-8-8</h2>
+
+<p>Below is a worked example of every common mode, showing the wire-level activity during a single 4-byte read at address <code>0x000000</code>. Tick marks <code>↑</code> are SCK rising edges where the slave shifts a data bit out (the master samples on the next falling or rising edge depending on CPHA). For brevity these diagrams show only the data phase wave.</p>
+
+<h3 id="mode-1-1-1">1-1-1 — plain SPI (cmd 0x03 or 0x0B)</h3>
+<pre><code>SCK   _─_─_─_─_─_─_─_─  ... (8 edges per byte)
+IO0   ┤a7 a6 a5 a4 a3 a2 a1 a0├ ┤b7 b6 b5 b4 b3 b2 b1 b0├
+IO1   ─── tristated, slave drives nothing on this lane during 0x03/0x0B
+                                                  (pure single-IO; data lane is just IO0 from slave-to-master via separate MOSI/MISO,
+                                                   no shared bidirectional behaviour — see proto_spi.html for details)
+</code></pre>
+<p class="small">Throughput: 1 bit per SCK. With command 0x0B (FAST_READ) the master adds 8 dummy cycles between address and data so the slave can prefetch from its flash plane. With command 0x03 (READ) there are zero dummy cycles, but the SCK is capped at ~25 MHz on most parts.</p>
+
+<h3 id="mode-1-1-2">1-1-2 — Dual Output Read (cmd 0x3B)</h3>
+<pre><code>SCK   _─_─_─_─_─_─_─_─  ... (4 edges per byte)
+IO0   ─ tristated by master (was MOSI in cmd/addr) ─    a6 a4 a2 a0   b6 b4 b2 b0
+IO1   ─ tristated by master                          ─   a7 a5 a3 a1   b7 b5 b3 b1
+                            ↑ slave starts driving here (after dummy cycles)
+</code></pre>
+<p class="small">Throughput: 2 bits per SCK. The slave splits each byte across IO0 (even-indexed bits, msb first) and IO1 (odd-indexed bits). Because IO0 was MOSI moments earlier, the master must explicitly tristate IO0 before the data phase or contention occurs.</p>
+
+<h3 id="mode-1-2-2">1-2-2 — Dual I/O Fast Read (cmd 0xBB)</h3>
+<pre><code>cmd phase     IO0:  c7 c6 c5 c4 c3 c2 c1 c0  ─ master drives, IO1..3 tristated
+addr phase    IO0:  a23 a21 a19 ... a1        ┐ master drives both IO0 and IO1
+              IO1:  a22 a20 a18 ... a0        ┘
+mode byte     IO0:  m7 m5 m3 m1                master drives both
+              IO1:  m6 m4 m2 m0
+data phase    IO0:  d6 d4 d2 d0  ...           slave drives both
+              IO1:  d7 d5 d3 d1  ...
+</code></pre>
+<p class="small">The 8-bit address is split across two lanes for a 4-cycle address phase (was 24 cycles in 1-1-2). The command stays on a single lane so a "fresh" master can recognise the part. Mode byte is the same width as the address.</p>
+
+<h3 id="mode-1-1-4">1-1-4 — Quad Output Read (cmd 0x6B)</h3>
+<pre><code>cmd phase    IO0: c7..c0           ─ single-IO command
+addr phase   IO0: a23..a0          ─ single-IO 24-bit address (24 SCK edges)
+dummy        IO0..3: tristate      ─ master release, slave preparing
+data phase   IO0: d4 d0  d4 d0...   ┐ slave drives 4 lanes
+             IO1: d5 d1  d5 d1...   │
+             IO2: d6 d2  d6 d2...   │
+             IO3: d7 d3  d7 d3...   ┘
+                  └─byte 0─┘└byte 1┘
+</code></pre>
+<p class="small">Throughput: 4 bits per SCK during data. The address phase is still single-IO so there's no need for the slave to be in QPI mode. Most parts ship with this mode enabled out of the box; some require the QE (Quad Enable) bit in the status register to be set first — see the <a href="#pitfalls">pitfalls</a> section.</p>
+
+<h3 id="mode-1-4-4">1-4-4 — Quad I/O Fast Read (cmd 0xEB) — the workhorse</h3>
+<pre><code>cmd phase      IO0: c7..c0                    ─ 1 lane × 8 bits = 8 SCK edges
+addr phase     IO0..3: a23..a0 split           ─ 4 lanes × 6 nibbles = 6 SCK edges
+mode byte      IO0..3: m7..m0 split            ─ 4 lanes × 2 nibbles = 2 SCK edges
+dummy          IO0..3: tristate                ─ typ. 4 cycles
+data phase     IO0..3: d7..d0 split, byte after byte
+</code></pre>
+<p class="small">A complete 4-byte random read costs 8 (cmd) + 6 (addr) + 2 (mode) + 4 (dummy) + 8 (data) = 28 SCK edges. At 80 MHz that is 350 ns — quite a bit better than the 320 ns of single-IO at 100 MHz once you account for the eight dummy cycles single-IO needs in fast-read mode. For longer reads, 1-4-4 wins decisively.</p>
+
+<h3 id="mode-4-4-4">4-4-4 — QPI (cmd 0xEB / 0x0B / etc., all on 4 lanes)</h3>
+<pre><code>cmd phase     IO0..3: c7..c0 split  ─ 2 SCK edges (was 8)
+addr phase    IO0..3: a23..a0 split ─ 6 SCK edges
+dummy         IO0..3: tristate      ─ typ. 6 cycles
+data phase    IO0..3: byte after byte
+</code></pre>
+<p class="small">QPI mode requires the slave to be told "you are now in QPI mode" via a one-time command (typically 0x38 on Winbond, 0x35 on Macronix). After that, <em>all</em> commands accepted by the slave are sent on 4 lanes — including the very command (0xFF or vendor-specific) that <em>exits</em> QPI mode. <strong>This means a host that crashes mid-QPI cannot recover by sending single-IO commands</strong> until it issues the QPI-exit command on 4 lanes. See the <a href="#pitfalls">pitfalls</a> section for the recovery dance.</p>
+
+<h3 id="mode-8-8-8">8-8-8 — OPI / Octal SPI</h3>
+<pre><code>cmd phase     IO0..7: c7..c0   ─ 1 SCK edge per byte
+addr phase    IO0..7: 32-bit address ─ 4 SCK edges
+dummy         tristate ─ typ. 16 cycles (because slave clocks are higher)
+data phase    IO0..7: byte after byte ─ 1 SCK edge each
+</code></pre>
+<p class="small">Octal mode is symmetrical to QPI but on 8 lanes. The dummy phase is much longer in clock count because the SCK frequency is 2–3× higher (133–200 MHz), so the slave's flash-plane access time corresponds to more SCK cycles. Most octal parts also support DDR (data on both edges), at which point the wire format is referred to as <strong>8D-8D-8D</strong> and a separate DQS strobe is required for timing — see <a href="#ddr">DDR</a>.</p>
+
+<!-- =========================================================== -->
+<h2 id="qpi-vs-qio">QPI vs Quad-I/O — the subtle but breaking difference</h2>
+
+<p>This is the single most common point of confusion in QSPI bring-up, so it gets its own section.</p>
+
+<table>
+  <tr><th></th><th>Quad-I/O (1-4-4)</th><th>QPI (4-4-4)</th></tr>
+  <tr><td>Command width</td><td>1 lane (8 SCK edges)</td><td>4 lanes (2 SCK edges)</td></tr>
+  <tr><td>Slave must be in special mode?</td><td><strong>No</strong> — slave's default state.</td><td><strong>Yes</strong> — must issue Enter-QPI command (e.g. 0x38) first.</td></tr>
+  <tr><td>Single-IO commands work?</td><td>Yes, always.</td><td><strong>No</strong> — only QPI-encoded commands work until you exit QPI.</td></tr>
+  <tr><td>Quad-Enable (QE) bit?</td><td>Required. Set once and forget.</td><td>Required. Plus the QPI-mode bit.</td></tr>
+  <tr><td>Recovery from a confused state</td><td>Easy — issue 0x66+0x99 (reset) on single lane and you're back to known state.</td><td>Hard — you have to issue 0xFF or 0xF5 on <em>4 lanes</em> first, otherwise the slave can't decode the reset command.</td></tr>
+  <tr><td>Best for</td><td>Mixed read / write workloads, cold boot, drivers that share the bus with config tools.</td><td>Sustained read-heavy workloads where the slave is "owned" by one driver from boot to shutdown.</td></tr>
+</table>
+
+<div class="callout warn">
+  <span class="label">If your XIP boot is unreliable</span>
+  Bring up your flash in <strong>1-4-4</strong> first. Verify it works at low clock and high clock. Only then experiment with QPI. The performance delta between 1-4-4 and 4-4-4 for typical read-mostly XIP is single-digit percent. The pain of a half-bricked QPI flash that you can no longer talk to is enormous. Many vendor reference drivers default to 1-4-4 for exactly this reason; the extra QPI-mode dance is opt-in.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="phases">Command, address, mode, dummy, data — the five phases</h2>
+
+<p>Every multi-IO transaction has up to five phases. Each phase has a defined width (in cycles) and a defined lane count (1, 2, 4, or 8). Transitions between phases happen <em>without</em> nCS toggling — the master and slave use the SCK count alone to know which phase is active.</p>
+
+<table>
+  <tr><th>Phase</th><th>Driven by</th><th>Width</th><th>Purpose</th></tr>
+  <tr><td><strong>1. Command</strong></td><td>master</td><td>8 bits, on 1 or 4 or 8 lanes</td><td>Tells the slave what kind of operation follows. Values are vendor-defined but largely standardised — 0x03 / 0x0B / 0x6B / 0xEB / 0x9F etc. are universal.</td></tr>
+  <tr><td><strong>2. Address</strong></td><td>master</td><td>24 or 32 bits, on N lanes</td><td>Linear byte address into the slave's address space. 24-bit addresses (16 MiB) are the legacy default; 32-bit (4 GiB) is required for parts ≥ 32 MiB. <em>The slave needs to be told which mode to expect</em> — there are explicit "Enter 4-byte mode" commands or per-command 4-byte variants.</td></tr>
+  <tr><td><strong>3. Mode byte</strong></td><td>master</td><td>8 bits, on N lanes (only in 1-4-4 / 4-4-4)</td><td>Optional. A "magic byte" that, if it matches a vendor-defined pattern, tells the slave "skip the command on the next transaction" (continuous read). See <a href="#mode-byte">below</a>.</td></tr>
+  <tr><td><strong>4. Dummy</strong></td><td>nobody</td><td>0–32 SCK cycles, all lanes tristate</td><td>Gives the slave time to fetch from its flash plane after seeing the address. Also gives both master and slave time to relinquish drive on the data lanes before the slave starts driving them. <strong>Count is part-specific</strong> and frequency-dependent — see <a href="#dummy">below</a>.</td></tr>
+  <tr><td><strong>5. Data</strong></td><td>slave (read) or master (program)</td><td>N bytes, on M lanes</td><td>The actual payload. Continues for as long as nCS stays asserted. The slave keeps incrementing its internal address pointer for as long as you keep clocking SCK — there's no "end of data" signal, you just deassert nCS when done.</td></tr>
+</table>
+
+<h3 id="phase-diagram">Worked example: a 16-byte 1-4-4 fast read</h3>
+
+<pre><code>nCS  ─┐                                                                          ┌──
+      └──────────────────────────────────────────────────────────────────────────┘
+                                         (transaction)
+
+      ◄─ cmd ─►◄───── addr ────►◄ mod ►◄── dummy ──►◄────────── data ──────────►
+SCK     8 ed.    6 ed.            2 ed.    4 ed.       32 ed. (16 bytes × 2)
+
+      ┌─────────┐                                       ┌─────────┬─────────┬───┄
+IO0   │c7..c0   │a20 a16 a12 a8 a4 a0│m4 m0│           │d4 d0    │d4 d0    │
+      └─────────┘────────────────────┴─────┘           ├─ tri ─┐  └─────────┘
+IO1     tri      a21 a17 a13 a9 a5 a1│m5 m1│            │       │d5 d1     │d5 d1
+                                                         tri              ...
+IO2     tri      a22 a18 a14 a10 a6 a2│m6 m2│           │       │d6 d2     │d6 d2
+IO3     tri      a23 a19 a15 a11 a7 a3│m7 m3│           │       │d7 d3     │d7 d3
+                                                       ▲      ▲ slave drives
+                                              master tristates  data lanes
+</code></pre>
+
+<p class="small">The diagram is schematic — actual bit ordering depends on the part's datasheet. Most flash vendors clock the high nibble first (so byte <code>0xAB</code> appears as <code>A</code> on the first SCK and <code>B</code> on the second). The <em>exact</em> mapping of bit positions to IO lanes is shown in the part's "Bit Ordering" timing diagram and varies between Macronix, Winbond, ISSI, and Cypress.</p>
+
+<!-- =========================================================== -->
+<h2 id="dummy">Dummy cycles — what they are, why they vary, how to count them</h2>
+
+<p>A dummy cycle is a SCK edge during which neither side drives any data lane. Its count is how the master tells the slave: <em>"please don't start replying yet — I'm giving you N cycles to look up the data."</em> It also gives both sides a guaranteed handover window where the data lanes are tristated.</p>
+
+<h3 id="dummy-why-vary">Why the count varies</h3>
+
+<p>Three things determine the right dummy-cycle count:</p>
+
+<ol>
+  <li><strong>The slave's flash-plane access time.</strong> A NOR-flash plane takes a fixed wall-clock time to fetch a row (typically 30–80 ns). At higher SCK frequencies, that fixed time corresponds to <em>more</em> SCK cycles. A part rated 80 ns at 100 MHz needs 8 SCK cycles of dummy; at 50 MHz, only 4.</li>
+  <li><strong>The lane count.</strong> Quad-IO returns 4 bits per SCK, so the slave's internal data pre-fetch must finish 4× faster (or the dummy must absorb the difference). Octal at 8 bits/SCK puts the most pressure here.</li>
+  <li><strong>The mode byte.</strong> Some parts let you trade dummy cycles for a <em>longer</em> mode byte phase — the mode byte effectively counts as part of the dummy. On a Macronix MX25R for example you can configure 4 dummy + 2 mode-byte cycles or 6 dummy + 0 mode-byte cycles for the same total.</li>
+</ol>
+
+<h3 id="dummy-config">How the count is communicated</h3>
+
+<p>The dummy-cycle count is <strong>not on the wire</strong>. There is no field in any command that says "this many dummies". Instead, the master and slave are pre-agreed on the count, and the agreement is established in one of three ways:</p>
+
+<ul>
+  <li><strong>Datasheet-default.</strong> Cmd 0xEB on a W25Q always uses 6 dummy cycles. Hardcoded. The host driver knows this from the part's datasheet.</li>
+  <li><strong>Status-register configurable.</strong> Many parts have a "Latency Code" or "Dummy Cycle Count" field in a configuration register. The host writes the desired count (e.g. 4 / 6 / 8) once during initialisation, and from that point on the slave uses that count for the relevant fast-read commands.</li>
+  <li><strong>SFDP (Serial Flash Discoverable Parameters).</strong> A JEDEC-standard parameter table at a fixed offset in the flash that the host can read in single-IO mode. Each entry describes a supported mode and its required dummy count. A well-written generic flash driver reads SFDP at startup and configures itself with no part-specific code.</li>
+</ul>
+
+<div class="callout">
+  <span class="label">Practical tip</span>
+  When porting a flash driver to a new part, the very first thing to verify is "does my dummy-cycle count match what the part wants at this SCK frequency?" If it doesn't, you'll see <strong>shifted data</strong> — the right bytes, but offset by N nibbles. <code>0xDEADBEEF</code> reading as <code>0xDDEEAADD</code> is the giveaway: the master is sampling the lanes one cycle too early or late, so each byte gets misaligned. Increase or decrease the configured count by 2 (one nibble pair) and re-test.
+</div>
+
+<h3 id="dummy-table">Common dummy counts at common frequencies</h3>
+
+<table>
+  <tr><th>Cmd</th><th>Mode</th><th>Dummies @ 50 MHz</th><th>Dummies @ 80 MHz</th><th>Dummies @ 104 MHz</th></tr>
+  <tr><td class="mono">0x0B</td><td>1-1-1 fast read</td><td>8</td><td>8</td><td>8</td></tr>
+  <tr><td class="mono">0x3B</td><td>1-1-2</td><td>8</td><td>8</td><td>8</td></tr>
+  <tr><td class="mono">0xBB</td><td>1-2-2</td><td>0 (mode byte only)</td><td>0</td><td>4</td></tr>
+  <tr><td class="mono">0x6B</td><td>1-1-4</td><td>8</td><td>8</td><td>8</td></tr>
+  <tr><td class="mono">0xEB</td><td>1-4-4</td><td>4</td><td>6</td><td>6</td></tr>
+  <tr><td class="mono">0xEB (QPI)</td><td>4-4-4</td><td>4</td><td>6</td><td>6</td></tr>
+  <tr><td class="mono">0xCC</td><td>4-4-4 DDR</td><td>8</td><td>10</td><td>10</td></tr>
+  <tr><td class="mono">0xEC</td><td>1-4-4, 32-bit addr</td><td>4</td><td>6</td><td>6</td></tr>
+</table>
+
+<p class="small">Numbers are typical for Winbond W25Q-series parts; check the specific part's datasheet. Macronix MX25R, ISSI IS25LP, GigaDevice GD25Q, and Cypress S25FL all use very similar values, but with ±2 differences in some rows.</p>
+
+<!-- =========================================================== -->
+<h2 id="mode-byte">The mode byte — continuous read and the "stay in fast mode" trick</h2>
+
+<p>The mode byte is a small but crucial optimisation. The idea: <em>most</em> of the time, when a host issues a fast-read command, the very next transaction is going to be another fast-read at the next address. So why pay for the 8-bit command phase every time?</p>
+
+<p>The mode byte solution: after the address phase of a 1-4-4 / 4-4-4 / 8-8-8 fast read, the master clocks an extra 8 bits of "magic value" onto the lanes. If the value matches a vendor-defined pattern (typically <code>0x20</code> or <code>0xA5</code> for Winbond, <code>0xA0</code> for Macronix), the slave enters <strong>continuous-read mode</strong>. While in continuous-read, the master can deassert nCS, immediately reassert it, and skip directly to the address phase — the slave assumes it's another fast-read with the same opcode.</p>
+
+<p>To exit continuous-read, the master clocks a non-magic value in the mode byte slot of the next transaction. The slave reverts to "command-required" mode on the transaction after that.</p>
+
+<div class="callout info">
+  <span class="label">Why this matters for XIP</span>
+  Without continuous-read, every random-access read pays an 8-cycle command phase. With it, sequential reads (the common case during code execution) pay only address + dummy + data. For a Cortex-M cache-line fill of 32 bytes at 80 MHz 1-4-4: command-required is 8+6+4+64 = 82 SCK edges, continuous-read is 6+4+64 = 74 — about 10% faster. Across a long boot it adds up.
+</div>
+
+<p>Many MCU QSPI controllers expose a "send mode byte automatically" toggle that does exactly this without driver-side bookkeeping. STM32's QUADSPI calls it "Send Instruction Mode Cycles Only Once"; NXP's FlexSPI calls it "Continuous Read Mode". Both implement the same wire-level behaviour.</p>
+
+<h3 id="mode-byte-failure">A common bring-up trap</h3>
+
+<p>If your QSPI driver sets the mode byte correctly but doesn't <em>also</em> issue an explicit "exit continuous-read" sequence at the start of every cold transaction (most don't), the slave can be left in continuous-read mode after a host crash. Subsequent reads will <em>fail</em> because the host now sends a command phase, but the slave is interpreting those bits as if they were an address. Symptom: the very first XIP fetch after a soft reset returns garbage; subsequent fetches work because the slave eventually exits continuous-read on its own after a few non-matching mode bytes.</p>
+
+<p><strong>Workaround:</strong> the standard "soft reset" sequence for an unknown-state QSPI flash is to clock a long stream of <code>0xFF</code>s on a single lane (this exits any continuous-read mode and any QPI mode), then issue cmd 0x66 (Enable Reset) followed by 0x99 (Reset Device). After a few hundred microseconds, the part is in a known state. Every robust driver does this on every boot.</p>
+
+<!-- =========================================================== -->
+<h2 id="xip">XIP — execute-in-place from serial flash</h2>
+
+<p><strong>Execute-in-place</strong> means the MCU's instruction cache fills directly from the QSPI flash, treating it as if it were memory-mapped. There is no separate "load image into RAM" step at boot. The CPU asks for an instruction at address <code>0x10000400</code>; the QSPI controller, configured for 1-4-4 with a mode byte, autonomously generates the right wire-level transaction; the data flows back; the cache is filled; the CPU executes the instruction. All of this is invisible to software.</p>
+
+<p>XIP is what makes "boot from external flash on a small MCU" practical. Without it, you'd need enough on-chip RAM to hold a copy of the entire firmware, which is unaffordable on the kind of small parts that pair with QSPI flash. With it, RP2350 (264 KB SRAM) can run firmware that is many megabytes in size — most of it executing directly from the W25Q128 boot flash at modern speeds.</p>
+
+<h3 id="xip-cost">Cost model</h3>
+
+<p>An XIP cache miss has a fixed protocol overhead and a per-byte payload cost. Roughly:</p>
+
+<ul>
+  <li><strong>First fetch (cold cache, after reset):</strong> 8 SCK cmd + 6 SCK addr + 2 SCK mode + N SCK dummy + (cache-line-bytes × 2) SCK data. At 50 MHz with a 32-byte cache line and 6 dummy cycles, that's (8+6+2+6+64)/50e6 = 1.7 μs. Equivalent to ~250 wasted M0+ cycles per cold miss.</li>
+  <li><strong>Subsequent fetches (warm, with continuous-read enabled):</strong> 6 SCK addr + 2 SCK mode + N SCK dummy + 64 SCK data = 1.5 μs at 50 MHz, 0.96 μs at 80 MHz, 0.6 μs at 133 MHz. About 100 wasted CPU cycles per miss.</li>
+  <li><strong>Hot path (cache-resident):</strong> zero. XIP miss only happens on cache eviction. The deeper your cache and the better your code locality, the less you pay.</li>
+</ul>
+
+<p>This is why the RP2350 boot ROM goes to such lengths to enable XIP cache: the cache is the difference between "boots in 50 ms" and "boots in 800 ms".</p>
+
+<h3 id="xip-vs-copy">XIP vs copy-to-SRAM</h3>
+
+<p>If your firmware is small enough to fit in RAM, copy-to-SRAM at boot is faster after the first second. The cost is paid once at boot (a single sequential read of the entire firmware) and then there are zero misses ever after. For larger firmware, XIP wins because there's no "load whole thing" step — you only fetch what you actually run.</p>
+
+<p>edevkit1's MCUboot loader runs from XIP (it lives in slot 0), but performance-critical PIO setup code is marked <code>__attribute__((section(".time_critical")))</code> which the linker places in SRAM. Inner USB and CMSIS-DAP loops are also pulled into SRAM. Everything else stays in XIP.</p>
+
+<!-- =========================================================== -->
+<h2 id="ddr">DDR / DTR — data on both clock edges</h2>
+
+<p>SPI's normal "single data rate" (SDR) clocks one bit per lane per SCK <em>edge</em>, but only the rising or only the falling edge — never both. <strong>Double data rate</strong> (DDR), also called <strong>double transfer rate</strong> (DTR) by Cypress and "dual-edge" by others, doubles throughput by clocking on <em>both</em> edges. A 100 MHz DDR bus moves 200 megabits per lane per second.</p>
+
+<p>For QSPI in DDR mode, the wire-level changes are:</p>
+
+<ul>
+  <li>The slave drives the data lanes such that a new value is valid on each edge. Setup/hold tightens to ~½ of SDR's window.</li>
+  <li>The master samples on each edge instead of on every other edge.</li>
+  <li>A <strong>data strobe</strong> (DQS or RWDS) becomes mandatory above ~100 MHz DDR. The DQS pin acts as a slave-driven clock that the master uses to time-align its sampling: the master ignores its own SCK for sampling purposes and instead uses DQS, which automatically tracks the slave's actual response time including PCB flight delay. Without DQS, you can't run reliably above ~80 MHz DDR even on a perfectly-laid-out 4-layer board.</li>
+</ul>
+
+<h3 id="ddr-vs-sdr-tradeoffs">When DDR pays off</h3>
+
+<p>DDR is mandatory for sustained read throughput above 100 MB/s. Below that, it's a wash: the increased timing tightness eats into your margin and forces shorter PCB traces, more careful impedance control, and (above 100 MHz) the extra DQS pin on the package. For the average MCU + QSPI flash board, SDR at 80–100 MHz on 1-4-4 is the sweet spot. DDR matters mainly for octal-DDR flash on Cortex-M7 / -A class systems where you're trying to hit 200+ MB/s.</p>
+
+<!-- =========================================================== -->
+<h2 id="octal">Octal SPI &amp; HyperBus — when four lanes still aren't enough</h2>
+
+<p>Octal-IO doubles the lane count over QSPI: eight bidirectional data wires plus SCK, nCS, and (for DDR) DQS. The protocol is otherwise identical to QSPI — same five phases, same x-y-z notation, same mode-byte trick. Octal flash typically peaks at 200 MHz DDR / 400 MB/s, which is competitive with parallel NOR but at a fraction of the pin count.</p>
+
+<p>Major octal-flash families:</p>
+
+<ul>
+  <li><strong>Macronix MX25LM / MX66LM</strong> — JEDEC standard "Octa-Flash". Modes 8-8-8 and 8D-8D-8D. SCK up to 200 MHz DDR.</li>
+  <li><strong>Cypress / Infineon S26 / S28 Semper</strong> — uses HyperBus protocol, which is octal-DDR with a slightly different command/address structure.</li>
+  <li><strong>Micron MT35X xSPI / Winbond W25M</strong> — JEDEC OPI compliant.</li>
+</ul>
+
+<h3 id="hyperbus">HyperBus — Cypress's octal-DDR variant</h3>
+
+<p><strong>HyperBus</strong> (originally Cypress, now Infineon) is an 11-pin variant of octal-DDR that bundles command and address into a single 6-byte "command/address" header, then transfers data in DDR mode. It uses a bidirectional <strong>RWDS</strong> pin for both read-data-strobe and read-data-valid signalling. HyperBus is wire-incompatible with JEDEC OPI, even though the pin count is similar — different command encodings, different timing diagrams, different pin definitions.</p>
+
+<p>HyperBus is most often used for <strong>HyperRAM</strong> (a self-refreshing pseudo-static RAM behind the same protocol) rather than HyperFlash, because the use case for octal-DDR external RAM is much stronger than for octal-DDR flash. See <a href="#psram">below</a>.</p>
+
+<!-- =========================================================== -->
+<h2 id="psram">QSPI / Octal PSRAM — RAM behind a serial bus</h2>
+
+<p><strong>Pseudo-static RAM</strong> is a cheap, dense DRAM that hides its refresh state inside the chip and exposes itself as a flat byte-addressable memory. Modern PSRAM is sold in QSPI and Octal-DDR variants — same wire-level protocol as flash, but with vastly different commands and behaviour:</p>
+
+<ul>
+  <li><strong>No erase.</strong> Writes go directly to the requested address. No 4KB / 64KB sector boundaries.</li>
+  <li><strong>No "program time".</strong> Writes complete in the SCK cycle they finish on. (Compare: NOR flash takes ~2 ms to program a page.)</li>
+  <li><strong>Limited burst length.</strong> Most QSPI PSRAM chips can only do bursts up to a configurable boundary (typically 1024 bytes) before the master must deassert nCS to let the chip refresh internally. The master is responsible for splitting long transactions; if it doesn't, data corrupts silently after the boundary.</li>
+  <li><strong>Higher latency than SRAM, lower than DRAM.</strong> Typical first-byte access ~100 ns; burst rate ~50–100 MB/s on QSPI, ~200 MB/s on Octal-DDR.</li>
+</ul>
+
+<p>edevkit1 does not include external PSRAM (RP2350's 520 KB SRAM is enough for v1), but the design doc reserves PIO state machines for v2 PSRAM support.</p>
+
+<!-- =========================================================== -->
+<h2 id="speed">Speed bands and the long-cable problem (revisited)</h2>
+
+<p>The single-IO discussion in <a href="proto_spi.html#speed">proto_spi.html#speed</a> applies here, but the math gets <em>tighter</em> in proportion to the lane count. The same 1 ns of round-trip flight time that's tolerable at 50 MHz single-IO is borderline at 50 MHz quad-IO and fatal at 50 MHz octal-DDR.</p>
+
+<p>Reasons:</p>
+
+<ul>
+  <li>In quad-IO mode the slave is <em>simultaneously</em> driving four lanes. Skew between those four lanes is a new failure mode that doesn't exist in single-IO. Crosstalk between adjacent IOs becomes meaningful at 50+ MHz.</li>
+  <li>The dummy phase needs to absorb both the fixed flash-plane access time <em>and</em> the round-trip flight time. Any cable that adds significant flight delay forces the firmware to use a higher dummy count, which directly subtracts from peak throughput.</li>
+  <li>DDR mode tightens setup/hold to ½ of SDR. A board that runs 100 MHz SDR fine may collapse at 50 MHz DDR if signal integrity isn't excellent.</li>
+</ul>
+
+<table>
+  <tr><th>SCK</th><th>1-4-4 SDR</th><th>1-4-4 SDR (long cable)</th><th>4-4-4 DDR</th></tr>
+  <tr><td>≤25 MHz</td><td><span class="badge ok">comfortable</span></td><td><span class="badge ok">comfortable</span></td><td><span class="badge ok">comfortable</span></td></tr>
+  <tr><td>50 MHz</td><td><span class="badge ok">fine on PCB</span></td><td><span class="badge part">marginal</span></td><td><span class="badge part">tight</span></td></tr>
+  <tr><td>80 MHz</td><td><span class="badge ok">fine on PCB</span></td><td><span class="badge no">unreliable</span></td><td><span class="badge no">requires DQS</span></td></tr>
+  <tr><td>104+ MHz</td><td><span class="badge part">requires good layout</span></td><td><span class="badge no">no</span></td><td><span class="badge no">requires DQS</span></td></tr>
+</table>
+
+<div class="callout warn">
+  <span class="label">edevkit1 cable rule</span>
+  edevkit1's QSPI tester is rated for <strong>50 MHz QSPI master / sniffer on cables ≤4 inches</strong>, with derate to 25 MHz on cables ≥4 inches (firmware enforces this automatically; override with <code>edevkit qspi --no-cable-derate</code>). For SDR, slow flash bring-up to 25 MHz first, verify, then ramp. <strong>Do not</strong> attempt octal or DDR on a cable. PIO sample-delay support is on the v1.1 roadmap — until then, the long-cable workaround is "use a shorter cable".
+</div>
+
+<!-- =========================================================== -->
+<h2 id="edevkit">The edevkit1 QSPI engine — PIO1 SM1 + SM2 + sniffer</h2>
+
+<p>edevkit1 implements QSPI not via a hardware QSPI peripheral (RP2350 has only one, and it's dedicated to the boot flash) but via a pair of <strong>PIO state machines</strong> on PIO1, with a third state machine standing by for sniffer mode.</p>
+
+<table>
+  <tr><th>Resource</th><th>Used by</th></tr>
+  <tr><td>PIO1 SM0</td><td>I²C engine — see <a href="proto_i2c.html">proto_i2c.html</a></td></tr>
+  <tr><td>PIO1 SM1</td><td>QSPI master — drives SCK, nCS, IO0..3</td></tr>
+  <tr><td>PIO1 SM2</td><td>QSPI partner — slave emulation, or master's "sample late" companion</td></tr>
+  <tr><td>PIO1 SM3</td><td>Sniffer — passively decodes a live SCK + nCS + IO0..3 stream</td></tr>
+  <tr><td>GPIO 6..11</td><td>SCK (6), nCS (7), IO0 (8), IO1 (9), IO2 (10), IO3 (11)</td></tr>
+  <tr><td>DMA channels</td><td>2 dedicated chains (TX and RX), chained for back-to-back transactions</td></tr>
+</table>
+
+<h3 id="edevkit-master">Master mode — the wire shapes</h3>
+
+<p>The QSPI master state machine is a single <code>.pio</code> program with a few side-set channels. Conceptually:</p>
+
+<pre><code>.program qspi_master_1_4_4
+.side_set 1                             ; SCK is sideset
+
+start:
+    pull   block        side 0          ; pull cmd-byte from FIFO, SCK low
+    out    pins, 1      side 0  [3]     ; place IO0 = cmd bit, hold
+    nop                 side 1  [3]     ; rising edge — slave samples
+    ; ... (similar for the other 7 cmd bits)
+
+addr_phase:
+    pull   block        side 0          ; pull a 24-bit address word
+    out    pins, 4      side 0  [3]     ; place top nibble on IO0..3
+    nop                 side 1  [3]     ; clock high — slave samples
+    out    pins, 4      side 0  [3]     ; next nibble
+    nop                 side 1  [3]
+    ; ... (6 nibbles total for 24-bit addr)
+
+dummy:
+    set    pindirs, 0   side 0  [3]     ; tristate IO0..3
+    set    x, 5         side 0          ; 6 dummy cycles
+dummy_loop:
+    nop                 side 1  [3]
+    jmp    x--, dummy_loop side 0 [3]
+
+data_phase:
+    set    pindirs, 0   side 0          ; lanes still tristated
+data_loop:
+    nop                 side 1  [3]     ; rising edge
+    in     pins, 4      side 1          ; sample top nibble
+    nop                 side 0  [3]     ; falling
+    in     pins, 4      side 0          ; sample bottom nibble
+    push   block        side 0          ; emit byte to RX FIFO
+    jmp    data_loop    side 0
+</code></pre>
+
+<p class="small">This is a sketch, not the actual production .pio source — see <code>app/pio/qspi.pio</code> in the firmware tree for the real version, which handles 1-4-4, 4-4-4, address widths of 24 and 32 bits, configurable dummy counts, and the mode byte. The dispatcher is in <code>src/proto/qspi.c</code>.</p>
+
+<h3 id="edevkit-clocking">Achieving 50 MHz with a 150 MHz core</h3>
+
+<p>RP2350 runs at 150 MHz default. Each PIO instruction takes one cycle. To produce a 50 MHz SCK, the master program needs three core cycles per SCK period — one for the instruction that toggles SCK low, one for the data-out instruction, one for the SCK-high. That's exactly what the side-set delays in the sketch above achieve: <code>[3]</code> on the data-out instruction means "hold for 3 extra cycles", giving a 4-cycle phase × 2 = 8 cycles per SCK = 18.75 MHz at 150 MHz. Reducing the delay to <code>[1]</code> gives 50 MHz. The configurability of these delays is how the firmware exposes a runtime SCK-frequency knob without recompiling the .pio program.</p>
+
+<!-- =========================================================== -->
+<h2 id="code">Code — Zephyr API, JEDEC ID, fast-read 1-1-4</h2>
+
+<p>edevkit1 exposes QSPI through Zephyr's <code>flash</code> driver subsystem (when talking to a real flash chip) and through its own <code>edevkit_qspi_*</code> API for protocol-level testing where you want to construct arbitrary transactions. Below is the protocol-level API.</p>
+
+<h3 id="code-init">Initialisation</h3>
+
+<pre><code>#include &lt;zephyr/kernel.h&gt;
+#include &lt;edevkit/qspi.h&gt;
+
+static const struct device *qspi = DEVICE_DT_GET(DT_NODELABEL(edevkit_qspi));
+
+static int init_qspi(void)
+{
+    if (!device_is_ready(qspi)) return -ENODEV;
+
+    struct edevkit_qspi_config cfg = {
+        .role          = EDEVKIT_QSPI_ROLE_MASTER,
+        .mode          = EDEVKIT_QSPI_MODE_0,    /* CPOL=0, CPHA=0 */
+        .frequency_hz  = 25 * 1000 * 1000,        /* start slow */
+        .vio_select    = EDEVKIT_VIO_3V3,         /* see edevkit1.html §6.4 */
+        .pull_ups      = EDEVKIT_QSPI_PULLUPS_INTERNAL_10K,
+    };
+    return edevkit_qspi_configure(qspi, &amp;cfg);
+}
+</code></pre>
+
+<h3 id="code-jedec-id">Reading the JEDEC ID — the universal sanity check</h3>
+
+<p>JEDEC ID (cmd 0x9F) works on every JEDEC-compliant flash and PSRAM at single-IO mode 0, regardless of any other configuration. It returns 3 bytes: manufacturer ID, memory type, capacity code.</p>
+
+<pre><code>static int read_jedec_id(uint8_t out[3])
+{
+    struct edevkit_qspi_xfer xfer = {
+        .cmd_value     = 0x9F,
+        .cmd_lanes     = 1,
+        .addr_lanes    = 0,                   /* no address phase */
+        .mode_lanes    = 0,
+        .dummy_cycles  = 0,
+        .data_lanes    = 1,
+        .data_dir      = EDEVKIT_QSPI_DIR_RX,
+        .data_buf      = out,
+        .data_len      = 3,
+    };
+    return edevkit_qspi_xfer(qspi, &amp;xfer);
+}
+
+/* expected output for a Winbond W25Q128: { 0xEF, 0x40, 0x18 }
+ *   0xEF = Winbond manufacturer
+ *   0x40 = SPI flash family
+ *   0x18 = 2^24 bytes = 16 MiB
+ */
+</code></pre>
+
+<h3 id="code-fast-read">A 1-4-4 quad-I/O fast read at 50 MHz</h3>
+
+<pre><code>static int fast_read_quad(uint32_t addr, uint8_t *buf, size_t len)
+{
+    struct edevkit_qspi_xfer xfer = {
+        .cmd_value     = 0xEB,                /* QIOR */
+        .cmd_lanes     = 1,
+        .addr_value    = addr &amp; 0xFFFFFF,     /* 24-bit address */
+        .addr_lanes    = 4,
+        .addr_bits     = 24,
+        .mode_value    = 0xFF,                /* non-magic — disables continuous-read */
+        .mode_lanes    = 4,
+        .mode_bits     = 8,
+        .dummy_cycles  = 4,                   /* W25Q @ 50 MHz */
+        .data_lanes    = 4,
+        .data_dir      = EDEVKIT_QSPI_DIR_RX,
+        .data_buf      = buf,
+        .data_len      = len,
+    };
+    return edevkit_qspi_xfer(qspi, &amp;xfer);
+}
+</code></pre>
+
+<p class="small">The driver's job: assemble these phase parameters into a 32-bit "wire descriptor" that PIO1 SM1 understands, push it into the SM's TX FIFO, then DMA the data buffer to/from the SM's RX FIFO. Latency: ~6 μs per transaction setup, dominated by the kernel call and DMA descriptor-write — the actual wire transaction at 50 MHz is much faster for small reads.</p>
+
+<!-- =========================================================== -->
+<h2 id="emulator">Emulator mode — pretending to be a W25Q flash</h2>
+
+<p>edevkit1 can <em>play the role</em> of a QSPI flash chip on its protocol header, replying to every command a real flash would. The use case: you're developing host-side firmware that drives a flash chip, but you don't have a board with the flash chip on it yet. Plug in edevkit1, point your driver at the protocol header, and it sees a "real" flash chip — JEDEC ID, fast read, page program, sector erase, all of it.</p>
+
+<p>The emulator is implemented as a YAML profile that the firmware loads from <code>/lfs/profiles/flash/&lt;part-name&gt;.yaml</code>. Built-in profiles ship for:</p>
+
+<ul>
+  <li><strong>Winbond W25Q128JV</strong> (16 MiB, 1-4-4 supported, QPI supported)</li>
+  <li><strong>Macronix MX25R6435F</strong> (8 MiB, low-power, slightly different command set)</li>
+  <li><strong>ISSI IS25LP128F</strong> (16 MiB, alt-vendor reference)</li>
+  <li><strong>GigaDevice GD25Q64</strong> (8 MiB, popular in low-cost designs)</li>
+</ul>
+
+<p>Custom parts can be added by writing a YAML file describing the supported commands, dummy counts, status-register layout, and address space. The emulator backs the address space with the data flash (W25Q01JV, 128 MiB) so emulating a 16 MiB flash leaves plenty of room for capture buffers.</p>
+
+<pre><code># /lfs/profiles/flash/w25q128jv.yaml
+schema: 1
+part:
+  manufacturer: Winbond
+  name: W25Q128JV
+  capacity_bytes: 16777216
+  page_size: 256
+  sector_size: 4096
+
+jedec_id:    [0xEF, 0x40, 0x18]
+sfdp_blob:   "files/w25q128_sfdp.bin"   # raw SFDP table copied from a real chip
+
+modes:
+  - opcode: 0x03
+    name:   READ
+    addr_bits: 24
+    addr_lanes: 1
+    dummy: 0
+    data_lanes: 1
+  - opcode: 0x0B
+    name:   FAST_READ
+    addr_bits: 24
+    addr_lanes: 1
+    dummy: 8
+    data_lanes: 1
+  - opcode: 0xEB
+    name:   QIOR
+    addr_bits: 24
+    addr_lanes: 4
+    mode_bits: 8
+    dummy: 4
+    data_lanes: 4
+
+write_protect:
+  status_register_bit: SRP0
+  pin: WP_internal_pull_up
+
+quirks:
+  - "honour QE bit before allowing 4-lane modes"
+  - "ignore continuous-read mode byte if not in 1-4-4 / 4-4-4"
+</code></pre>
+
+<p class="small">The full schema is documented at <code>firmware/app/profiles/flash/SCHEMA.md</code>. Validation runs on profile load; an invalid YAML file is rejected with a clear error rather than crashing or behaving unpredictably.</p>
+
+<!-- =========================================================== -->
+<h2 id="sniffer">Sniffer mode — passively decoding a live QSPI bus</h2>
+
+<p>Sniffer mode is the trickiest of the three roles, because there are five wires to monitor (SCK, nCS, IO0..3) at up to 50 MHz, and you need to decode the phase boundaries based on the protocol — there's nothing on the wire that says "we're now in the dummy phase".</p>
+
+<p>The PIO program implements a <strong>state-driven decoder</strong>:</p>
+
+<ol>
+  <li>While nCS is high: do nothing, idle.</li>
+  <li>On nCS falling edge: start sampling. Reset phase counter to 0.</li>
+  <li>Sample IO0..3 on each rising SCK edge. Push 4-bit nibbles into a ring buffer in SRAM.</li>
+  <li>Maintain a per-transaction state machine that tracks: command byte (8 cycles, 1 lane), address (configurable: 1 / 2 / 4 lanes, 24 / 32 bits), mode byte (configurable, 0 / 8 cycles), dummy (configurable, 0–32 cycles), data (until nCS rises).</li>
+  <li>The host CLI provides the phase configuration ("decode as 1-4-4 with 4 dummy cycles"); the sniffer applies it. Without configuration, the sniffer captures the raw cycle-by-cycle nibble stream and lets the host post-process.</li>
+</ol>
+
+<p>The host CLI (<code>edevkit qspi sniff</code>) renders the captured stream as a transaction list:</p>
+
+<pre><code>[0.000 ms] CMD 0x9F (RDID)         resp: EF 40 18           (W25Q128 detected)
+[0.012 ms] CMD 0x06 (WREN)
+[0.018 ms] CMD 0xEB QIOR @0x000000  (4 dummy)  resp: 00 00 00 00 ...    32 bytes
+[0.032 ms] CMD 0xEB QIOR @0x000020  (4 dummy)  resp: A5 5A A5 5A ...    32 bytes
+...
+</code></pre>
+
+<div class="callout">
+  <span class="label">Sniffer gotcha</span>
+  At 50 MHz quad-IO, the sniffer is moving 25 MB/s of raw nibble data into SRAM. At a USB CDC of ~1 MB/s sustained, the host can't keep up with anything more than a 100-ms burst. The CLI defaults to <strong>capture mode</strong> — record into the 128 MB data flash, then upload offline. Live streaming is for low-rate buses (sensor I²C, slow SPI) only.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="pitfalls">Common pitfalls &amp; first-time bugs</h2>
+
+<table>
+  <tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr>
+  <tr><td>Reads return all <code>0xFF</code> in 1-4-4, but 1-1-1 works fine.</td><td><strong>QE bit not set.</strong> Most parts require status-register bit QE = 1 before they accept multi-IO commands; if it's clear, the slave silently ignores cmd 0xEB.</td><td>Read SR2 (cmd 0x35), set bit 1 (QE), write back via cmd 0x31. One-time setup; the bit is non-volatile.</td></tr>
+  <tr><td>First byte of every read is garbage; subsequent bytes are correct.</td><td>Dummy count off by one. The slave is starting to drive one cycle later than the master is sampling.</td><td>Increase dummy count by 2 in the master config and retry.</td></tr>
+  <tr><td>All bytes are correct but bit-shifted by 4 (one nibble) within each byte.</td><td>Mode-byte phase is sending 8 bits but the master is configured for 0 mode bits — or vice versa.</td><td>Match the mode-bits configuration on master and slave. The mode-byte phase is invisible on a logic analyzer if you don't know it's there.</td></tr>
+  <tr><td>Bus contention spike visible on a scope around the data-phase boundary.</td><td>Master is keeping IO0..3 driven for one cycle into the data phase, while the slave starts driving on the same cycle.</td><td>Insert one more dummy cycle. The dummy phase is what lets the master release the lanes before the slave grabs them.</td></tr>
+  <tr><td>Cold boot fails; warm boot (after a reset) works.</td><td>Slave is left in continuous-read mode from a previous unfinished session.</td><td>Issue the soft-reset sequence at start of every boot: clock 8+ <code>0xFF</code> bytes single-IO, then 0x66, then 0x99, wait 100 μs.</td></tr>
+  <tr><td>Driver works at 25 MHz, fails at 50 MHz.</td><td>Dummy count needs to scale with frequency — most parts list "dummy cycles vs frequency" tables in the datasheet.</td><td>Read the part's datasheet (the table is usually in section 8 or 9). For W25Q128 at 50 MHz quad-I/O, use 4 dummy cycles; at 80 MHz, use 6.</td></tr>
+  <tr><td>Page-program corrupts data after the first 256 bytes.</td><td>Most flash parts page-align programs at 256-byte boundaries. Programming across a boundary wraps within the page.</td><td>Split writes at page boundaries. The driver must keep track of the page boundary and split a single host-side <code>flash_write(addr, buf, n)</code> into multiple PP commands.</td></tr>
+  <tr><td>QPI mode "sticks" — single-IO commands stop working.</td><td>You entered QPI but the wire commands you're now sending look like they're encoded for single-IO.</td><td>Issue a 4-lane reset: clock 0xFF on 4 lanes for at least 8 cycles, then 0x66 on 4 lanes, then 0x99 on 4 lanes. After that, the part is back in single-IO power-on state.</td></tr>
+  <tr><td>Slave responds correctly to JEDEC ID but garbage to fast read.</td><td>Address-mode mismatch — slave is in 4-byte address mode but master is sending 3 bytes (or vice versa).</td><td>Either issue cmd 0xE9 (Exit 4-byte mode) or cmd 0xB7 (Enter 4-byte mode) explicitly, or use the address-bits-explicit fast-read variants (0x13 / 0x6C / 0xEC).</td></tr>
+  <tr><td>Octal flash works at SDR but corrupts at DDR.</td><td>DQS not connected, or trace lengths between SCK and DQS not matched.</td><td>Connect DQS. Match trace lengths within ±10 mil. If you can't, drop to SDR and accept the throughput hit.</td></tr>
+</table>
+
+<div class="callout warn">
+  <span class="label">Universal recovery sequence</span>
+  When all else fails — flash is in an unknown state, you don't know if it's in QPI, continuous-read, 4-byte mode, or all three:
+  <ol>
+    <li>Toggle nCS high for at least 1 ms.</li>
+    <li>Clock <strong>at least 64 SCK edges of 0xFF on 8 lanes</strong> (covers any of single / dual / quad / octal commands).</li>
+    <li>Issue <strong>0x66 on 8 lanes, then 0x99 on 8 lanes</strong> (Enable Reset + Reset Device — works in all modes because the slave decodes whichever bits land on whichever lane it's currently configured for).</li>
+    <li>Wait 100 μs. The part is now in factory-default state: single-IO, 24-bit address, 8 dummy cycles for fast-read, no continuous-read.</li>
+  </ol>
+  This wins ~95% of "I bricked my flash" bring-up cases.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<ul>
+  <li><strong>JEDEC JESD216</strong> — SFDP standard. The most useful single document for understanding any modern serial flash; the SFDP tables encode every bit of the part-specific behaviour we discussed.</li>
+  <li><strong>JEDEC JESD251</strong> — xSPI Profile 1.0 / 2.0 / xSPI 1S-1S-1S etc. Standardises the OPI mode set across vendors.</li>
+  <li><strong>Winbond W25Q128JV datasheet</strong> — readable, complete, and the part you are most likely to encounter in the field. Section 7 (timing) and section 8 (commands) are the parts you'll want to read end-to-end.</li>
+  <li><strong>Macronix MX25LM Octa-Flash datasheet</strong> — for the octal-DDR + DQS story, this is the cleanest reference.</li>
+  <li><strong>RP2350 datasheet, chapter 11</strong> — RP2350's QSPI peripheral (used by the on-chip XIP cache for boot flash) and the PIO chapter for what we use to drive the protocol header.</li>
+  <li><strong>"Linear flash beyond 16MB: 4-byte addressing"</strong> — Spansion app-note AN98488. The cleanest write-up of the 24-bit-vs-32-bit address mess.</li>
+  <li><strong>HyperBus 1.0 specification</strong> — Cypress (now Infineon). Free download with registration.</li>
+  <li><strong>edevkit1.html §6.5</strong> — connector wiring, voltage-domain rules, and where QSPI sits in the v1 design.</li>
+  <li><strong>platform_pio.html</strong> — the underlying RP2350 PIO state-machine model that the QSPI master / slave / sniffer programs build on. Read this if you want to understand <em>how</em> a state machine can implement a 50 MHz protocol with three instructions per SCK period.</li>
+  <li><strong><a href="proto_spi.html">proto_spi.html</a></strong> — single-IO SPI fundamentals. Multi-IO is built directly on top of these; if any of the CPOL/CPHA/nCS material above felt unclear, that doc fills the gap.</li>
+</ul>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="proto_i2c.html"><span class="dir">← Previous</span><span class="cat">Protocols</span><span class="title">I²C bus protocol</span></a>
+<a class="next" href="proto_spi.html"><span class="dir">Next →</span><span class="cat">Protocols</span><span class="title">SPI bus protocol</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit1 · QSPI protocol reference · last updated with the v0.1 firmware tree.
+  Any wire-level numbers or PIO snippets here are accurate to the firmware in
+  <code>firmware/app/pio/qspi.pio</code> as of the doc's modification date — verify
+  against current source before depending on a specific cycle count.
+</footer>
+
+</div><!-- /.wrap -->
+
+<button class="scroll-top" id="scroll-top" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M18 15l-6-6-6 6"/>
+  </svg>
+</button>
+
+<script>
+  // theme toggle
+  (function () {
+    var btn = document.getElementById('theme-btn');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var cur = document.documentElement.getAttribute('data-theme');
+      var next;
+      if (cur === 'dark')      next = 'light';
+      else if (cur === 'light') next = 'dark';
+      else {
+        var prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
+        next = prefersDark ? 'light' : 'dark';
+      }
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('edev_theme', next); } catch (e) {}
+    });
+  })();
+
+  // scroll-to-top
+  (function () {
+    var btn = document.getElementById('scroll-top');
+    if (!btn) return;
+    function update() {
+      if (window.scrollY > 600) btn.classList.add('show');
+      else btn.classList.remove('show');
+    }
+    window.addEventListener('scroll', update, { passive: true });
+    btn.addEventListener('click', function () {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    update();
+  })();
+
+  // hide back-to-hub link when opened via file:// (no server)
+  (function () {
+    if (location.protocol === 'file:') {
+      var a = document.getElementById('back-to-hub');
+      if (a) a.style.display = 'none';
+    }
+  })();
+</script>
+</body>
+</html>

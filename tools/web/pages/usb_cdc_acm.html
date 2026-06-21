@@ -1,0 +1,1243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — USB CDC-ACM (serial-over-USB)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A focused reference on USB CDC-ACM — the Communication Device Class / Abstract Control Model that makes a USB device look like a serial port. Class structure, functional descriptors, control requests, ZLP behaviour, OS quirks, and how edevkit1 uses two CDC-ACM bridges in its composite descriptor.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    /* graticule background — top-faded so it doesn't overwhelm */
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar (sticky nav + theme toggle) ────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── OS cards (Linux / macOS / Windows) ────────────────────────────── */
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  /* ── numbered step ─────────────────────────────────────────────────── */
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── checklist ─────────────────────────────────────────────────────── */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  // pre-paint theme — prevents FOUC
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">USB · CDC-ACM</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · usb stack · CDC-ACM</div>
+  <h1>USB CDC-ACM — the "make my device look like a serial port" class</h1>
+  <p class="small">A focused reference on <strong>USB CDC-ACM</strong> (Communication Device Class, Abstract Control Model subclass) — the class definition that lets a USB device show up as <code>/dev/ttyACM0</code> on Linux, <code>/dev/cu.usbmodem*</code> on macOS, or <code>COMx</code> on Windows. It is the de-facto serial-over-USB protocol: every USB-to-UART bridge chip (FTDI's CDC variants, Silabs CP2102N CDC mode, WCH CH340 CDC mode) and every native-USB MCU stack (STM32, nRF52/53/54, RP2040/RP2350, ESP32-Sx, SAM-Dx, Teensy, Pico-SDK, TinyUSB, Zephyr USB-Device-Next, embassy-usb) implements it.</p>
+  <p class="small"><strong>Audience.</strong> Firmware engineers exposing a debug log, AT-command channel, or generic data pipe over USB; host-side developers writing tools that talk to such a port; integrators chasing a "my port works on Linux but not Windows" bug. By the end of this doc you should be able to read a CDC-ACM descriptor block, debug a host-stalls-after-64-bytes ZLP issue, write a udev rule that stops ModemManager from grabbing a developer-test port, and understand exactly how <strong>edevkit1</strong> exposes <em>two</em> CDC-ACM bridges in its composite descriptor — one for the target's log UART, one for the developer-test UART — without confusing the host driver.</p>
+  <p class="small"><strong>Not covered here.</strong> The general USB endpoint / configuration / descriptor model lives in <a href="usb_overview.html">usb_overview.html</a>; the CMSIS-DAP v2 vendor-class side of edevkit's composite device lives in <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a>; the UART hardware behind the two CDC-ACM bridges lives in <a href="proto_uart.html">proto_uart.html</a>. The full v1 design rationale (why two CDC-ACM instances, why separate Vtgt/Vio domains) lives in <a href="edevkit1.html">edevkit1.html</a>.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Foundations</span>
+  <ol>
+    <li><a href="#about">What CDC-ACM is, and why everyone uses it</a></li>
+    <li><a href="#class-structure">Class structure — two interfaces tied by IAD</a></li>
+    <li><a href="#functional">Functional descriptors — Header, CM, ACM, Union</a></li>
+  </ol>
+  <span class="heading">The protocol</span>
+  <ol>
+    <li><a href="#requests">Class-specific control requests</a></li>
+    <li><a href="#notif">The notification endpoint and SERIAL_STATE</a></li>
+    <li><a href="#bulk">Bulk pipe data flow and the ZLP rule</a></li>
+  </ol>
+  <span class="heading">Composite &amp; OS behaviour</span>
+  <ol>
+    <li><a href="#composite">Composite-device gotchas (multiple CDC, IAD, usbser.sys)</a></li>
+    <li><a href="#os">Cross-platform behaviour — Linux, macOS, Windows</a></li>
+  </ol>
+  <span class="heading">edevkit1 specifics</span>
+  <ol>
+    <li><a href="#edevkit">edevkit1's two CDC-ACM bridges</a></li>
+    <li><a href="#bandwidth">Bandwidth and latency notes</a></li>
+  </ol>
+  <span class="heading">Reference</span>
+  <ol>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="about">What CDC-ACM is, and why everyone uses it</h2>
+
+<p>The <strong>Communications Device Class</strong> (CDC) is one of the standard USB device classes — class code <code>0x02</code> — defined originally by the USB Implementers Forum in 1999 (<em>USB Class Definitions for Communication Devices, rev 1.1</em>) and updated as <em>USB CDC 1.2</em> in 2007. CDC was an umbrella for "anything that looks like a communications endpoint": telephone modems, ISDN terminal adapters, Ethernet bridges, ATM adapters, and yes, garden-variety serial ports. Each kind got its own <em>subclass</em>. Today, only a handful of those subclasses are common in the wild:</p>
+
+<table>
+  <tr><th>Subclass code</th><th>Name</th><th>Where you see it</th></tr>
+  <tr><td class="mono">0x02</td><td><strong>Abstract Control Model (ACM)</strong></td><td>The "USB serial port" everyone means when they say "CDC". Modems, USB-UART bridges, debug-log channels.</td></tr>
+  <tr><td class="mono">0x06</td><td>Ethernet Control Model (ECM)</td><td>USB Ethernet adapters on Linux/macOS. Windows prefers NCM.</td></tr>
+  <tr><td class="mono">0x0D</td><td>Network Control Model (NCM)</td><td>Higher-throughput USB Ethernet (RNDIS replacement, used by Apple iPhone tethering).</td></tr>
+  <tr><td class="mono">0x0E</td><td>Mobile Broadband Interface Model (MBIM)</td><td>4G/5G modems with structured AT replacement.</td></tr>
+</table>
+
+<p>This doc is about the first row. <strong>Abstract Control Model</strong> means "abstract" in the sense that the device is <em>pretending</em> to be a Hayes-compatible modem — it accepts SET_LINE_CODING ("set baud rate / parity / stop-bits / data-bits"), SET_CONTROL_LINE_STATE (DTR/RTS), and reports SERIAL_STATE notifications (DCD/DSR/RI/Frame/Parity/Overrun). The host driver then exposes a tty/COM-port abstraction to userspace, and any tool that knows how to open a serial port — <code>screen</code>, <code>minicom</code>, <code>picocom</code>, PuTTY, the Arduino IDE serial monitor, your firmware's <code>printf</code> consumer, your AT-command parser — works without modification.</p>
+
+<div class="callout info">
+  <span class="label">key idea</span>
+  CDC-ACM is the <em>contract</em> a USB device signs that says "treat me like a serial port and the OS will hand userland a tty/COM device." The class itself is thin — a couple of descriptors and a small set of control requests — but its leverage is enormous, because every serial-port tool ever written immediately works against it. That is why <em>native-USB</em> MCUs implement CDC-ACM directly (no UART chip behind it), and why <em>USB-to-UART bridge</em> chips (FTDI's CDC mode, CP2102N CDC mode, CH340 CDC mode) emulate it: it lets the chip ship with zero driver install on every modern host OS.
+</div>
+
+<h3 id="why-not-vendor">Why not a vendor-specific class?</h3>
+
+<p>You absolutely can roll your own — TinyUSB, libusb on the host, and you're done. FTDI famously did this for decades: their FT232/FT2232 family historically used vendor class with proprietary <code>FTDIBUS</code> drivers (<code>ftdi_sio</code> on Linux, <code>FTDIVCP</code> on Windows). The reasons people no longer do this for new designs:</p>
+
+<ul>
+  <li><strong>Driver hell on Windows.</strong> Anything not in the standard CDC class needs a signed INF, and historically a kernel-mode driver. Microsoft made this dramatically worse in 2014–2017 with the WDF driver-signing tightening. CDC-ACM dodges this entirely — see §<a href="#os">Cross-platform behaviour</a>.</li>
+  <li><strong>Linux already ships the driver.</strong> The kernel's <code>cdc-acm</code> module has been in mainline since 2.4, gets near-zero churn, and works on every distro from Alpine to Ubuntu LTS. A vendor protocol means writing/maintaining your own kernel module.</li>
+  <li><strong>macOS gatekeeper.</strong> macOS has shipped a CDC driver in IOUSBHostFamily since 10.7. A custom kext is now nearly impossible to ship without a notarised, paid-developer kernel-extension entitlement; <a href="https://developer.apple.com/documentation/driverkit">DriverKit</a> is a partial workaround. CDC-ACM is the path of least resistance.</li>
+  <li><strong>Userspace fallbacks.</strong> Even if you do go vendor-class, libusb works on Linux and macOS but is awkward on Windows (you need WinUSB + a paired INF). And once you've solved that, you've reinvented CDC-ACM.</li>
+</ul>
+
+<p>The single legitimate reason to skip CDC-ACM is <strong>ultra-high throughput or ultra-low latency</strong> — a logic analyser at 480 Mbps doesn't fit through CDC-ACM's modem-shaped descriptors gracefully (you'd want isochronous or your own bulk-only protocol). For everything else — debug logs, AT commands, register-poke shells, firmware updates over a text protocol — CDC-ACM is the right tool.</p>
+
+<!-- =========================================================== -->
+<h2 id="class-structure">Class structure — two interfaces tied by IAD</h2>
+
+<p>An ACM "function" is not a single USB interface. It is a pair: a <strong>communications-class interface</strong> that carries control + notifications, and a <strong>data-class interface</strong> that carries the actual byte stream. The reason this two-interface split exists is historical: in 1999, modems were a fully realised communications device with its own protocol stack on top of the data link, and the spec wanted to separate "modem control plane" from "modem data plane" cleanly. We're stuck with the two-interface design forever, because CDC-ACM never broke compatibility.</p>
+
+<table>
+  <tr><th>Interface</th><th>bInterfaceClass</th><th>bInterfaceSubClass</th><th>bInterfaceProtocol</th><th>Endpoints</th><th>Carries</th></tr>
+  <tr><td><strong>Communications</strong> (control)</td><td class="mono">0x02 (CDC)</td><td class="mono">0x02 (ACM)</td><td class="mono">0x01 (AT cmds, V.250) — or <code>0x00</code> for "no protocol"</td><td>1 × interrupt IN (notifications) + the default control endpoint EP0</td><td>SET_LINE_CODING, SET_CONTROL_LINE_STATE, GET_LINE_CODING, SEND_BREAK, SERIAL_STATE notifications</td></tr>
+  <tr><td><strong>Data</strong></td><td class="mono">0x0A (CDC-Data)</td><td class="mono">0x00</td><td class="mono">0x00</td><td>1 × bulk IN, 1 × bulk OUT</td><td>The bytes that <code>read()</code> / <code>write()</code> on the host see</td></tr>
+</table>
+
+<p>Two interfaces means two interface descriptors in the configuration descriptor, and on a composite device — anywhere your USB device has more than one function, e.g. CDC + HID, or CDC + CDC, or CDC + vendor — the host now has a problem. <strong>Which two interfaces belong together?</strong> The host can guess by adjacency (interface N and N+1 with classes 0x02 and 0x0A look like an ACM pair), but guesses are unreliable and Microsoft refused to ship that heuristic. The solution USB-IF added in 2003 is the <strong>Interface Association Descriptor</strong> (IAD).</p>
+
+<h3 id="iad">The Interface Association Descriptor</h3>
+
+<p>An IAD is a tiny 8-byte descriptor that sits in the configuration descriptor immediately <em>before</em> the first interface of a function and says "the next N interfaces are one logical function, treat them together." For CDC-ACM:</p>
+
+<pre><code>// Interface Association Descriptor — bind the two CDC-ACM interfaces
+// 0x08, 0x0B,             // bLength=8, bDescriptorType=IAD (0x0B)
+// bFirstInterface,        // index of the Communications interface
+// 0x02,                   // bInterfaceCount = 2 (Comm + Data)
+// 0x02, 0x02, 0x01,       // function class/sub/proto = CDC / ACM / AT-V.250
+// 0x00                    // iFunction = no string
+
+static const uint8_t iad_cdc_acm[] = {
+    8, 0x0B,
+    /* bFirstInterface  */ 0x00,
+    /* bInterfaceCount  */ 0x02,
+    /* bFunctionClass   */ 0x02,   /* CDC                 */
+    /* bFunctionSubClass*/ 0x02,   /* ACM                 */
+    /* bFunctionProtocol*/ 0x01,   /* AT-V.250 (optional) */
+    /* iFunction        */ 0x00
+};</code></pre>
+
+<p>For an IAD to be recognised by Windows, the <em>device</em> descriptor must declare itself a <strong>Multi-Interface Function</strong> device:</p>
+
+<pre><code>// Device descriptor fields that enable IAD-aware enumeration on Windows:
+bDeviceClass     = 0xEF;   // Miscellaneous Device Class
+bDeviceSubClass  = 0x02;   // Common Class
+bDeviceProtocol  = 0x01;   // Interface Association Descriptor</code></pre>
+
+<p>If you forget that triple, Windows will refuse to use IADs and will fall back to per-interface class matching, which on a CDC + HID composite means <em>both</em> sub-functions break. This is the most common composite-device bring-up bug — see §<a href="#composite">Composite-device gotchas</a>.</p>
+
+<div class="callout warn">
+  <span class="label">Don't forget</span>
+  On a single-function device with only one CDC-ACM, the IAD is technically optional: Windows will still match by class adjacency. The moment you add a second interface (any second interface — another CDC, an HID, a vendor-class CMSIS-DAP), you <em>must</em> use IADs <em>and</em> set <code>bDeviceClass = 0xEF / 0x02 / 0x01</code>. Composite descriptors without IADs are the single largest cause of "works on Linux but Windows says Code 10".
+</div>
+
+<!-- =========================================================== -->
+<h2 id="functional">Functional descriptors — Header, CM, ACM, Union</h2>
+
+<p>Inside the Communications-Class interface descriptor, between the interface descriptor itself and its endpoint descriptor, the spec inserts a sequence of <strong>functional descriptors</strong> (descriptor type <code>0x24</code>, "CS_INTERFACE"). These describe extra metadata that doesn't fit into the standard interface descriptor — for ACM, four of them are mandatory:</p>
+
+<table>
+  <tr><th>Subtype</th><th>Name</th><th>What it declares</th></tr>
+  <tr><td class="mono">0x00</td><td>Header</td><td>The CDC spec revision the device claims to implement (<code>bcdCDC</code>, e.g. 0x0120 for CDC 1.20).</td></tr>
+  <tr><td class="mono">0x01</td><td>Call Management</td><td>Whether the device handles call-management commands itself, and which interface (Comm or Data) carries them. For pure data-pipe ACM, almost always <code>bmCapabilities = 0x00</code> and <code>bDataInterface = &lt;data-iface&gt;</code>.</td></tr>
+  <tr><td class="mono">0x02</td><td>Abstract Control Management</td><td>Which ACM-class requests the firmware actually implements. Bitmap: <code>bit0 = comm-feature</code>, <code>bit1 = line-coding/line-state/serial-state</code>, <code>bit2 = send-break</code>, <code>bit3 = network-connection-notif</code>. Most "USB-as-serial-port" firmwares set <code>bmCapabilities = 0x02</code> (line coding + line state + break) or <code>0x06</code> (also break).</td></tr>
+  <tr><td class="mono">0x06</td><td>Union</td><td>Binds the Communications interface to its Data interface — duplicates information already in the IAD, but predates the IAD and is still required for older hosts. Lists <code>bMasterInterface</code> (= Comm) and <code>bSlaveInterface[0]</code> (= Data).</td></tr>
+</table>
+
+<h3 id="byte-block">Concrete byte-level example</h3>
+
+<p>This is the full configuration-descriptor fragment for a one-CDC-ACM function, suitable for a single-function device. Bytes are decimal/hex annotated; this is what your USB capture (Wireshark with usbmon, or USBlyzer on Windows) will literally show after enumeration:</p>
+
+<pre><code>// ── Interface Association Descriptor (IAD) ──────────────────────
+0x08, 0x0B,                 // bLength=8, bDescriptorType=IAD
+0x00,                       // bFirstInterface = 0 (Comm)
+0x02,                       // bInterfaceCount = 2
+0x02, 0x02, 0x01,           // CDC / ACM / AT-V.250
+0x00,                       // iFunction
+
+// ── Communications-Class interface (interface 0) ────────────────
+0x09, 0x04,                 // bLength=9, bDescriptorType=INTERFACE
+0x00,                       // bInterfaceNumber = 0
+0x00,                       // bAlternateSetting = 0
+0x01,                       // bNumEndpoints = 1 (notification IN)
+0x02, 0x02, 0x01,           // CDC / ACM / AT-V.250
+0x00,                       // iInterface
+
+//   Functional descriptor: Header
+0x05, 0x24, 0x00, 0x20, 0x01,
+//   bLength=5, bDescType=CS_INTERFACE, bSubtype=Header,
+//   bcdCDC = 0x0120 (CDC 1.20)
+
+//   Functional descriptor: Call Management
+0x05, 0x24, 0x01, 0x00, 0x01,
+//   bSubtype=CM, bmCapabilities=0x00 (host handles CM),
+//   bDataInterface = 1
+
+//   Functional descriptor: Abstract Control Management
+0x04, 0x24, 0x02, 0x02,
+//   bSubtype=ACM, bmCapabilities=0x02 (line coding + line state)
+
+//   Functional descriptor: Union
+0x05, 0x24, 0x06, 0x00, 0x01,
+//   bSubtype=Union, bMasterIface=0 (Comm), bSlaveIface[0]=1 (Data)
+
+//   Endpoint: notification IN — interrupt, 16 bytes, 16ms poll
+0x07, 0x05, 0x81, 0x03, 0x10, 0x00, 0x10,
+//   bLength=7, EP=0x81 (IN1), bmAttr=Interrupt,
+//   wMaxPacketSize=16, bInterval=16
+
+// ── Data-Class interface (interface 1) ──────────────────────────
+0x09, 0x04,
+0x01,                       // bInterfaceNumber = 1
+0x00,                       // bAlternateSetting = 0
+0x02,                       // bNumEndpoints = 2 (bulk IN + bulk OUT)
+0x0A, 0x00, 0x00,           // CDC-Data / 0 / 0
+0x00,                       // iInterface
+
+//   Endpoint: bulk OUT — host -&gt; device
+0x07, 0x05, 0x02, 0x02, 0x40, 0x00, 0x00,
+//   EP=0x02 (OUT2), Bulk, wMaxPacketSize=64 (FS), bInterval=0
+
+//   Endpoint: bulk IN — device -&gt; host
+0x07, 0x05, 0x82, 0x02, 0x40, 0x00, 0x00,
+//   EP=0x82 (IN2), Bulk, wMaxPacketSize=64 (FS), bInterval=0
+</code></pre>
+
+<p>Total: <strong>66 bytes</strong> for one CDC-ACM function. On a Full-Speed device the bulk endpoints carry <code>wMaxPacketSize = 64</code>; on High-Speed (480 Mbps), they're typically <code>512</code>; on USB 3 SuperSpeed they max at <code>1024</code>. The interrupt-IN notification endpoint is conventionally 16 bytes — that's what the Zephyr USB-Device-Next CDC-ACM implementation uses, and what every host driver expects.</p>
+
+<div class="callout">
+  <span class="label">descriptor parsing tip</span>
+  When debugging a non-enumerating CDC device, dump the device's descriptor block and walk it byte by byte. <code>lsusb -v -d &lt;vid&gt;:&lt;pid&gt;</code> on Linux is excellent — it parses every functional descriptor, names every field, and flags malformed lengths. On macOS, <code>system_profiler SPUSBDataType</code> shows a coarser tree but covers most fields. On Windows, <code>USBView</code> (free, ships with the Windows Driver Kit) or <code>usbtreeview.exe</code> (Uwe Sieber's free tool) are both more revealing than Device Manager.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="requests">Class-specific control requests</h2>
+
+<p>All ACM-class requests target the <strong>Communications interface</strong> (not the Data interface), and travel over the default control endpoint EP0 with <code>bmRequestType.type = Class</code> and <code>recipient = Interface</code>. The Setup packet's <code>wIndex</code> field is the interface number of the Communications interface; on multi-CDC composite devices that's how the host disambiguates which CDC instance the request is for.</p>
+
+<table>
+  <tr><th>bRequest</th><th>Name</th><th>Direction</th><th>wValue</th><th>wLength / payload</th></tr>
+  <tr><td class="mono">0x20</td><td><code>SET_LINE_CODING</code></td><td>OUT</td><td>0</td><td>7 bytes (see below)</td></tr>
+  <tr><td class="mono">0x21</td><td><code>GET_LINE_CODING</code></td><td>IN</td><td>0</td><td>7 bytes</td></tr>
+  <tr><td class="mono">0x22</td><td><code>SET_CONTROL_LINE_STATE</code></td><td>OUT</td><td>bitmap (DTR=bit0, RTS=bit1)</td><td>0</td></tr>
+  <tr><td class="mono">0x23</td><td><code>SEND_BREAK</code></td><td>OUT</td><td>break duration in ms (0xFFFF = continuous, 0x0000 = stop)</td><td>0</td></tr>
+</table>
+
+<p>The seven-byte payload of <code>SET_LINE_CODING</code> / <code>GET_LINE_CODING</code> is the "modem-control state" the host wants to apply (or read back), packed as little-endian:</p>
+
+<pre><code>struct cdc_acm_line_coding {
+    uint32_t dwDTERate;     // baud rate, bits-per-second (e.g. 115200 = 0x1C200)
+    uint8_t  bCharFormat;   // 0=1 stop, 1=1.5 stop, 2=2 stop bits
+    uint8_t  bParityType;   // 0=none, 1=odd, 2=even, 3=mark, 4=space
+    uint8_t  bDataBits;     // 5, 6, 7, 8, or 16
+} __attribute__((packed)); // exactly 7 bytes</code></pre>
+
+<p>The full request list and field semantics live in <em>USB CDC PSTN 1.2 §6.3</em>. The four above are the ones a USB-serial firmware always implements; the rest of PSTN (V.24 vendor signals, ringer, <code>SET_LINE_PARMS</code>, <code>RECORD_PHONE_NUMBER</code>) is modem-only and almost universally ignored on data-pipe ACM.</p>
+
+<h3 id="line-coding-sham">The "ignore SET_LINE_CODING" trick</h3>
+
+<p>Here's the part nobody tells you. On a USB-to-UART <strong>bridge</strong> chip (FT230X CDC mode, CP2102N CDC mode, CH340 CDC mode), <code>SET_LINE_CODING</code> matters: the chip uses the seven-byte payload to physically reprogram its UART block (BAUD divisor, parity, frame format). If the host opens the port at 9600 8-N-1 and the device has been wired to a target that expects 115200 8-N-1, you have to actually obey SET_LINE_CODING or the wire-side baud will be wrong.</p>
+
+<p>On a <strong>native-USB MCU</strong> exposing a debug log over CDC-ACM, there is <em>no real UART</em> behind the interface. The bytes go directly from the bulk OUT endpoint into a ring buffer, and from a ring buffer out the bulk IN endpoint. The "baud rate" is meaningless — USB Full-Speed bulk runs at ~10 Mbps regardless of what the host sets. So the firmware accepts the seven bytes, optionally stores them so <code>GET_LINE_CODING</code> returns what the host last set (otherwise some host drivers complain), and <em>does nothing else</em>.</p>
+
+<div class="callout info">
+  <span class="label">stash, don't act</span>
+  The standard pattern in TinyUSB, Zephyr's <code>usbd_cdc_acm</code>, embassy-usb's <code>cdc-acm</code>, and the Pico-SDK is: maintain a 7-byte buffer per CDC instance, write the SET payload into it on receipt, return it on GET, and otherwise ignore the values. The host is happy because GET round-trips correctly; the firmware is happy because nothing has to be reconfigured. This is what edevkit1's <em>data-pipe</em> CDC-ACM bridge does. The <em>UART-bridge</em> CDC-ACM instances <em>do</em> obey SET_LINE_CODING and reprogram the underlying RP2350 UART — see §<a href="#edevkit">edevkit1's two CDC-ACM bridges</a>.
+</div>
+
+<h3 id="dtr-rts">DTR / RTS via SET_CONTROL_LINE_STATE</h3>
+
+<p><code>SET_CONTROL_LINE_STATE</code> (request 0x22) is interesting because it is the way the host signals "I have opened the port" or "I have closed the port". The bitmap in <code>wValue</code>:</p>
+
+<ul>
+  <li><strong>bit 0 — DTR (Data Terminal Ready).</strong> Asserted when host opens the tty. Conventionally used by Arduino-style firmware as a "host is connected, you can start sending output now" signal.</li>
+  <li><strong>bit 1 — RTS (Request To Send).</strong> Asserted similarly. Some bootloaders use the DTR/RTS toggle pattern as a "reset into bootloader" hint (e.g. Arduino's classic 1200 bps + DTR auto-reset).</li>
+</ul>
+
+<p>On a <em>native-USB</em> CDC-ACM device, you receive the request and can use it as an "is the host's terminal actually attached?" gate. A common firmware pattern: do not write log output to the bulk IN endpoint until DTR has been asserted at least once after enumeration. Otherwise the device's TX ring buffer fills with bytes that the host driver never drained, the device blocks on flow control inside its own TX queue, and the user wonders why the first 4 KB of boot output is missing.</p>
+
+<h3 id="break">SEND_BREAK</h3>
+
+<p><code>SEND_BREAK</code> is rarely used on data-pipe CDC-ACM (no real UART means no real break condition), but on a UART-bridge CDC-ACM you do generate a real line-break of the requested duration. <code>wValue == 0xFFFF</code> means "hold break until told to stop"; <code>wValue == 0x0000</code> means "stop the break"; any other value is "send a break of N milliseconds". <a href="proto_uart.html">proto_uart.html</a> covers the wire-side semantics.</p>
+
+<!-- =========================================================== -->
+<h2 id="notif">The notification endpoint and SERIAL_STATE</h2>
+
+<p>The Communications interface has one endpoint of its own: the <strong>interrupt IN notification endpoint</strong>, conventionally 16 bytes max, polled at ~16 ms. The host is supposed to read it and act on the notifications it carries. In practice the only ACM notification anyone uses is <strong>SERIAL_STATE</strong> (notification code <code>0x20</code>), which carries the modem-status bitmap:</p>
+
+<table>
+  <tr><th>Bit</th><th>Name</th><th>Meaning</th></tr>
+  <tr><td class="mono">bit 0</td><td><code>bRxCarrier</code> / DCD</td><td>Data Carrier Detect — modem connected to remote.</td></tr>
+  <tr><td class="mono">bit 1</td><td><code>bTxCarrier</code> / DSR</td><td>Data Set Ready.</td></tr>
+  <tr><td class="mono">bit 2</td><td>BREAK</td><td>The other end is currently asserting a break condition.</td></tr>
+  <tr><td class="mono">bit 3</td><td>RING</td><td>Phone is ringing — yes, really.</td></tr>
+  <tr><td class="mono">bit 4</td><td>FRAMING</td><td>UART framing error detected.</td></tr>
+  <tr><td class="mono">bit 5</td><td>PARITY</td><td>UART parity error detected.</td></tr>
+  <tr><td class="mono">bit 6</td><td>OVERRUN</td><td>RX overrun — bytes were dropped.</td></tr>
+</table>
+
+<p>The packet on the wire is 10 bytes: an 8-byte SETUP-shaped notification header (<code>bmRequestType=0xA1</code>, <code>bNotification=0x20</code>, <code>wValue=0</code>, <code>wIndex=&lt;comm-iface&gt;</code>, <code>wLength=2</code>) followed by 2 bytes of the bitmap above (little-endian).</p>
+
+<div class="callout">
+  <span class="label">required, not optional</span>
+  The notification endpoint is <em>required by the spec</em> and must be present in your descriptor block. It does <em>not</em> have to actually emit notifications. Every shipping CDC-ACM firmware on the planet stubs this endpoint — it sits there configured but silent — and the host is fine with that; it just polls and gets NAKs forever. If you implement it, the most useful payload is to forward UART-level FRAMING / PARITY / OVERRUN errors from a UART-bridge CDC-ACM instance, so the host can correlate "byte N looks corrupted" with "the wire framing was bad here". <code>screen</code>, <code>minicom</code>, etc. ignore it; tools like <a href="https://github.com/joernchen/grabserial">grabserial</a> and bespoke instrument tooling sometimes consume it.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="bulk">Bulk pipe data flow and the ZLP rule</h2>
+
+<p>The interesting part: how a <code>write(fd, "hello\n", 6)</code> on the host turns into bytes in the device's bulk-OUT ring buffer, and how a <code>read(fd, buf, N)</code> retires bytes from the device's bulk-IN endpoint.</p>
+
+<pre><code>      host userspace           kernel cdc-acm           USB controller         device firmware
+      ───────────────          ──────────────          ────────────────         ────────────────
+                       write(fd, buf, n)
+   write("hello\n",6) ────────────────────▶ kernel ring buffer
+                                                ─────────────▶  bulk-OUT URB
+                                                                     ──────────▶ EP_OUT (bulk)
+                                                                                    │
+                                                                                    ▼
+                                                                            cdc_acm_rx_cb()
+                                                                            ring_buf_put()
+                                                                                    │
+                                                                                    ▼
+                                                                            (app code reads
+                                                                             the bytes here)
+
+                                                                            EP_IN (bulk) ◀──── ring_buf_get()
+                                                                ◀─────── bulk-IN URB
+                                            kernel rx ring   ◀───────────
+   read(fd, buf, n)  ◀──────────── kernel returns up to n
+</code></pre>
+
+<p>The host queues a bulk-OUT URB ("USB Request Block") of size <em>S</em>. The USB controller breaks <em>S</em> into one or more <strong>packets</strong> of size at most <code>wMaxPacketSize</code> (64 on Full-Speed, 512 on High-Speed). The device receives those packets and runs its OUT-endpoint callback; the bytes go into a ring buffer; the application's <code>uart_poll_in</code> / <code>cdc_acm_rx_cb</code> handler drains them.</p>
+
+<h3 id="zlp">The Zero-Length Packet (ZLP) rule</h3>
+
+<p>This is the most subtle, most-bitten-by-newcomers part of CDC-ACM. The USB host stack uses one of two heuristics to decide "the bulk transfer is complete":</p>
+
+<ol>
+  <li>The transfer length received so far equals the URB size requested. (Easy.)</li>
+  <li>A <strong>short packet</strong> arrived — i.e. a packet smaller than <code>wMaxPacketSize</code>, including a zero-length packet. (This is the "the device decided to stop talking now" signal.)</li>
+</ol>
+
+<p>The trap: if your transfer happens to be an <em>exact multiple of</em> <code>wMaxPacketSize</code>, then condition 1 alone fires only when the host queued an URB of exactly that length. A read on the host side typically asks for a much larger buffer (<code>read(fd, buf, 4096)</code>), and the kernel queues an URB of 4096 bytes hoping to fill it. If the device sends exactly 64 bytes and stops — without a follow-up short packet — the host URB <em>does not retire</em>. The read blocks. Output appears to "stick".</p>
+
+<p>The fix: <strong>after every bulk-IN transfer whose length is a non-zero multiple of <code>wMaxPacketSize</code>, the device must send a Zero-Length Packet</strong> on the same endpoint. The ZLP is itself a "short packet" (zero is less than 64), so it satisfies condition 2 above and the URB retires.</p>
+
+<pre><code>// Pseudocode for a CDC-ACM TX worker on the device side:
+void cdc_acm_tx_pump(struct cdc_acm *c) {
+    while (ring_buf_used(&c-&gt;tx) &gt; 0) {
+        size_t n = MIN(ring_buf_used(&c-&gt;tx), wMaxPacketSize);
+        usb_ep_write(c-&gt;ep_in, buf, n);
+        // If we just sent a full packet AND the buffer is now empty,
+        // we owe the host a ZLP to retire its URB.
+        if (n == wMaxPacketSize && ring_buf_used(&c-&gt;tx) == 0) {
+            usb_ep_write(c-&gt;ep_in, NULL, 0);   // ZLP
+        }
+    }
+}</code></pre>
+
+<div class="callout warn">
+  <span class="label">classic bug</span>
+  Symptom: "every 64-byte (or 512-byte) <code>printf</code> hangs on macOS / sometimes on Linux / always on Windows; if I print one extra byte, it works." Cause: missing ZLP. Fix: send a ZLP after a max-packet-sized terminal transfer. This is true even if your data <em>just happens</em> to be exactly 64 bytes — silly cases like <code>printf("[%-62s]\n", short_msg)</code> are a 64-byte newline-terminated string. macOS is the most aggressive at retiring URBs only on short-packet boundary; Windows usbser.sys is similar. Some HALs (Zephyr's USBD_NEXT, embassy-usb) handle ZLP automatically; STM32 HAL Cube CDC infamously does <em>not</em>, and the workaround is either to set <code>UX_DEVICE_CLASS_CDC_ACM_WRITE_AUTO_ZLP=1</code> (Azure RTOS USBX) or to wrap your transmit and append a ZLP yourself.
+</div>
+
+<h3 id="zlp-edge">CDC-specific ZLP edge case</h3>
+
+<p>Zephyr's CDC-ACM has a quirk worth knowing: rather than emit a ZLP, it sometimes prefers to send <em>two short packets</em>. The reason is that some CDC-ACM host drivers historically interpreted a ZLP as <em>end-of-transmission</em> in the modem-style sense — i.e. they'd close the port. The "two-short-packets" pattern (e.g. send 60 bytes, then 4 bytes, instead of 60 + 4 + ZLP) is safer on those legacy hosts. In 2026 you almost never see this driver-side bug, but if you're hunting "Linux gets the bytes but macOS thinks the channel closed", that's the territory.</p>
+
+<!-- =========================================================== -->
+<h2 id="composite">Composite-device gotchas (multiple CDC, IAD, usbser.sys)</h2>
+
+<p>Once you put more than one function on a USB device, you're in <strong>composite-device</strong> territory and the OS-driver story gets more interesting.</p>
+
+<h3 id="iad-order">IAD ordering rule</h3>
+
+<p>The IAD must come <em>immediately before</em> the first interface of the function it describes, and the function's interfaces must be contiguous. You cannot interleave interfaces from two functions. A correct composite layout for two CDC-ACM + one CMSIS-DAP vendor-class function:</p>
+
+<pre><code>Configuration descriptor
+├── IAD #1                       (bFirstInterface=0, bInterfaceCount=2)
+│   ├── Interface 0: CDC Comm   (CDC-ACM #1 control)
+│   │   └── EP 0x81 INT          notification
+│   └── Interface 1: CDC Data   (CDC-ACM #1 data)
+│       ├── EP 0x01 OUT bulk
+│       └── EP 0x82 IN bulk
+├── IAD #2                       (bFirstInterface=2, bInterfaceCount=2)
+│   ├── Interface 2: CDC Comm   (CDC-ACM #2 control)
+│   │   └── EP 0x83 INT
+│   └── Interface 3: CDC Data   (CDC-ACM #2 data)
+│       ├── EP 0x03 OUT bulk
+│       └── EP 0x84 IN bulk
+└── (no IAD — vendor class is one interface)
+    └── Interface 4: vendor    (CMSIS-DAP v2)
+        ├── EP 0x05 OUT bulk
+        └── EP 0x85 IN bulk</code></pre>
+
+<p>Endpoint numbers are unique <em>device-wide</em> (max 15 OUT + 15 IN on FS); interface numbers are unique <em>configuration-wide</em>. The bookkeeping is your job — the USB stack will let you ship a descriptor with two interfaces both claiming endpoint 0x82 IN and the device will silently misroute.</p>
+
+<h3 id="usbser-load">usbser.sys auto-loads on Windows 10/11</h3>
+
+<p>One of the best things to happen to USB serial in the last decade: as of Windows 10, the in-box <code>usbser.sys</code> driver auto-loads for any compliant CDC-ACM function via <em>compatible-ID matching</em>. Specifically, any interface whose <code>bInterfaceClass = 0x02 / bInterfaceSubClass = 0x02</code> matches the compatible ID <code>USB\Class_02&amp;SubClass_02</code> and gets <code>usbser.sys</code> as the function driver — <em>with no INF file shipped by the device</em>.</p>
+
+<p>On older Windows (7, 8, 8.1), you needed a vendor INF that referenced <code>usbser.sys</code> by name (typically derived from <code>mdmcpq.inf</code>) and had to be installed via Device Manager or a setup package. The shift to in-box auto-loading is documented at <a href="https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/usb-driver-installation-based-on-compatible-ids">Microsoft Learn — USB Serial Driver (Usbser.sys)</a>. There are two specific traps:</p>
+
+<ul>
+  <li><strong>Device-class triple matters.</strong> If your device descriptor declares <code>bDeviceClass = 0x02</code> but <code>bDeviceSubClass != 0x02</code>, Windows will <em>not</em> auto-load <code>usbser.sys</code>. The fix on a single-CDC device: leave <code>bDeviceClass = 0x00</code> ("see interface descriptors"). On a composite, set <code>bDeviceClass = 0xEF / 0x02 / 0x01</code> (Multi-Interface Function with IAD).</li>
+  <li><strong>Composite interfaces still need IADs.</strong> Even with auto-loading, on a multi-function device <code>usbser.sys</code> only attaches to interfaces grouped under an IAD. Without an IAD, Windows enumerates each interface separately and the CDC pair gets split across two stack instances, neither of which works.</li>
+</ul>
+
+<h3 id="endpoint-budget">Endpoint budget</h3>
+
+<p>Every CDC-ACM instance burns <strong>3 endpoints</strong>: 1 interrupt IN + 1 bulk IN + 1 bulk OUT. On RP2350 USB hardware (Full-Speed device, 16 endpoints in each direction including EP0), you have headroom for 4–5 CDC-ACM instances before you run out — but the practical limit is bandwidth and latency, not endpoints. edevkit1 ships with two CDC-ACM bridges + one CMSIS-DAP vendor pair, totalling 8 endpoints in each direction, well within the budget.</p>
+
+<!-- =========================================================== -->
+<h2 id="os">Cross-platform behaviour — Linux, macOS, Windows</h2>
+
+<p>The same descriptor block produces three different host behaviours. Here's what to expect (and what to fix) on each.</p>
+
+<div class="os-card linux">
+  <span class="os-tag">Linux</span>
+
+  <p>Kernel driver: <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/usb/class/cdc-acm.c"><code>drivers/usb/class/cdc-acm.c</code></a> — built into every distro kernel, has been mainline since 2.4. Auto-binds to any interface with class/sub <code>02/02</code>.</p>
+
+  <p>Device node: <code>/dev/ttyACMn</code> where <em>n</em> is the next free index. Multiple CDC-ACM instances on a single composite get separate node numbers (e.g. <code>/dev/ttyACM0</code> and <code>/dev/ttyACM1</code>). Node numbering is <em>not</em> stable across reboots if you have other devices that auto-load — use <code>udev</code> symlinks for stable names: <code>/dev/edevkit-target-log</code>, <code>/dev/edevkit-test-uart</code>.</p>
+
+  <p>Permissions: tty devices belong to group <code>dialout</code> (Debian/Ubuntu) or <code>uucp</code> (Arch/Fedora). Add yourself: <code>sudo usermod -aG dialout $USER</code>. Logout/login required.</p>
+
+  <h4>The ModemManager problem</h4>
+
+  <p>ModemManager is a system service that probes any newly-attached CDC device to see if it's a real cellular modem. Probing means: it grabs the port for ~2–10 seconds at attach time, sends AT commands at it, and watches for valid responses. If you happen to be a non-modem CDC-ACM device that doesn't speak AT, ModemManager will spew bytes into your developer-test UART, your firmware-update protocol, and your debug log, and the user sees garbage at attach time and "device or resource busy" if they try to <code>open()</code> the port during that window.</p>
+
+  <p>Fix: <strong>blacklist your VID/PID</strong> via a udev rule. Drop a file at <code>/etc/udev/rules.d/79-edevkit.rules</code>:</p>
+
+<pre><code># /etc/udev/rules.d/79-edevkit.rules — keep ModemManager off edevkit
+# Replace 1209/edev with the actual edevkit VID/PID once assigned.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="edev", \
+    ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# Also: a stable-name symlink so users don't chase /dev/ttyACM index churn
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="edev", \
+    ATTRS{interface}=="edevkit Target Log",  SYMLINK+="edevkit-target-log"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="edev", \
+    ATTRS{interface}=="edevkit Test UART",   SYMLINK+="edevkit-test-uart"
+
+# Group access: both CDC ACM ports go to dialout
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="edev", \
+    GROUP="dialout", MODE="0660"</code></pre>
+
+  <p>Reload: <code>sudo udevadm control --reload-rules &amp;&amp; sudo udevadm trigger</code>. Replug the device. Verify with <code>udevadm info --query=property --name=/dev/ttyACM0</code> and look for <code>ID_MM_DEVICE_IGNORE=1</code>.</p>
+
+  <p class="small">Detail: <code>ID_MM_DEVICE_IGNORE</code> must be set on the <em>USB device</em> (the matched parent), not on the <em>tty</em> subsystem. The rule above does that by matching <code>SUBSYSTEM=="usb"</code> with <code>ATTRS{...}</code> — the matched parent is the USB-device node, the env var propagates to its children. See ModemManager's <a href="https://www.freedesktop.org/software/ModemManager/api/latest/ref-overview-modem-filter.html">"modem filter" reference</a> for the full taxonomy.</p>
+</div>
+
+<div class="os-card mac">
+  <span class="os-tag">macOS</span>
+
+  <p>Kernel driver: <code>AppleUSBCDCACM.kext</code>, in-box since OS X 10.7 Lion. Auto-binds to class/sub <code>02/02</code>.</p>
+
+  <p>Device nodes: <strong>two</strong> per CDC-ACM instance — <code>/dev/cu.usbmodem&lt;serial&gt;&lt;N&gt;</code> and <code>/dev/tty.usbmodem&lt;serial&gt;&lt;N&gt;</code>. The <code>cu</code> ("call-up") variant is the call-out side; the <code>tty</code> variant is the call-in side. The naming convention dates to old serial-modem days when "tty" devices blocked on <code>open()</code> waiting for DCD before letting userspace through.</p>
+
+  <ul>
+    <li><strong>Use <code>/dev/cu.usbmodem*</code></strong> for everything — that's what <code>screen</code>, <code>minicom</code>, the Arduino IDE, and 99% of tools default to. <code>open()</code> returns immediately.</li>
+    <li><strong>Avoid <code>/dev/tty.usbmodem*</code></strong> on a non-modem CDC-ACM device. <code>open()</code> on the tty variant blocks indefinitely waiting for DCD to assert, because that's how a fax modem worked in 1995. Most CDC-ACM firmware never asserts DCD, so your tool hangs.</li>
+  </ul>
+
+  <p>The serial number suffix (<code>usbmodem<em>SERIAL</em>1</code>, <code>usbmodem<em>SERIAL</em>3</code>) is derived from the device's <code>iSerialNumber</code> string. If your firmware <em>doesn't</em> ship a serial-number string descriptor, macOS falls back to a synthetic name based on the USB topology (location ID), which changes when the user plugs into a different USB port — leading to "my port name moves around". Always ship a real <code>iSerialNumber</code> string.</p>
+
+  <p>Multiple CDC-ACM instances on one composite get incrementing tail digits — e.g. <code>/dev/cu.usbmodemEDV12341</code> and <code>/dev/cu.usbmodemEDV12343</code>. Note the <em>odd</em> increments — interface number 0 → suffix 1, interface 2 → suffix 3, etc. macOS appends the Communications-interface number, not a sequence index. This is a real surprise the first time you see it.</p>
+
+  <p class="small">No driver install, no kext signing, no DriverKit needed for plain CDC-ACM. The kext is already loaded.</p>
+</div>
+
+<div class="os-card win">
+  <span class="os-tag">Windows</span>
+
+  <p>Kernel driver: <code>usbser.sys</code>, in-box since Windows XP, but <em>auto-loaded</em> only since Windows 10 (build 1507+). On 7/8/8.1 you need a vendor INF that references <code>usbser.sys</code> via <code>mdmcpq.inf</code>.</p>
+
+  <p>Device node: <code>COMx</code> where <em>x</em> is assigned by the system (5, 7, 23, …, you don't get to predict it). Multiple CDC-ACM instances on one composite get separate, usually-non-adjacent COM numbers. List them with PowerShell:</p>
+
+<pre><code># From an elevated PowerShell prompt:
+Get-PnpDevice -Class Ports | Format-Table FriendlyName, InstanceId
+# Or, for current COM mapping:
+[System.IO.Ports.SerialPort]::GetPortNames()</code></pre>
+
+  <p>Stable names: Windows assigns COM numbers based on the <code>iSerialNumber</code> string — same serial number, same COM after replug. Different serial → fresh COM. (This is why a USB hub with multiple identical FT232RLs without unique iSerial gets a new COM every replug.) Always ship a real <code>iSerialNumber</code>.</p>
+
+  <h4>What can go wrong</h4>
+
+  <ul>
+    <li><strong>"Code 10" — device cannot start.</strong> Almost always missing IAD on a composite, or wrong device-class triple (forgot <code>0xEF / 0x02 / 0x01</code>).</li>
+    <li><strong>Device shows as "Unknown USB Device" in Device Manager.</strong> Descriptor parse failure — usually a malformed descriptor length or an interface with <code>bNumEndpoints</code> mismatched to actual endpoint descriptors. <code>USBView</code> from the WDK shows you the parser's complaint.</li>
+    <li><strong>Port works in HyperTerminal-equivalents but not in your tool.</strong> Almost always missing ZLPs — see §<a href="#zlp">ZLP rule</a>. Windows is the strictest about ZLP enforcement.</li>
+    <li><strong>"Driver downgrade" warning.</strong> If you previously installed a vendor INF for the same VID/PID, Windows pins <code>usbser.sys</code>'s ancestor INF; you may need to uninstall the device with "delete the driver software" before auto-load works.</li>
+  </ul>
+</div>
+
+<!-- =========================================================== -->
+<h2 id="edevkit">edevkit1's two CDC-ACM bridges</h2>
+
+<p>edevkit1 exposes <strong>two</strong> CDC-ACM functions in its USB composite descriptor, plus the CMSIS-DAP v2 vendor function. The two CDC-ACM instances bridge to two physically and electrically separate UARTs on the RP2350B:</p>
+
+<table>
+  <tr><th>CDC-ACM instance</th><th>Bridges to</th><th>Voltage domain</th><th>Pin map (RP2350B)</th><th>Purpose</th></tr>
+  <tr><td><strong>"Target Log"</strong></td><td>RP2350 hardware UART0</td><td><strong>Vtgt</strong> (auto-sensed from target)</td><td>GPIO 0 (TX) / GPIO 1 (RX), level-shifted via LVC8T245</td><td>Capture log/printf output from the target chip being debugged. Voltage matches the target's IO so you can connect to a 1.8V or 3.3V SoC without burning anything.</td></tr>
+  <tr><td><strong>"Test UART"</strong></td><td>RP2350 hardware UART1</td><td><strong>Vio</strong> (selectable: 1.8 or 3.3 V)</td><td>GPIO 2 (TX) / GPIO 3 (RX), level-shifted via LVC8T245</td><td>Developer-test channel for poking at AT-modem-emulation profiles, sending arbitrary protocol frames, scripting against an external UART peripheral.</td></tr>
+</table>
+
+<p>Why two instances on the same device, instead of one with a per-message tag? Because <em>each end-user terminal tool</em> wants its own port. The user's <code>screen /dev/edevkit-target-log 115200</code> session and their <code>edevkit test-uart send "AT+CGSN\r"</code> command must not interfere with each other; the OS-level tty isolation does this for free. Multiplexing in firmware would either need a custom client or it would tag-eat the user's bytes.</p>
+
+<p>The full design rationale (independent voltage domains, level-shifter direction control, why we don't just expose a single multi-baud-rate UART) lives in <a href="edevkit1.html">edevkit1.html</a> §6.6 and §7.2. The actual UART hardware behaviour, baud-rate matrix, and break/framing semantics live in <a href="proto_uart.html">proto_uart.html</a>.</p>
+
+<h3 id="composite-layout">edevkit1 composite-device descriptor layout</h3>
+
+<p>The full composite descriptor on edevkit1, ASCII-art:</p>
+
+<pre><code>USB Device — VID 0x1209 / PID 0xEDEV (placeholder; allocated via pid.codes)
+   bDeviceClass    = 0xEF   Multi-Interface Function
+   bDeviceSubClass = 0x02
+   bDeviceProtocol = 0x01   IAD-aware
+   bNumConfigurations = 1
+   iManufacturer  = "edevkit"
+   iProduct       = "edevkit1 — debug + protocol kit"
+   iSerialNumber  = "EDV-XXXX-YYYY-ZZZZ"   (per-unit, derived from RP2350 chip ID)
+
+Configuration 1 — bus-powered, 250 mA
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ IAD #1     [iface 0–1]    CDC / ACM / AT-V.250                       │
+  │ ┌──────────────────────────────────────────────────────────────────┐ │
+  │ │ Interface 0   Comm   class 02 / sub 02 / proto 01                │ │
+  │ │   Functional descriptors: Header, CM, ACM, Union                 │ │
+  │ │   EP 0x81 IN  interrupt   16B / 16ms   (notifications)           │ │
+  │ │ Interface 1   Data   class 0A / sub 00 / proto 00                │ │
+  │ │   EP 0x01 OUT bulk        64B FS                                 │ │
+  │ │   EP 0x82 IN  bulk        64B FS                                 │ │
+  │ │ iInterface = "edevkit Target Log"   ← stable string for udev      │ │
+  │ └──────────────────────────────────────────────────────────────────┘ │
+  │                                                                      │
+  │ IAD #2     [iface 2–3]    CDC / ACM / AT-V.250                       │
+  │ ┌──────────────────────────────────────────────────────────────────┐ │
+  │ │ Interface 2   Comm                                               │ │
+  │ │   Functional descriptors: Header, CM, ACM, Union                 │ │
+  │ │   EP 0x83 IN  interrupt   16B / 16ms                             │ │
+  │ │ Interface 3   Data                                               │ │
+  │ │   EP 0x03 OUT bulk        64B FS                                 │ │
+  │ │   EP 0x84 IN  bulk        64B FS                                 │ │
+  │ │ iInterface = "edevkit Test UART"                                 │ │
+  │ └──────────────────────────────────────────────────────────────────┘ │
+  │                                                                      │
+  │ Interface 4   Vendor (CMSIS-DAP v2)   class FF / sub 00 / proto 00   │
+  │   EP 0x05 OUT bulk          64B FS                                   │
+  │   EP 0x85 IN  bulk          64B FS                                   │
+  │   EP 0x86 IN  bulk          64B FS    ← SWO trace stream             │
+  │   iInterface = "CMSIS-DAP v2"   ← string-match for pyOCD/probe-rs    │
+  │                                                                      │
+  │ (No Microsoft OS Descriptors needed — IAD-driven enumeration         │
+  │  auto-loads usbser.sys for #1/#2 and WinUSB for #4 on Win10+.)       │
+  └──────────────────────────────────────────────────────────────────────┘
+
+Endpoint budget — 8 IN + 4 OUT used out of 16 + 16 available
+   IN:  EP1, EP2, EP3, EP4, EP5, EP6   (notif×2, bulk×2, dap×2)
+   OUT: EP1, EP3, EP5                   (bulk×2, dap×1)</code></pre>
+
+<p>Three things to notice in this layout:</p>
+
+<ol>
+  <li><strong>SWO trace rides EP 0x86 — a bulk-IN inside the CMSIS-DAP vendor function</strong>, not a third CDC-ACM. This is deliberate: the host's <code>probe-rs</code> / <code>pyOCD</code> matches CMSIS-DAP by interface string and reads SWO from the configured bulk endpoint. Exposing SWO as a CDC-ACM would tempt people to point <code>screen</code> at it; the bytes wouldn't make sense (they're an ITM-encoded multi-stream trace), the host driver wouldn't know what to do, and you'd lose synchronisation with the live debug session. See <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a>.</li>
+  <li><strong>Both CDC-ACM instances obey SET_LINE_CODING fully.</strong> Unlike a pure data-pipe CDC-ACM (which can stash-and-ignore — see §<a href="#line-coding-sham">stash, don't act</a>), edevkit1's two bridges <em>do</em> have a real RP2350 UART behind them. When the host sets 115200 8-N-1, the firmware reprograms UART0 / UART1 BAUD divisors. SEND_BREAK becomes a real wire-break.</li>
+  <li><strong><code>iInterface</code> strings are part of the API.</strong> Host-side udev rules (Linux), <code>system_profiler</code> filtering (macOS), and PowerShell <code>Get-PnpDevice</code> queries (Windows) all use these strings to find the right port without hard-coding tty/COM numbers. Don't change them lightly — host scripts and the edevkit GUI/CLI match on them.</li>
+</ol>
+
+<div class="callout good">
+  <span class="label">design contract</span>
+  edevkit1 will <em>never</em> reuse the iInterface strings <code>"edevkit Target Log"</code> and <code>"edevkit Test UART"</code> for anything else, in any future revision. They are part of the host-detection contract: tools rely on them to disambiguate the two ports without race-prone <code>/dev/ttyACM*</code> guessing. New CDC-ACM functions added in v2 (or a v1.x update) <em>must</em> use new, distinct interface-string names.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="bandwidth">Bandwidth and latency notes</h2>
+
+<p>USB Full-Speed (which is what RP2350 USB-Device hardware tops out at — there's no High-Speed PHY in the chip) gives you a theoretical <strong>12 Mbps</strong>, and a practical <strong>~10 Mbps usable bulk throughput</strong> after framing, error correction, and bus-scheduling overhead. Split across multiple bulk endpoints and shared with the host's other USB devices, you typically see <strong>5–8 Mbps per CDC-ACM instance</strong> in real benchmarks.</p>
+
+<table>
+  <tr><th>Wire baud</th><th>Bytes/sec</th><th>%-of CDC-ACM bandwidth</th><th>Comment</th></tr>
+  <tr><td>9 600</td><td>960</td><td>&lt;0.1%</td><td>Trivial.</td></tr>
+  <tr><td>115 200</td><td>11 520</td><td>~1%</td><td>Standard debug-log baud — a rounding error on USB.</td></tr>
+  <tr><td>921 600</td><td>92 160</td><td>~7%</td><td>Common "fast" UART speed; CDC-ACM has plenty of room.</td></tr>
+  <tr><td>1 500 000</td><td>150 000</td><td>~12%</td><td>RP2350 UART hardware ceiling for synchronous reception; still well within CDC-ACM.</td></tr>
+  <tr><td>3 000 000</td><td>300 000</td><td>~24%</td><td>Two channels at this rate would saturate; one is fine.</td></tr>
+</table>
+
+<p>So bandwidth is essentially never the issue with CDC-ACM — even saturating two UART bridges plus running CMSIS-DAP and SWO at the same time stays inside a Full-Speed bus, with margin.</p>
+
+<h3 id="latency">Latency floor</h3>
+
+<p>What CDC-ACM is <em>not</em> good at is single-byte latency. The fundamental floor for "host writes one byte, device sees it" is <strong>1 frame = 1 ms</strong> on Full-Speed (a "frame" in USB-speak is the bus-scheduling slot the host carves into 1 ms intervals). On High-Speed it drops to 125 µs (microframe), but RP2350 doesn't have HS. Practical measurements with a logic analyser:</p>
+
+<table>
+  <tr><th>Scenario</th><th>Typical RTT</th><th>Notes</th></tr>
+  <tr><td>Host write 1 byte, device echoes 1 byte, host reads it (FS, idle bus)</td><td>~2 ms</td><td>1 ms host-OUT + 1 ms host-IN, both rounded up to the next bus frame.</td></tr>
+  <tr><td>Same, but host driver has tcsetattr buffering enabled</td><td>10–20 ms</td><td>Host kernel TX-coalesces in 10ms windows by default. Disable with <code>cfmakeraw()</code> + <code>VMIN=1, VTIME=0</code>.</td></tr>
+  <tr><td>Same, but Windows usbser.sys with default INF</td><td>16 ms</td><td>Default poll interval; fix with <code>SerialEnumerator=N</code> or by registering a NTW_LATENCY_TIMER override (rare).</td></tr>
+  <tr><td>Same, but ZLP missing from device</td><td>∞ (hangs)</td><td>See §<a href="#zlp">ZLP rule</a>.</td></tr>
+</table>
+
+<p>Bottom line: CDC-ACM is a <strong>high-throughput, moderate-latency</strong> channel. It is great for streaming kilobytes of log output; it is mediocre for "tap a key and watch it echo at sub-millisecond". If you need echo-cancelling local-edit semantics, those belong on the host side (every terminal emulator does this); if you need genuine low-latency single-character control (tight register-poke shells, REPLs that need crisp feedback), it's tolerable but not great. For ultra-low-latency streaming you'd reach for a vendor-class bulk pipe with smaller, host-tuned URBs.</p>
+
+<h3 id="latency-measure">Measuring round-trip latency</h3>
+
+<p>The cheapest accurate measurement: bridge the device's TX to its own RX (literally short the two CDC-ACM data lines on the wire side, or enable an internal echo path), and time a thousand 1-byte ping-pongs from the host:</p>
+
+<pre><code>// host-side, Python
+import serial, time, statistics
+p = serial.Serial("/dev/edevkit-target-log", 115200, timeout=0.1)
+samples = []
+for _ in range(1000):
+    t0 = time.perf_counter_ns()
+    p.write(b"x"); p.flush()
+    p.read(1)
+    t1 = time.perf_counter_ns()
+    samples.append((t1 - t0) / 1000)   # microseconds
+print(f"p50={statistics.median(samples):.0f}us  "
+      f"p95={statistics.quantiles(samples, n=20)[18]:.0f}us  "
+      f"p99={statistics.quantiles(samples, n=100)[98]:.0f}us")</code></pre>
+
+<p>On Linux + edevkit1, expect p50 ~1.5 ms, p95 ~3 ms, p99 ~6 ms with a quiet host bus. macOS is similar; Windows tends to be 2–3× slower at p99 due to driver scheduling.</p>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<p>Primary sources first, then practical writeups:</p>
+
+<ol>
+  <li><strong><a href="https://www.usb.org/document-library/class-definitions-communication-devices-12">USB CDC 1.2 specification</a></strong> (usb.org) — the canonical class definition. Sections 4 (descriptors), 5 (control requests), 6 (notifications) are the ones to read; the rest is modem-era detail.</li>
+  <li><strong><a href="https://www.usb.org/document-library/class-definitions-communication-devices-12">USB PSTN 1.2 specification</a></strong> (usb.org) — the subclass document that owns the ACM-specific part. <strong>§6.2.2</strong> lists every ACM control request; <strong>§6.5</strong> lists the SERIAL_STATE notification format. This is where SET_LINE_CODING and the line-coding struct live.</li>
+  <li><strong><a href="https://www.usb.org/document-library/usb-iad-engineering-change-notice">USB Interface Association ECN</a></strong> — defines the IAD descriptor, the device-class triple <code>0xEF/0x02/0x01</code>, and Microsoft's enumeration rules.</li>
+  <li><strong>Microsoft Learn — <a href="https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/usb-driver-installation-based-on-compatible-ids">USB Serial Driver (Usbser.sys)</a></strong> — official documentation on auto-loading via compatible-ID, the device-class triple requirement, and INF construction for older Windows.</li>
+  <li><strong>Linux kernel — <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/usb/class/cdc-acm.c"><code>drivers/usb/class/cdc-acm.c</code></a></strong> — the canonical CDC-ACM host driver. Reading the source is faster than any tutorial; the comments around <code>acm_probe()</code> and <code>acm_tty_open()</code> explain edge cases the spec is silent on.</li>
+  <li><strong>ModemManager docs — <a href="https://www.freedesktop.org/software/ModemManager/api/latest/ref-overview-modem-filter.html">"modem filter" reference</a></strong> and the <a href="https://www.freedesktop.org/software/ModemManager/doc/latest/ModemManager/ModemManager-Common-udev-tags.html">common udev tags</a> page. If you've ever fought "ModemManager keeps grabbing my port", these are the primary sources.</li>
+  <li><strong>Zephyr USB-Device-Next CDC-ACM — <a href="https://docs.zephyrproject.org/latest/connectivity/usb/device_next/cdc_acm.html">official docs</a></strong> + <a href="https://docs.zephyrproject.org/latest/samples/subsys/usb/cdc_acm/README.html">single-CDC sample</a> + <a href="https://docs.zephyrproject.org/3.7.0/samples/subsys/usb/cdc_acm_composite/README.html">composite sample</a>. The composite sample is the closest thing to edevkit1's two-CDC-ACM layout in the upstream Zephyr tree, and is the right starting point when bringing up the firmware.</li>
+  <li><strong>Michael Stapelberg, <a href="https://michael.stapelberg.ch/posts/2021-04-27-linux-usb-virtual-serial-cdc-acm/">"Linux and USB virtual serial devices (CDC ACM)"</a> (2021)</strong> — practical writeup on udev rules, ModemManager interaction, stable naming, and access permissions. The single best blog post on the subject; everything in §<a href="#os">Linux OS behaviour</a> above is a condensed version of his findings.</li>
+  <li><strong>argonblue, <a href="https://argon.blue/blog/programming/2023/12/16/usb-zlp/">"Much ado about nothing: USB zero-length packets"</a></strong> — exhaustive walkthrough of the ZLP rule, why hosts behave the way they do, and a reproducer. Read this if §<a href="#zlp">the ZLP rule</a> isn't clicking.</li>
+  <li><strong>USBView (Windows WDK) and Uwe Sieber's <a href="https://www.uwe-sieber.de/usbtreeview_e.html">USB Device Tree Viewer</a></strong> — descriptor parsers that show you exactly what the host enumerator sees. When debugging a non-enumerating composite, these are the first tools to reach for.</li>
+  <li><strong>Sister docs.</strong> <a href="usb_overview.html">usb_overview.html</a> for the underlying USB endpoint / transfer / URB model; <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> for the CMSIS-DAP v2 vendor-class function that shares the composite descriptor with the two CDC-ACM bridges; <a href="proto_uart.html">proto_uart.html</a> for the wire-side UART hardware behind the bridges; <a href="edevkit1.html">edevkit1.html</a> for the system-level rationale of why the kit is shaped the way it is.</li>
+</ol>
+
+<p class="small">If you read only one external thing: the <a href="https://argon.blue/blog/programming/2023/12/16/usb-zlp/">argonblue ZLP article</a>. The ZLP rule is the difference between a CDC-ACM implementation that ships and one that "works on my machine but the user reports random hangs". Get it right once and you'll never re-debug it.</p>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="usb_cmsis_dap.html"><span class="dir">← Previous</span><span class="cat">USB stack</span><span class="title">CMSIS-DAP v2 protocol & implementation</span></a>
+<a class="next" href="usb_overview.html"><span class="dir">Next →</span><span class="cat">USB stack</span><span class="title">USB device stack overview</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit · tools/web/pages/usb_cdc_acm.html · part of the USB stack reference set · cross-references the <a href="edevkit1.html">edevkit1 design spec</a>, <a href="usb_overview.html">usb_overview.html</a>, <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a>, and <a href="proto_uart.html">proto_uart.html</a>. Update this file if the composite descriptor layout, iInterface strings, or endpoint assignments change — the host-side udev rules and tooling depend on it.
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body>
+</html>

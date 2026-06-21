@@ -42,17 +42,17 @@
     --light-text-dim: #a1a1aa;
     --light-code-bg: #f4f4f5;
 
-    /* Dark theme */
-    --dark-bg: #09090b;
-    --dark-surface: #18181b;
-    --dark-surface-2: #27272a;
-    --dark-surface-3: #3f3f46;
-    --dark-border: #27272a;
-    --dark-border-soft: #1f1f23;
-    --dark-text: #fafafa;
-    --dark-text-muted: #a1a1aa;
-    --dark-text-dim: #71717a;
-    --dark-code-bg: #0a0a0c;
+    /* Dark theme — modern neutral charcoal (matches docs hub) */
+    --dark-bg: #1d1f23;
+    --dark-surface: #25272c;
+    --dark-surface-2: #2c2f34;
+    --dark-surface-3: #3b3e44;
+    --dark-border: #383b41;
+    --dark-border-soft: #2a2c31;
+    --dark-text: #f4f4f5;
+    --dark-text-muted: #b1b3b8;
+    --dark-text-dim: #82858b;
+    --dark-code-bg: #202227;
 
     /* Active = light-dark switching */
     --bg: light-dark(var(--light-bg), var(--dark-bg));
@@ -972,6 +972,9 @@
     }
   }
 </style>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
 </head>
 <body>
 
@@ -2648,6 +2651,12 @@ Files attached:     Gerbers, drill, pick-and-place, BOM, assembly drawings
 </section>
 
 <hr>
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<span></span>
+<a class="next" href="installation.html"><span class="dir">Next →</span><span class="cat">Onboarding</span><span class="title">From-scratch Developer Installation Guide</span></a>
+</nav>
+<!-- edevkit:pager-end -->
 <footer>
 <p>edevkit1 v1 design specification — open-source embedded development tool. This document is the source of truth for v1 spec; supersedes any prior chat / draft descriptions. Contributions welcome via PR.</p>
 <p>Locked: 2026-04-29. Next review at v0.1 PCB return.</p>

@@ -1,0 +1,1244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — SWO/ITM trace</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A focused reference on Cortex-M Serial Wire Output (SWO) and the Instrumentation Trace Macrocell (ITM): encoding modes, the CoreSight chain (ITM/DWT/TPIU), packet framing, ITM stimulus ports, DWT events and PC sampling, configuration registers, probe-side capture, host tooling, and edevkit1's PIO-based implementation.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    /* graticule background — top-faded so it doesn't overwhelm */
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar (sticky nav + theme toggle) ────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── OS cards (Linux / macOS / Windows) ────────────────────────────── */
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  /* ── numbered step ─────────────────────────────────────────────────── */
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── checklist ─────────────────────────────────────────────────────── */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  // pre-paint theme — prevents FOUC
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">SWO / ITM trace</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · debug · SWO/ITM</div>
+  <h1>SWO and ITM — single-pin Cortex-M trace</h1>
+  <p class="small">A focused reference on <strong>Serial Wire Output (SWO)</strong> — the one-pin asynchronous trace stream emitted by every SWD-capable Cortex-M core — and the on-chip <strong>Instrumentation Trace Macrocell (ITM)</strong>, <strong>Data Watchpoint and Trace (DWT)</strong>, and <strong>Trace Port Interface Unit (TPIU)</strong> blocks that produce, decorate, and serialise the bytes that ride it. SWO is the fastest, lowest-effort observability channel a debugger has into a running Cortex-M — much cheaper than full ETM trace, and far higher bandwidth than printf-over-UART.</p>
+  <p class="small"><strong>What's covered.</strong> Why SWO is "free" (one pin you already routed for SWD), the two encoding modes (UART NRZ vs Manchester), the CoreSight chain that produces it (CPU → ITM → DWT → TPIU → SWO pin), TPIU packet framing, ITM stimulus ports and the canonical "<code>printf</code> to ITM" pattern, DWT counters and PC sampling for poor-man's profiling, the exact register sequence to bring SWO up from C, how a debug probe captures the line and demuxes the stream, host tooling (J-Link SWO Viewer, Orbuculum, OpenOCD, pyOCD, probe-rs), and how <strong>edevkit1</strong> implements the capture path on a PIO state machine over CMSIS-DAP v2.</p>
+  <p class="small"><strong>Audience.</strong> Firmware engineers who already have SWD bring-up working (see <a href="debug_swd.html">debug_swd.html</a>) and want logging, timing, and event tracing without burning a UART. Probe authors who need to understand what bytes to expect on the SWO line. edevkit contributors touching the SWO subsystem — see <a href="edevkit1.html">edevkit1.html</a> for the v1 design context and <a href="platform_pio.html">platform_pio.html</a> for the PIO program that captures the line.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">What it is</span>
+  <ol>
+    <li><a href="#about">What SWO is, and why it's "free"</a></li>
+    <li><a href="#encoding">Encoding modes — UART (NRZ) vs Manchester</a></li>
+  </ol>
+  <span class="heading">Inside the chip — the CoreSight chain</span>
+  <ol>
+    <li><a href="#chain">The CoreSight chain — what generates SWO data</a></li>
+    <li><a href="#itm-ports">ITM stimulus ports — printf-to-trace</a></li>
+    <li><a href="#tpiu-framing">TPIU packet framing</a></li>
+    <li><a href="#dwt">DWT counters, watchpoints &amp; PC sampling</a></li>
+  </ol>
+  <span class="heading">Bringing it up</span>
+  <ol>
+    <li><a href="#configuring">Configuring SWO from C — the register sequence</a></li>
+    <li><a href="#probe-side">Probe-side capture — what the debugger does</a></li>
+    <li><a href="#host-tooling">Host tooling — viewers, RTT comparison</a></li>
+  </ol>
+  <span class="heading">edevkit &amp; pitfalls</span>
+  <ol>
+    <li><a href="#edevkit">edevkit1's SWO implementation</a></li>
+    <li><a href="#pitfalls">Common pitfalls and how to debug them</a></li>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="about">What SWO is, and why it's "free"</h2>
+
+<p><strong>Serial Wire Output (SWO)</strong> is a single-pin, single-direction, asynchronous serial output that exits the Cortex-M core and carries trace data <em>out</em> of the chip to a debug probe. It's strictly target-to-host — never bidirectional — and rides one GPIO of the silicon, typically a dedicated <code>SWO</code> / <code>TRACESWO</code> ball on the package. On a debug header, SWO sits next to the SWD pair as the third "trace" pin (pin 6 on the standard 10-pin Cortex Debug + ETM connector). See <a href="debug_swd.html">debug_swd.html</a> for the SWD pair (clock + data) it ships alongside.</p>
+
+<p>The reason SWO matters is bandwidth-per-cost. Every other "where is my code right now?" channel costs you something:</p>
+
+<table>
+  <tr><th>Channel</th><th>Pins</th><th>Typical bandwidth</th><th>Caveats</th></tr>
+  <tr><td>UART <code>printf</code></td><td>2 (TX + GND)</td><td>~1 Mbps</td><td>Steals a UART; CPU formatting cost; blocking</td></tr>
+  <tr><td><strong>SWO (UART mode)</strong></td><td><strong>1</strong></td><td><strong>2–60 Mbps</strong> (silicon-dependent)</td><td>One-way, target → probe only</td></tr>
+  <tr><td>SWO (Manchester)</td><td>1</td><td>~half of UART mode</td><td>Self-clocking; less host support</td></tr>
+  <tr><td>RTT (Segger)</td><td>0 — over SWD</td><td>~1–3 MB/s practical</td><td>Burns RAM ring buffer; needs probe to poll memory</td></tr>
+  <tr><td>ETM (full instruction trace)</td><td>4–5 (TRACECLK + TRACEDATA[0..3])</td><td>up to several Gbps</td><td>Routing nightmare; probe must support trace port</td></tr>
+</table>
+
+<p>SWO occupies the sweet spot: <strong>one pin you've already routed</strong> (SWO ships on the same Cortex Debug header as SWCLK/SWDIO), <strong>tens of Mbps usable</strong> on most modern silicon, and a <strong>hardware-multiplexed</strong> stream that mixes printf-style instrumentation, exception-trace events, and program-counter sampling into the same byte sequence. It's "free" in the sense that the routing cost is one extra trace and a 22-Ω series resistor; no PCB redesign, no extra connector, no extra IO buffers.</p>
+
+<p>The lineage: SWO is part of <strong>CoreSight</strong> — Arm's on-chip debug-and-trace IP suite — and was introduced alongside the Serial Wire Debug (SWD) protocol with Cortex-M3 (Armv7-M) circa 2004. Every Cortex-M3, M4, M7, M33, M55, and M85 has it. Cortex-M0 / M0+ (Armv6-M) typically <em>don't</em> ship ITM, so SWO is rare on those parts; some vendors include the trace pin and a stripped-down ITM, most don't. (Memfault's <a href="https://interrupt.memfault.com/blog/profiling-firmware-on-cortex-m">profiling-on-Cortex-M post</a> and the Arm CoreSight TRM both call this out.)</p>
+
+<div class="callout info">
+  <span class="label">Mental model</span>
+  Think of SWO as the <em>narrow side</em> of the CoreSight trace funnel. ETM is the wide side: a parallel bus carrying every PC the core retires, used for reverse-execution debugging on workstation-grade probes. SWO is the same protocol family, multiplexed down to one pin, carrying the events firmware actually opted in to emit. You won't reverse-execute over SWO, but you <em>will</em> get cycle-accurate timestamps on every printf, every exception entry/exit, and a periodic PC sample at up to ~1 kHz without instrumenting the code.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="encoding">Encoding modes — UART (NRZ) vs Manchester</h2>
+
+<p>The TPIU drives the SWO pin in one of two line-coding modes, selected by the firmware via <code>TPI-&gt;SPPR</code> (Selected Pin Protocol Register).</p>
+
+<h3 id="enc-uart">UART / NRZ — the dominant mode</h3>
+
+<p><strong>UART mode</strong> (sometimes called "asynchronous" or "NRZ" in the Arm docs) sends each byte as a standard 8-N-1 UART frame: one start bit (low), eight data bits LSB-first, no parity, one stop bit (high). The line idles high. There is no clock pin — the receiver recovers timing from the start-bit edge and oversamples each bit at the agreed baud rate. Set <code>SPPR.TXMODE = 0b10</code> for this mode (the value is <code>2</code> in <code>SPPR[1:0]</code>).</p>
+
+<p>This is what 95%+ of host tooling expects, and what every common probe (J-Link, ST-Link v2/v3, CMSIS-DAP v2, MCU-Link, Orbtrace, edevkit) defaults to. The reason: a generic UART block, a PIO state machine, or even a bit-banging GPIO ISR can decode it. There's no specialised "SWO PHY" required — it's a UART that happens to carry framed CoreSight data.</p>
+
+<p><strong>Baud-rate constraint.</strong> The TPIU prescaler (<code>TPI-&gt;ACPR</code>, "Asynchronous Clock Prescaler Register") divides the trace clock down to the SWO baud:</p>
+
+<pre><code>SWO_baud = TRACECLK / (ACPR + 1)</code></pre>
+
+<p>where <code>TRACECLK</code> is the trace input clock (usually equal to the core clock, but on some silicon you can divide it). This means <strong>only baud rates that are integer divisors of the core clock are reachable cleanly</strong>. On a 150 MHz part, you can get <em>exactly</em> 150/2 = 75 MHz, 150/3 = 50 MHz, … , 150/25 = 6 MHz, 150/100 = 1.5 MHz, etc. Asking for "115200 baud" usually picks the nearest divisor; the resulting actual baud may be off by a few percent, which a forgiving UART receiver tolerates but a tight one does not. <strong>Always pick a baud whose divisor is integer for your <code>TRACECLK</code></strong>; otherwise you'll see occasional framing errors and the host will report scrambled bytes.</p>
+
+<p>Most probes prefer round numbers like 1, 2, 4, 6 MHz. J-Link, OpenOCD's <code>tpiu config</code>, and probe-rs all auto-pick the highest divisor that's within tolerance of the requested baud and report the actual rate back; check the log line.</p>
+
+<h3 id="enc-manchester">Manchester — self-clocking, less common</h3>
+
+<p><strong>Manchester mode</strong> (<code>SPPR.TXMODE = 0b01</code>) line-codes each bit as a transition: a 0 is a high-to-low transition mid-bit-cell, a 1 is low-to-high (the IEEE 802.3 convention). Self-clocking means the receiver doesn't need to know the baud rate ahead of time — every bit cell has a guaranteed edge — so a probe can recover the bit clock from the data itself.</p>
+
+<p>The cost: half the throughput at the same line frequency, more sophisticated decoder (a state machine, not a UART). Almost no host tool uses Manchester anymore — it was useful in the early CoreSight days when probes had only generic UARTs and had to deal with target clocks they couldn't measure. Modern probes measure target clock during SWD enumeration, so they can configure the target and themselves to a known UART baud and skip Manchester. <strong>Default to UART mode unless you have a specific reason not to.</strong></p>
+
+<div class="callout warn">
+  <span class="label">Pitfall</span>
+  If host tooling reports "SWO captured but garbage bytes", first suspect a baud mismatch: the firmware computed <code>ACPR</code> against an assumed <code>TRACECLK</code> that's wrong (e.g. you switched from XOSC to PLL after init but didn't reconfigure SWO). Second suspect: <code>TPI-&gt;FFCR.EnFCont</code> — see <a href="#tpiu-framing">TPIU framing</a>. Third: the probe is in Manchester mode but the target is in UART, or vice versa.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="chain">The CoreSight chain — what generates SWO data</h2>
+
+<p>SWO is the output pin. The bytes that come out of it are the multiplexed product of three on-chip CoreSight blocks: <strong>ITM</strong>, <strong>DWT</strong>, and <strong>TPIU</strong>. Each generates a different kind of trace packet, the TPIU framer interleaves them, and the SWO pin drains the framer FIFO.</p>
+
+<pre><code>     ┌──────────────────────────────────────────────────────────────┐
+     │                          Cortex-M core                       │
+     │                                                              │
+     │  ┌──────────┐    ┌──────────┐    ┌──────────────────────┐    │
+     │  │   CPU    │───▶│   DWT    │───▶│  TPIU                │    │
+     │  │          │    │ counters │    │  ┌──────────┐        │    │
+     │  │  (your   │    │ watch-   │    │  │ Formatter│        │    │
+     │  │   code)  │    │ points   │    │  │ (FFCR)   │        │    │
+     │  │          │    │ PC sample│    │  └────┬─────┘        │    │
+     │  └─────┬────┘    └──────────┘    │       │              │    │
+     │        │ writes to ITM-&gt;PORT[N]  │       ▼              │    │
+     │        ▼                         │  ┌──────────┐        │    │
+     │  ┌──────────┐                    │  │  Async   │        │    │
+     │  │   ITM    │───────────────────▶│  │  output  │  TPIU  │    │
+     │  │ stimulus │                    │  │ (UART /  │  ACPR  │    │
+     │  │ port 0..31│                   │  │ Manchstr)│  SPPR  │    │
+     │  └──────────┘                    │  └────┬─────┘        │    │
+     │                                  └───────┼──────────────┘    │
+     │                                          ▼                   │
+     │                                       SWO pin                │
+     └──────────────────────────────────────────┼───────────────────┘
+                                                │
+                                                ▼ ~1–60 Mbps NRZ
+                                       ┌────────────────┐
+                                       │   Debug probe  │   USB
+                                       │  (UART decode  ├──────▶  Host
+                                       │   + demux)     │
+                                       └────────────────┘</code></pre>
+
+<h3 id="chain-itm">ITM — Instrumentation Trace Macrocell</h3>
+
+<p>The <strong>Instrumentation Trace Macrocell</strong> is a software-driven trace generator. Firmware writes to one of 32 memory-mapped <em>stimulus ports</em>, each at a fixed offset in the ITM's MMIO window (<code>0xE0000000</code> on Cortex-M3/M4/M7, also <code>0xE0000000</code> on M33's secure address space). Each write becomes a TPIU packet emitted on SWO, tagged with the port number. ITM is purely software-driven — it doesn't observe any other state.</p>
+
+<p>ITM is the channel firmware uses for printf-style logging, structured events ("entered state X"), and any application-level instrumentation. Each port is independently enable-able, so you can route different log domains to different ports and have the host filter on port number. See <a href="#itm-ports">§ ITM stimulus ports</a> for the canonical printf pattern.</p>
+
+<h3 id="chain-dwt">DWT — Data Watchpoint and Trace</h3>
+
+<p>The <strong>Data Watchpoint and Trace</strong> unit is the hardware-driven trace generator. It observes the bus and the core's internal state, and emits packets for things firmware doesn't have to instrument:</p>
+
+<ul>
+  <li><strong>Cycle counter (CYCCNT)</strong> — a 32-bit free-running counter that increments every core clock cycle. The host uses this to timestamp every other DWT/ITM packet at single-cycle resolution.</li>
+  <li><strong>Event counters</strong> — CPI (cycles per instruction overhead), EXC (exception overhead cycles), SLEEP (sleep-mode cycles), LSU (load/store unit cycles), FOLD (folded-instruction count). Each is an 8-bit counter that emits an event packet on overflow.</li>
+  <li><strong>Watchpoints with trace</strong> — up to four data-address comparators that emit a packet on read, write, or both, optionally including the address and the data value.</li>
+  <li><strong>PC sampling</strong> — periodic emission of the current PC, configurable rate (typically thousands of samples per second).</li>
+  <li><strong>Exception trace</strong> — packet on every exception entry, exit, and return, with the exception number.</li>
+</ul>
+
+<p>DWT is the source of the "is my idle hook actually idle?" data. PC sampling specifically is the killer feature: at ~1–10 kHz, accumulated over a few seconds, you get a statistical distribution of where the PC spends its time. Run a flame-graph tool over that and you have a profiler — without instrumenting any code. (Memfault's <a href="https://interrupt.memfault.com/blog/profiling-firmware-on-cortex-m">"Profiling firmware on Cortex-M"</a> post walks through this end-to-end.)</p>
+
+<h3 id="chain-tpiu">TPIU — Trace Port Interface Unit</h3>
+
+<p>The <strong>Trace Port Interface Unit</strong> sits at the output of ITM and DWT. It does three things:</p>
+
+<ol>
+  <li><strong>Framer.</strong> Interleaves multiple trace sources (in M-class with SWO, that's just ITM+DWT) into a single byte stream, optionally prefixing each chunk with a source-ID byte so the host can demux. Controlled by <code>TPI-&gt;FFCR</code> (Formatter and Flush Control Register).</li>
+  <li><strong>Async output driver.</strong> Drives the SWO pin in either UART NRZ or Manchester mode. Configured by <code>TPI-&gt;SPPR</code> + <code>TPI-&gt;ACPR</code>.</li>
+  <li><strong>Buffer / FIFO.</strong> A small (typically 4-deep) FIFO between the framer and the line; if it fills, ITM writes to a busy port stall the CPU briefly.</li>
+</ol>
+
+<p>For SWO the framer is usually <em>disabled</em> — there's only one stream going out, so wrapping it in another framing layer just costs bytes and confuses receivers. That's the difference between <code>FFCR.EnFCont = 0</code> (preferred for SWO) and <code>EnFCont = 1</code> (continuous-formatted, used for parallel TPIU trace where multiple sources actually need demux). See <a href="#pitfalls">§ Common pitfalls</a> — leaving the formatter on is one of the top three "garbage on SWO" causes.</p>
+
+<!-- =========================================================== -->
+<h2 id="itm-ports">ITM stimulus ports — printf-to-trace</h2>
+
+<p>The ITM exposes 32 stimulus ports as 32-bit MMIO registers:</p>
+
+<pre><code>ITM-&gt;PORT[0]   at 0xE0000000
+ITM-&gt;PORT[1]   at 0xE0000004
+ITM-&gt;PORT[2]   at 0xE0000008
+…
+ITM-&gt;PORT[31]  at 0xE000007C</code></pre>
+
+<p>A write to <code>ITM-&gt;PORT[N]</code> emits an <strong>SWIT (Software Instrumentation Trace) packet</strong> on SWO with port number <code>N</code> and the written payload. The store size matters: a <code>STRB</code> emits a 1-byte payload, a <code>STRH</code> emits 2 bytes, a <code>STR</code> emits 4 bytes. The header byte tells the host the size.</p>
+
+<p>Before you write, you have to <em>read</em> the port and check the LSB. <code>ITM-&gt;PORT[N]</code> read returns a status: bit 0 set means "port FIFO has space, you may write". If it's 0, the port is full — the framer hasn't drained the previous byte yet. Spinning is the conventional approach. Drop-on-full is also reasonable for non-critical logging.</p>
+
+<h3 id="itm-helper">The canonical SWO printf helper</h3>
+
+<p>This is the function every ARM-GCC SWO setup ends up writing some variant of:</p>
+
+<pre><code>#include "core_cm33.h"   /* CMSIS-Core for the M33; same idea on M4/M7 */
+
+/**
+ * @brief Send one byte to ITM stimulus port `port`.
+ * @retval 1 on success, 0 if dropped (port disabled or FIFO full and we don't spin)
+ */
+static inline int itm_send_char(uint8_t port, uint8_t ch)
+{
+    /* TRCENA must be set or the whole CoreSight tree is held in reset. */
+    if ((CoreDebug-&gt;DEMCR &amp; CoreDebug_DEMCR_TRCENA_Msk) == 0)
+        return 0;
+
+    /* Port must be enabled in ITM_TER. */
+    if ((ITM-&gt;TER &amp; (1u &lt;&lt; port)) == 0)
+        return 0;
+
+    /* Wait until FIFO has room (bit 0 of port read = ready). */
+    while (ITM-&gt;PORT[port].u32 == 0) { /* spin */ }
+
+    /* 8-bit write → 1-byte SWIT packet. */
+    ITM-&gt;PORT[port].u8 = ch;
+    return 1;
+}
+
+/* Hook for newlib's _write so printf goes to ITM port 0. */
+int _write(int fd, const char *buf, int len)
+{
+    for (int i = 0; i &lt; len; i++) itm_send_char(0, buf[i]);
+    return len;
+}</code></pre>
+
+<p>That's the entirety of "printf over SWO". With <code>TRCENA</code> set, port 0 enabled in <code>ITM-&gt;TER</code>, and the TPIU configured (next section), <code>printf("hello\n")</code> from any thread or ISR emits seven SWIT packets on SWO, the probe decodes them, and the host displays them. Total firmware overhead: a few cycles per byte (the spin is rare in practice — TPIU drains faster than printf produces).</p>
+
+<div class="callout">
+  <span class="label">Why ports?</span>
+  Port 0 is the printf convention; ports 1–31 are yours. Use them as channels: port 1 = USB events, port 2 = scheduler trace, port 3 = ADC samples (binary, decoded host-side), etc. The host can filter on port number, so you can leave them all enabled and only display what you care about. <em>Don't</em> emit binary data to port 0 — every viewer assumes UTF-8 there.
+</div>
+
+<h3 id="itm-side-effects">A subtle compiler problem</h3>
+
+<p>The ITM port registers are MMIO with side effects: writing to them transmits data. But if the compiler doesn't <em>know</em> the writes have side effects, it may eliminate them. CMSIS's <code>core_cm33.h</code> declares <code>ITM-&gt;PORT[]</code> as <code>volatile</code>, which guarantees the writes are emitted. If you reach for the registers via your own pointer cast — e.g. <code>*(uint32_t *)0xE0000000 = ch;</code> without <code>volatile</code> — link-time optimisation may drop the store. Always go through the CMSIS macros, or define your own with explicit <code>volatile</code>.</p>
+
+<!-- =========================================================== -->
+<h2 id="tpiu-framing">TPIU packet framing</h2>
+
+<p>The byte stream on SWO is a sequence of <strong>packets</strong>, each consisting of a 1-byte header followed by 0–4 bytes of payload. The header encodes the source (which CoreSight block emitted it), the port or event number, and the payload size. This is defined in the Armv7-M ARM (DDI 0403) §D4 "ITM packet protocol" and the Arm CoreSight Components TRM (DDI 0314) §11–13.</p>
+
+<h3 id="frame-headers">Header byte taxonomy</h3>
+
+<table>
+  <tr><th>Header pattern (binary)</th><th>Packet kind</th><th>Payload</th></tr>
+  <tr><td><code>00000000</code></td><td>Sync (one byte of a multi-byte sync)</td><td>see below</td></tr>
+  <tr><td><code>0nnnnnSS</code> (n≠0, SS≠0)</td><td>SWIT — software instrumentation</td><td>1, 2, or 4 bytes; <code>nnnnn</code> = port (0–31); SS encodes size</td></tr>
+  <tr><td><code>nnnnn1SS</code> (SS≠0)</td><td>HW source — DWT-generated</td><td>1, 2, or 4 bytes; <code>nnnnn</code> = DWT discriminator</td></tr>
+  <tr><td><code>0nnnnn00</code></td><td>Local timestamp (varint)</td><td>1–4 follow-bytes; high bit chains</td></tr>
+  <tr><td><code>10010100</code></td><td>Global timestamp 1</td><td>1–4 follow-bytes</td></tr>
+  <tr><td><code>10110100</code></td><td>Global timestamp 2</td><td>4 follow-bytes</td></tr>
+  <tr><td><code>00000111</code></td><td>Extension</td><td>varint follow-bytes</td></tr>
+  <tr><td><code>01110000</code></td><td>Overflow</td><td>0 — host should warn user</td></tr>
+</table>
+
+<p>The size encoding in the low two bits (SS):</p>
+
+<pre><code>SS = 01  →  1 byte payload
+SS = 10  →  2 byte payload
+SS = 11  →  4 byte payload
+SS = 00  →  not a SWIT/HW header (see other tables)</code></pre>
+
+<h3 id="frame-example">Worked example — <code>ITM_SendChar('A')</code> on port 0</h3>
+
+<p>Firmware does <code>ITM-&gt;PORT[0].u8 = 'A';</code>. The ITM emits one SWIT packet:</p>
+
+<pre><code>Header byte: 00000001 = 0x01
+             ││││││└┴── SS = 01  (1-byte payload)
+             │││││└──── 0       (SWIT, not HW)
+             └┴┴┴┴───── port = 00000 (port 0)
+
+Payload byte: 0x41 = 'A'
+
+Wire bytes: 0x01 0x41
+
+As UART NRZ at e.g. 6 MHz, 8-N-1, that's 2 bytes × 10 bit times = ~3.3 µs total.</code></pre>
+
+<p>A 32-bit binary log to port 5 — <code>ITM-&gt;PORT[5].u32 = 0xDEADBEEF;</code>:</p>
+
+<pre><code>Header byte: 00101011 = 0x2B
+             ││││││└┴── SS = 11  (4-byte payload)
+             │││││└──── 0       (SWIT)
+             └┴┴┴┴───── port = 00101 (port 5)
+
+Payload bytes (little-endian): 0xEF 0xBE 0xAD 0xDE
+
+Wire bytes: 0x2B 0xEF 0xBE 0xAD 0xDE</code></pre>
+
+<h3 id="frame-sync">Sync packets — how the host re-aligns</h3>
+
+<p>If the host starts capture mid-stream, it can't know where one packet ends and the next begins. The TPIU periodically emits a <strong>sync sequence</strong>: at least five bytes of <code>0x00</code> followed by one byte of <code>0x80</code>. Specifically: 47 consecutive zero bits followed by a single 1 bit, padded out to byte boundaries. Decoders look for this pattern (six bytes of <code>0x00 0x00 0x00 0x00 0x00 0x80</code> works as a robust matcher) and use it to byte-align the packet stream.</p>
+
+<p>Sync emission is enabled by <code>DWT-&gt;CTRL.SYNCTAP</code> (see Armv7-M ARM §D4.2.5): set it to a non-zero value to have DWT trigger sync packets on cycle-counter rollover. <code>SYNCTAP = 0b01</code> emits sync every <code>2^24</code> cycles (~110 ms at 150 MHz); <code>0b10</code> every <code>2^26</code>; <code>0b11</code> every <code>2^28</code>. <strong>Always enable some sync</strong> — host tools will refuse to display anything until they see one.</p>
+
+<h3 id="frame-overflow">Overflow packets — back-pressure made visible</h3>
+
+<p>If the TPIU FIFO fills (target produces faster than line drains), subsequent ITM writes are dropped, and the next free slot in the FIFO emits an <strong>overflow packet</strong> (<code>0x70</code>). Host tools display this as a "trace overflow" warning. Seeing a few overflows during a verbose burst is normal; seeing thousands means you need a higher SWO baud, fewer enabled ports, or you've enabled DWT PC sampling at too high a rate.</p>
+
+<!-- =========================================================== -->
+<h2 id="dwt">DWT counters, watchpoints &amp; PC sampling</h2>
+
+<p>DWT is the hardware-driven half of the trace stream. Most firmware engineers underuse it because the registers look intimidating; they're not, once you've seen them once.</p>
+
+<h3 id="dwt-cyccnt">CYCCNT — the cycle counter</h3>
+
+<p><code>DWT-&gt;CYCCNT</code> is a 32-bit free-running counter that increments once per core clock when <code>DWT-&gt;CTRL.CYCCNTENA = 1</code>. At 150 MHz it wraps every ~28.6 seconds. This is the single most useful register on the chip for performance work:</p>
+
+<pre><code>uint32_t t0 = DWT-&gt;CYCCNT;
+my_thing();
+uint32_t dt_cycles = DWT-&gt;CYCCNT - t0;     /* unsigned wrap is fine */</code></pre>
+
+<p>Single-cycle resolution. No interrupt overhead. Works inside ISRs. Costs nothing when not used. <strong>Always enable CYCCNT in your debug build.</strong> It's the foundation of every other timing measurement — DWT exception trace, ITM timestamp packets, and PC samples are all timestamped against it.</p>
+
+<h3 id="dwt-event">Event counters</h3>
+
+<p><code>DWT-&gt;CTRL</code> also enables a battery of 8-bit event counters that emit a DWT-source SWO packet on overflow:</p>
+
+<table>
+  <tr><th>Counter</th><th>Enable bit</th><th>Counts</th></tr>
+  <tr><td>CPICNT</td><td><code>CPIEVTENA</code></td><td>Cycles where the CPU stalled because a multi-cycle instruction was in flight (CPI overhead)</td></tr>
+  <tr><td>EXCCNT</td><td><code>EXCEVTENA</code></td><td>Cycles spent in exception entry/exit overhead</td></tr>
+  <tr><td>SLEEPCNT</td><td><code>SLEEPEVTENA</code></td><td>Cycles the core was in sleep (<code>WFI</code>/<code>WFE</code>)</td></tr>
+  <tr><td>LSUCNT</td><td><code>LSUEVTENA</code></td><td>Cycles the LSU stalled the pipeline</td></tr>
+  <tr><td>FOLDCNT</td><td><code>FOLDEVTENA</code></td><td>Instructions that were "folded" (executed in zero cycles)</td></tr>
+</table>
+
+<p>The host accumulates these against CYCCNT to produce a per-second breakdown: "this firmware spent 18% of its cycles in exception overhead, 60% sleeping, 22% running real code". That's the kind of insight you can't get from <code>printf</code>.</p>
+
+<h3 id="dwt-watch">Watchpoints with trace generation</h3>
+
+<p>The DWT has up to four <strong>comparators</strong> (<code>DWT-&gt;COMP0</code>..<code>COMP3</code> with mask in <code>MASK0</code>..<code>MASK3</code> and function in <code>FUNCTION0</code>..<code>FUNCTION3</code>). Each compares against the bus address of every load/store, and on match can trigger a halt, a watchpoint, <em>or</em> emit a DWT-source packet on SWO containing the data value, the PC, or both. The packet shows up as an HW-source SWIT-shaped event the host decodes.</p>
+
+<p>Worked example: track every write to a specific RAM word.</p>
+
+<pre><code>/* Watch every write to my_state.counter */
+DWT-&gt;COMP0     = (uint32_t)&amp;my_state.counter;
+DWT-&gt;MASK0     = 0;                               /* exact-match address */
+DWT-&gt;FUNCTION0 = (1 &lt;&lt; 0) |                       /* match read+write */
+                 (1 &lt;&lt; 11) |                      /* MATCH = data write */
+                 (0b10 &lt;&lt; 6);                     /* EMITRANGE: data + addr trace */</code></pre>
+
+<p>The exact <code>FUNCTION</code> bit assignments differ slightly between Armv7-M and Armv8-M (the M33 reorganised them — see DDI 0553 §D1.2). <strong>Always cross-check the field names against your specific core's TRM.</strong></p>
+
+<h3 id="dwt-pcsample">PC sampling — the killer feature</h3>
+
+<p>Set <code>DWT-&gt;CTRL.PCSAMPLENA = 1</code> and <code>POSTINIT</code> + <code>POSTPRESET</code> to a sensible rate (the period is <code>(POSTPRESET + 1) × 2^N</code> cycles where <code>N ∈ {6, 10}</code> via <code>CYCTAP</code>). At ~10 kHz, over 10 seconds you collect 100 000 samples. Group those by function and you have a profiler-grade flame graph of where your firmware actually spends time — and unlike instrumentation profilers, it sees the idle hook, ISRs, and library code equally.</p>
+
+<p>Tools that consume PC samples directly: J-Link's <strong>Performance Counter Profiler</strong>, Segger Ozone's <strong>Code Profile</strong> view, and <a href="https://github.com/orbcode/orbuculum">Orbuculum</a>'s <code>orbprofile</code>. probe-rs has experimental support too.</p>
+
+<div class="callout good">
+  <span class="label">Recipe</span>
+  Bring up CYCCNT and PC sampling on day one of every Cortex-M project. Even before you have any printf working, you'll be able to flame-graph the firmware. Once printf-over-ITM is also working, you essentially have all the dynamic-analysis tools a desktop programmer has.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="configuring">Configuring SWO from C — the register sequence</h2>
+
+<p>The bring-up sequence trips up almost everyone the first time, because the registers are scattered across four MMIO blocks (CoreDebug, ITM, DWT, TPI) and the order matters. Here's the canonical sequence for "<strong>port 0 enabled, CYCCNT running, 6 MHz UART SWO, no formatter, sync every 2^24 cycles</strong>", which is the reasonable default for most projects.</p>
+
+<pre><code>#include "core_cm33.h"   /* or core_cm4.h, core_cm7.h, etc. */
+
+/**
+ * @brief Bring up SWO for ITM port 0 + DWT cycle counter.
+ *
+ * @param core_clock_hz    The clock feeding TPIU's TRACECLKIN (typically core clk).
+ * @param swo_baud_hz      Desired SWO baud (e.g. 6'000'000). Must be a clean
+ *                         integer divisor of core_clock_hz.
+ *
+ * Call this after the system clock is stable. Recall it if the system clock changes.
+ */
+void swo_init(uint32_t core_clock_hz, uint32_t swo_baud_hz)
+{
+    /* 1. Master enable for the entire CoreSight trace tree.
+     *    Without TRCENA, ITM/DWT/TPIU registers read as zero and writes are dropped.
+     *    DEMCR is in CoreDebug, not ITM/DWT — common confusion. */
+    CoreDebug-&gt;DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+
+    /* 2. Unlock ITM. The Lock Access Register is a CoreSight convention:
+     *    most CoreSight blocks ignore writes until you write the magic word
+     *    0xC5ACCE55 to LAR ("ACCESS"). ITM, DWT, TPI, and ETM all share it. */
+    ITM-&gt;LAR = 0xC5ACCE55;
+
+    /* 3. Configure TPIU output mode and baud divider.
+     *    TPI is also lockable — unlock first if your part requires it.
+     *    Most M-class parts have TPI's lock implicitly cleared when DEMCR.TRCENA = 1.*/
+    TPI-&gt;SPPR = 0x2;                                   /* 2 = UART NRZ; 1 = Manchester */
+    TPI-&gt;ACPR = (core_clock_hz / swo_baud_hz) - 1;     /* prescaler = TRACECLK/baud - 1 */
+
+    /* 4. Disable formatter (single-source: no need to wrap in TPIU framing).
+     *    Leaving EnFCont = 1 here is the #1 cause of "garbage on SWO". */
+    TPI-&gt;FFCR = 0x100;                                 /* TrigIn enabled, formatter off */
+
+    /* 5. Configure ITM. */
+    ITM-&gt;TCR = (1 &lt;&lt; ITM_TCR_ITMENA_Pos)    |          /* enable ITM */
+               (1 &lt;&lt; ITM_TCR_TSENA_Pos)     |          /* local timestamps on */
+               (1 &lt;&lt; ITM_TCR_SYNCENA_Pos)   |          /* allow sync packets */
+               (1 &lt;&lt; ITM_TCR_DWTENA_Pos)    |          /* DWT events go to TPIU too */
+               (1 &lt;&lt; ITM_TCR_SWOENA_Pos)    |          /* SWO output enabled */
+               (1 &lt;&lt; ITM_TCR_TraceBusID_Pos);          /* bus ID 1 (any non-zero) */
+
+    /* 6. Enable individual stimulus ports. Bit N = port N. */
+    ITM-&gt;TER = 0x1;                                    /* port 0 only — add bits as needed */
+
+    /* 7. Allow unprivileged code to write to all enabled ports.
+     *    Without this, only privileged threads can hit the FIFO. */
+    ITM-&gt;TPR = 0x0;                                    /* 0 = all ports unprivileged */
+
+    /* 8. Configure DWT — cycle counter on, sync packets on rollover, exception trace. */
+    DWT-&gt;CTRL = (1 &lt;&lt; DWT_CTRL_CYCCNTENA_Pos)   |      /* cycle counter on */
+                (1 &lt;&lt; DWT_CTRL_EXCTRCENA_Pos)   |      /* exception trace on */
+                (1 &lt;&lt; DWT_CTRL_SYNCTAP_Pos);           /* sync every 2^24 cycles */
+}</code></pre>
+
+<p><strong>Verification.</strong> After <code>swo_init()</code> returns, do a <code>printf("hello SWO\n");</code>. If the host viewer (next section) sees "hello SWO", you're done. If it sees nothing, walk the checklist in <a href="#pitfalls">§ Common pitfalls</a>.</p>
+
+<h3 id="cfg-table">Register summary</h3>
+
+<table>
+  <tr><th>Register</th><th>Address</th><th>Purpose</th></tr>
+  <tr><td><code>DEMCR</code></td><td><code>0xE000EDFC</code></td><td>Master TRCENA enable for the whole CoreSight trace tree.</td></tr>
+  <tr><td><code>ITM_LAR</code></td><td><code>0xE0000FB0</code></td><td>Lock Access — write <code>0xC5ACCE55</code> to unlock ITM register writes.</td></tr>
+  <tr><td><code>ITM_TCR</code></td><td><code>0xE0000E80</code></td><td>Trace Control — global enable, timestamps, sync, SWO output.</td></tr>
+  <tr><td><code>ITM_TER</code></td><td><code>0xE0000E00</code></td><td>Trace Enable — bit-per-port mask of which stimulus ports are live.</td></tr>
+  <tr><td><code>ITM_TPR</code></td><td><code>0xE0000E40</code></td><td>Trace Privilege — which ports are accessible from unprivileged code.</td></tr>
+  <tr><td><code>ITM_PORT[N]</code></td><td><code>0xE0000000 + 4·N</code></td><td>Stimulus ports. Read = ready bit. Write = emit packet.</td></tr>
+  <tr><td><code>DWT_CTRL</code></td><td><code>0xE0001000</code></td><td>Cycle counter, event counters, PC-sampling, sync-tap config.</td></tr>
+  <tr><td><code>DWT_CYCCNT</code></td><td><code>0xE0001004</code></td><td>32-bit cycle counter.</td></tr>
+  <tr><td><code>TPI_SPPR</code></td><td><code>0xE00400F0</code></td><td>Selected Pin Protocol — 1 = Manchester, 2 = UART NRZ.</td></tr>
+  <tr><td><code>TPI_ACPR</code></td><td><code>0xE0040010</code></td><td>Asynchronous Clock Prescaler — <code>(TRACECLK/baud) - 1</code>.</td></tr>
+  <tr><td><code>TPI_FFCR</code></td><td><code>0xE0040304</code></td><td>Formatter and Flush Control — <em>turn the formatter off for SWO</em>.</td></tr>
+</table>
+
+<!-- =========================================================== -->
+<h2 id="probe-side">Probe-side capture — what the debugger does</h2>
+
+<p>From the probe's POV, SWO is just a UART receive line. The work splits into four stages:</p>
+
+<ol>
+  <li><strong>Sample the line.</strong> A UART block (or a software equivalent — bit-banged GPIO ISR, PIO state machine) recovers bytes from the NRZ stream at the configured baud rate. The probe's UART must be at the same baud as the target's TPIU; the probe is told the baud out-of-band by the host (<code>SWO_Baudrate</code> command — see below).</li>
+  <li><strong>Buffer.</strong> Bytes go into a SRAM ring buffer large enough to absorb USB latency. ~16 KB is typical; edevkit1 uses larger because the SWO baud can outrun USB-FS bursts.</li>
+  <li><strong>Frame back to host.</strong> The probe streams the raw bytes to the host over USB. It does <em>not</em> demux into ITM/DWT packets — that's the host tool's job.</li>
+  <li><strong>Re-arm on overflow.</strong> If the ring buffer fills, the probe records an overflow flag the host can poll. The probe never re-orders or pads; the host gets exactly the wire bytes (sync sequences and overflow markers included) plus an out-of-band overflow indicator.</li>
+</ol>
+
+<p>For <strong>CMSIS-DAP v2</strong> the protocol exposes three commands plus a bulk-IN data path. See <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> for the full command set; the SWO subset is:</p>
+
+<table>
+  <tr><th>Command</th><th>ID</th><th>Purpose</th></tr>
+  <tr><td><code>DAP_SWO_Transport</code></td><td><code>0x17</code></td><td>Pick where SWO bytes ride: command-response (slow) or bulk-IN endpoint (fast). Always pick bulk-IN for production.</td></tr>
+  <tr><td><code>DAP_SWO_Mode</code></td><td><code>0x18</code></td><td>Pick UART (1) or Manchester (2) decoding.</td></tr>
+  <tr><td><code>DAP_SWO_Baudrate</code></td><td><code>0x19</code></td><td>Tell the probe what baud to use. Probe replies with the actual baud achieved (might differ from requested).</td></tr>
+  <tr><td><code>DAP_SWO_Control</code></td><td><code>0x1A</code></td><td>Start / stop capture.</td></tr>
+  <tr><td><code>DAP_SWO_Status</code></td><td><code>0x1B</code></td><td>Query trace count, overflow flag.</td></tr>
+  <tr><td><code>DAP_SWO_Data</code></td><td><code>0x1C</code></td><td>Pull SWO bytes from the probe (only when transport = command-response).</td></tr>
+</table>
+
+<p>For other probes:</p>
+
+<ul>
+  <li><strong>J-Link</strong> exposes SWO over its proprietary USB protocol; J-Link Commander and J-Link RTT Viewer talk it directly. The bytes come back in raw form just like CMSIS-DAP v2.</li>
+  <li><strong>ST-Link/V2</strong> and <strong>ST-Link/V3</strong> support SWO via vendor commands; OpenOCD's <code>st-link</code> driver wraps them. ST-Link/V2 caps SWO at ~2 MHz; V3 does ~9 MHz.</li>
+  <li><strong>Black Magic Probe</strong> exposes SWO as a USB-CDC ACM serial port — host opens it like any TTY and reads raw bytes. Less integrated but trivially scriptable.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="host-tooling">Host tooling — viewers, RTT comparison</h2>
+
+<h3 id="host-viewers">Viewers</h3>
+
+<table>
+  <tr><th>Tool</th><th>Probe</th><th>Strength</th></tr>
+  <tr><td><a href="https://www.segger.com/products/development-tools/j-link/tools/j-link-swo-viewer/">J-Link SWO Viewer</a></td><td>J-Link only</td><td>Mature, multi-port, terminal + binary modes, free.</td></tr>
+  <tr><td>J-Link / Ozone "Code Profile"</td><td>J-Link</td><td>Best-in-class PC-sample profiler; flame graphs over SWO.</td></tr>
+  <tr><td><a href="https://github.com/orbcode/orbuculum">Orbuculum</a></td><td>Any (CMSIS-DAP v2, Black Magic, FTDI)</td><td>Open source, multi-tool — <code>orbcat</code> (cat-style), <code>orbtop</code> (live profile), <code>orbprofile</code> (callgraph), <code>orbtrace</code> with the Orbtrace probe for ETM.</td></tr>
+  <tr><td>OpenOCD <code>tpiu config</code></td><td>Any OpenOCD-supported probe</td><td>Pipes raw SWO to a file or TCP socket; pair with custom decoder.</td></tr>
+  <tr><td>pyOCD <code>--swo</code></td><td>CMSIS-DAP v2, etc.</td><td>Logs SWO during a debug session; integrates with pyOCD's GDB server.</td></tr>
+  <tr><td>probe-rs <code>itm</code> command</td><td>CMSIS-DAP v2, J-Link, ST-Link</td><td>Active development; native Rust; pairs nicely with edevkit's host CLI.</td></tr>
+</table>
+
+<h3 id="host-orbcat">Quick-start with Orbuculum</h3>
+
+<pre><code># Capture from a CMSIS-DAP v2 probe at 6 MHz, decode ITM port 0 to stdout
+orbcat --hw=6000000 --port=0
+
+# Live "top"-style profile: PC samples grouped by function
+orbtop --elf=build/zephyr/zephyr.elf
+
+# Decode multiple ports concurrently with timestamps
+orbcat -c 0 -c 1,format,binary -c 5,format,oct</code></pre>
+
+<h3 id="host-rtt">SWO/ITM vs RTT — when to pick which</h3>
+
+<p>SWO is not the only logging-over-debug-pin path. Segger's <strong>RTT (Real-Time Transfer)</strong> achieves the same goal — get bytes from firmware to host without burning a UART — by a totally different mechanism: firmware writes to a known RAM ring buffer, and the probe periodically reads that buffer over the SWD memory-access channel. No SWO pin needed.</p>
+
+<table>
+  <tr><th></th><th>SWO / ITM</th><th>RTT</th></tr>
+  <tr><td>Pin cost</td><td>1 (SWO)</td><td>0 (rides SWD)</td></tr>
+  <tr><td>RAM cost</td><td>~0 (FIFO is in TPIU silicon)</td><td>~1–4 KB ring buffer</td></tr>
+  <tr><td>Bandwidth</td><td>2–60 Mbps (silicon)</td><td>~1–3 MB/s practical (probe-poll-rate-limited)</td></tr>
+  <tr><td>Latency</td><td>Sub-µs (drains continuously)</td><td>10s of ms (probe polls every poll-period)</td></tr>
+  <tr><td>Hardware events</td><td>Yes — DWT exception/PC sample</td><td>No — software-only</td></tr>
+  <tr><td>Cortex-M0/M0+ support</td><td>Rare (most M0 silicon lacks ITM)</td><td>Yes (just RAM + SWD)</td></tr>
+  <tr><td>Available with halted target</td><td>No (CPU stopped, ITM stopped)</td><td>Yes (probe still polls RAM)</td></tr>
+  <tr><td>Standardised</td><td>Yes (Arm CoreSight)</td><td>No (Segger; reimplemented by others)</td></tr>
+</table>
+
+<p><strong>Pick SWO when</strong> you have ITM-bearing silicon (M3 and up), need hardware events (exception trace, PC sampling), or need the lowest possible logging latency. <strong>Pick RTT when</strong> you're on Cortex-M0/M0+, you can't route the SWO pin, or you want logging during halted-target inspection.</p>
+
+<p>You can run both simultaneously, with no interference — they share no hardware. probe-rs and J-Link both support that.</p>
+
+<!-- =========================================================== -->
+<h2 id="edevkit">edevkit1's SWO implementation</h2>
+
+<p>edevkit1 is itself a debug probe — see <a href="edevkit1.html">edevkit1.html §6</a> — so its job is the <em>capture</em> side of SWO, not the generation side. The implementation is unusual in that the RP2350B has no dedicated SWO peripheral: the capture lives in a <strong>PIO state machine</strong>, configured as an asynchronous UART receiver.</p>
+
+<h3 id="edev-pin">Pin map and PIO assignment</h3>
+
+<table>
+  <tr><th>Function</th><th>RP2350B GPIO</th><th>PIO unit / SM</th></tr>
+  <tr><td>SWO RX</td><td>14</td><td>PIO0 SM1</td></tr>
+  <tr><td>SWCLK / TCK</td><td>12</td><td>PIO0 SM0</td></tr>
+  <tr><td>SWDIO / TMS</td><td>13</td><td>PIO0 SM0</td></tr>
+  <tr><td>nRESET</td><td>16</td><td>GPIO open-drain</td></tr>
+</table>
+
+<p>The full pin map and PIO budget is in CLAUDE.md and <a href="edevkit1.html">edevkit1.html §4 — Pin map</a>. SWO sits next to the SWD pair on the same PIO unit (PIO0), which is intentional: the debug session and the trace session share a clock domain and can be configured atomically.</p>
+
+<h3 id="edev-pio-prog">The PIO program — sketch</h3>
+
+<p>The PIO state machine implements a UART receiver. Conceptually it's:</p>
+
+<pre><code>; Pseudo-asm — see app/pio/swo_uart_rx.pio for the real source.
+; The full annotated source is in platform_pio.html.
+
+.program swo_uart_rx
+.side_set 0 opt
+
+start:
+    wait 0 pin 0          ; wait for start bit (line goes low)
+    set x, 7        [10]  ; load bit count, delay to mid-bit-cell
+bit_loop:
+    in pins, 1            ; sample one bit into ISR
+    jmp x-- bit_loop [6]  ; loop 8 times with bit-cell delay
+    push                  ; push the byte to the RX FIFO
+    jmp start             ; back to waiting for next start bit</code></pre>
+
+<p>Concrete details and the actual <code>.pio</code> source live in <a href="platform_pio.html">platform_pio.html</a>. The PIO clock is set to <code>8 × SWO_baud</code> (oversampling factor 8) to give the receiver tolerance against baud-rate mismatch and start-bit jitter.</p>
+
+<h3 id="edev-throughput">Throughput</h3>
+
+<p>The RP2350B at 150 MHz can clock a PIO at the full 150 MHz, giving a usable SWO baud of 150/8 = 18.75 Mbps in oversampling-8 mode, or 150/4 ≈ 37 Mbps in oversampling-4. For the edevkit v1 the practical ceiling is ~6–10 Mbps, set by the USB-FS bulk endpoint that has to carry the bytes back to the host (USB-FS is ~10 Mbps usable; see CLAUDE.md gotcha 4 and <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a>). v2 with USB-HS will lift that ceiling.</p>
+
+<h3 id="edev-transport">USB transport — bulk-IN, not CDC</h3>
+
+<p>The captured SWO bytes ride the <strong>CMSIS-DAP v2 bulk-IN endpoint</strong>, not a separate USB-CDC ACM port. This is deliberate, and a frequent design question for new contributors:</p>
+
+<ul>
+  <li><strong>Atomic with debug session.</strong> SWO and SWD events on the same probe should be timestamped by the same host-side clock. Splitting SWO onto a CDC means two USB endpoints with independent USB-stack latency, and "did this exception happen before or after that breakpoint?" becomes hard.</li>
+  <li><strong>Standardised.</strong> CMSIS-DAP v2 spec already defines SWO commands and a bulk-IN format. Going off-spec with CDC means every host tool has to special-case edevkit.</li>
+  <li><strong>One enumerated USB device.</strong> Adding a CDC bumps the composite descriptor count and complicates Windows driver assignment.</li>
+</ul>
+
+<p>The flip side: you can't <code>cat /dev/ttyACMx</code> to see SWO. You need a CMSIS-DAP-aware tool (Orbuculum, probe-rs, pyOCD, J-Link). For developer-friendly raw-text logging that <em>does</em> show up as a TTY, edevkit1 has a separate hardware UART bridge ("target log UART", GPIO 0/1) — see <a href="edevkit1.html">edevkit1.html §7</a>. SWO is for structured trace; the UART bridge is for unstructured printf.</p>
+
+<div class="callout info">
+  <span class="label">Tooling</span>
+  Workflow on edevkit1: <code>edevkit attach</code> opens a CMSIS-DAP v2 session, then <code>edevkit swo --port=0</code> demuxes ITM port 0 to stdout, <code>edevkit profile --elf=app.elf</code> runs PC-sampling for a flame graph. The host CLI uses <a href="https://probe.rs">probe-rs</a> as its CMSIS-DAP backend; Orbuculum works as an external alternative.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="pitfalls">Common pitfalls and how to debug them</h2>
+
+<h3 id="pit-blank">"I see nothing on SWO"</h3>
+
+<p>Walk this checklist top-to-bottom — about 95% of "no SWO" reports stop at one of these:</p>
+
+<ol>
+  <li><strong><code>DEMCR.TRCENA</code> not set.</strong> Without it, every CoreSight register reads as zero and writes are silently dropped — including <code>ITM_LAR</code>. Symptom: <code>ITM-&gt;TER</code> reads as 0 even after you wrote it. Fix: set <code>TRCENA</code> <em>before</em> touching any ITM/DWT/TPI register.</li>
+  <li><strong><code>ITM_LAR</code> not unlocked.</strong> Without writing <code>0xC5ACCE55</code>, all ITM register writes go nowhere. Fix: include the unlock in <code>swo_init()</code>.</li>
+  <li><strong>Port not enabled in <code>ITM_TER</code>.</strong> Bit N of <code>TER</code> must be 1 for port N to emit. The CMSIS <code>ITM_SendChar</code> defensively checks this and silently drops; if your custom helper doesn't, you'll see no error and no output.</li>
+  <li><strong>Privileged-only port hit from unprivileged code.</strong> <code>ITM_TPR</code> bit N = 1 means port N requires privileged access. Zephyr's user-mode threads or an unprivileged ISR will get a fault or silent drop. Fix: <code>ITM-&gt;TPR = 0</code> for "all unprivileged".</li>
+  <li><strong>Wrong baud.</strong> <code>ACPR</code> is computed from the assumed <code>TRACECLK</code>; if the system clock changed after init, the baud is now wrong. Symptom: probe reports framing errors, host shows scrambled bytes. Fix: re-call <code>swo_init()</code> from your clock-change hook, or pick a TRACECLK source independent of SYSCLK.</li>
+  <li><strong>Formatter on.</strong> <code>TPI-&gt;FFCR.EnFCont = 1</code> wraps every byte in TPIU framing the SWO host doesn't expect. Symptom: structured but consistently-wrong byte sequences. Fix: <code>FFCR &amp;= ~0x102;</code> or just <code>FFCR = 0x100;</code>.</li>
+  <li><strong>Compiler eliminated the ITM write.</strong> If you bypassed CMSIS and wrote your own non-<code>volatile</code> port pointer, LTO may have dropped it. Fix: use <code>ITM-&gt;PORT[N]</code> or declare your pointer <code>volatile</code>.</li>
+  <li><strong>SWO pin not muxed.</strong> The GPIO has to be in TRACE/SWO function, not GPIO function. Vendor-specific: STM32 sets it via <code>GPIO_AF_TRACE</code>, NXP via the IOMUX, Nordic via <code>P0.18.MCUSEL = 2</code>. RP2350 doesn't have a dedicated SWO function — edevkit captures, doesn't emit, so this only matters for targets we debug.</li>
+  <li><strong>Probe is in Manchester mode but target is UART (or vice-versa).</strong> Symptom: probe reports "no signal" or "framing errors". Fix: align <code>SPPR</code> on target with <code>DAP_SWO_Mode</code> on probe.</li>
+  <li><strong>Sync packets not enabled.</strong> Without sync, host viewers wait forever for byte alignment and display nothing. Fix: <code>DWT-&gt;CTRL.SYNCTAP = 0b01</code>.</li>
+  <li><strong>Cable too long / SI bad.</strong> SWO is single-ended; at 6+ Mbps, ribbon cables longer than ~15 cm degrade. Symptom: occasional bad bytes, worse with target far from probe. Fix: shorten the trace cable; add a 22-Ω series resistor at the source.</li>
+</ol>
+
+<h3 id="pit-overflow">"I see overflow markers everywhere"</h3>
+
+<ul>
+  <li>You're producing faster than SWO drains. Either lower the production rate (fewer enabled ports, lower PC-sample rate, less verbose printf), or raise the SWO baud (next divisor up — but your probe must support it).</li>
+  <li>Specific to PC sampling: at 10 kHz on a 150 MHz core, each sample is a 5-byte HW packet — that's 50 KB/s, well within 6 Mbps SWO budget. If you crank to 100 kHz, you're now at 500 KB/s and TPIU FIFO depth becomes the limit, not the line.</li>
+</ul>
+
+<h3 id="pit-perf">"<code>printf</code> over ITM is slow / blocking"</h3>
+
+<ul>
+  <li>The <code>itm_send_char</code> helper above spins waiting for FIFO space. Under heavy printf bursts that's a real stall. Mitigations: drop-on-full instead of spin (lose some bytes, never block), or hand bytes off to a low-priority thread that drains a software ring buffer to ITM in the background.</li>
+  <li>If <code>printf</code> formatting itself is the bottleneck (it usually is on small MCUs — newlib's <code>printf</code> is huge), switch to <code>printf_</code>-shrink alternatives (Marco Paland's <a href="https://github.com/mpaland/printf">printf</a>, picolibc's tinystdio) or skip formatting entirely and emit binary records to a non-zero ITM port for host-side formatting.</li>
+</ul>
+
+<h3 id="pit-m33">M33-specific gotchas</h3>
+
+<ul>
+  <li><strong>Secure / Non-Secure ITM banking.</strong> On M33 with TrustZone active, ITM has banked secure and non-secure register copies; the SWO pin carries both, but each bank's <code>TER</code>/<code>TPR</code>/<code>TCR</code> is independent. Without TrustZone enabled (the edevkit1 case — see <a href="arm_cortex_m33.html">arm_cortex_m33.html § edevkit notes</a>), only the secure bank exists and behaves like a vanilla M3/M4 ITM.</li>
+  <li><strong>DWT_FUNCTION fields renumbered.</strong> Armv8-M reorganised <code>DWT_FUNCTIONn</code> compared to Armv7-M. Code that worked verbatim on M4 needs the bit positions checked against DDI 0553 §D1.2 before it'll work on M33.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<p>Primary sources, in the order most contributors find useful:</p>
+
+<ol>
+  <li><strong><a href="https://developer.arm.com/documentation/ddi0314/latest/">Arm CoreSight Components Technical Reference Manual (DDI 0314)</a></strong> — the authoritative spec for ITM, DWT, TPIU, and the rest of the CoreSight family. Chapters 11–13 cover the ITM packet protocol byte-for-byte. Dense but unambiguous; this is what every probe author and host-tool author reads.</li>
+  <li><strong><a href="https://developer.arm.com/documentation/ddi0403/latest/">Armv7-M Architecture Reference Manual (DDI 0403)</a> — Part D "Debug"</strong> — the same material the CoreSight TRM covers, but in the context of the M-profile architecture. §D4 specifically covers the ITM packet protocol from the core's POV. If you have only one Arm manual on disk, this should be it.</li>
+  <li><strong><a href="https://developer.arm.com/documentation/ddi0553/latest/">Armv8-M Architecture Reference Manual (DDI 0553)</a></strong> — the M33's ARM. §D1 covers the M33's debug-and-trace, including the renumbered DWT fields and the secure/non-secure banking.</li>
+  <li><strong><a href="https://www.segger.com/products/development-tools/j-link/technology/about-real-time-transfer/">Segger SWO and RTT documentation</a></strong> — practical and well-written. The SWO Viewer manual has worked-example baud calculations and pin-routing notes from the probe vendor's POV. Read the RTT page next to understand the alternative.</li>
+  <li><strong><a href="https://interrupt.memfault.com/blog/profiling-firmware-on-cortex-m">Memfault Interrupt — "Profiling firmware on Cortex-M"</a></strong> — end-to-end PC-sampling walkthrough, including host-side flame graph reconstruction. The single best public tutorial on extracting profile data from SWO. Memfault's <a href="https://interrupt.memfault.com/blog/cortex-m-watchpoints">Cortex-M watchpoints</a> post pairs well for the DWT-comparator side.</li>
+  <li><strong>Joseph Yiu, <em>The Definitive Guide to Arm Cortex-M3 and Cortex-M4 Processors</em></strong> (and the M33 sequel) — the long-form book treatment. Chapter on debug-and-trace is the most readable single source; covers ITM/DWT/TPIU register-by-register with diagrams.</li>
+  <li><strong><a href="https://github.com/orbcode/orbuculum">Orbuculum source</a></strong> — read the decoder (<code>itmDecode.c</code>) for a worked, production-grade ITM/DWT byte-stream parser. ~600 lines, no surprises, well-commented. The fastest way to internalise the packet protocol is to read this once.</li>
+  <li><strong><a href="https://arm-software.github.io/CMSIS-DAP/latest/">CMSIS-DAP v2 specification</a></strong> — particularly the <code>DAP_SWO_*</code> command section. Required reading if you're touching the edevkit firmware's SWO pump or its host-side decoder. Cross-reference <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> for the full command set.</li>
+  <li><strong>Sister docs in this hub</strong> — <a href="debug_swd.html">debug_swd.html</a> for the debug-pair SWO ships alongside; <a href="debug_jtag.html">debug_jtag.html</a> for the parallel-trace alternative on JTAG; <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> for the USB protocol that carries SWO bytes back to the host; <a href="platform_pio.html">platform_pio.html</a> for edevkit's PIO-based capture program; <a href="arm_architecture.html">arm_architecture.html</a> for the Cortex-M family overview that puts CoreSight in context; <a href="arm_cortex_m33.html">arm_cortex_m33.html</a> for the M33-specific debug notes; <a href="edevkit1.html">edevkit1.html</a> for the v1 design spec.</li>
+</ol>
+
+<p class="small">Worth bookmarking: the <a href="https://interrupt.memfault.com/">Memfault Interrupt blog</a> for any "why is my Cortex-M trace doing &lt;weird specific thing&gt;" question. They cover SWO, RTT, faults, and CoreSight at a level no Arm document does.</p>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="debug_swd.html"><span class="dir">← Previous</span><span class="cat">Debug</span><span class="title">SWD (Serial Wire Debug) protocol</span></a>
+<a class="next" href="proto_i2c.html"><span class="dir">Next →</span><span class="cat">Protocols</span><span class="title">I²C bus protocol</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit · tools/web/pages/debug_swo.html · cross-references the <a href="edevkit1.html">edevkit1 design spec</a>, <a href="debug_swd.html">SWD reference</a>, <a href="usb_cmsis_dap.html">CMSIS-DAP v2 reference</a>, and <a href="platform_pio.html">PIO platform notes</a>. Update this file when the SWO subsystem changes (capture pin, PIO program, baud ceiling, host-CLI command names).
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body>
+</html>

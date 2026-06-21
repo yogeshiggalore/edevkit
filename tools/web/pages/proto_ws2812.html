@@ -1,0 +1,1020 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — WS2812 / NeoPixel timing protocol</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A focused reference on the WS2812 / WS2812B / SK6812 single-wire 800 kHz protocol — bit encoding, reset latching, GRB color order, voltage and timing tolerances, daisy-chained addressing, and how edevkit1 drives its onboard 4-LED status chain on PIO0 SM2 from 4 bytes of SRAM.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">WS2812 protocol reference</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · protocols · WS2812</div>
+  <h1>WS2812 — single-wire 800 kHz LED protocol, end-to-end</h1>
+  <p class="small">A focused reference on the <strong>WS2812 / WS2812B / SK6812 / WS2813</strong> family of "single-wire RGB" LEDs — the timing-critical 800 kHz pulse-width-encoded protocol that runs every NeoPixel strip, every panel of dancing pixels, and every "just one wire" status indicator on a modern dev board. This document covers what one bit on the wire looks like, the universal "0-bit / 1-bit / reset" timing window, the GRB color order, daisy-chain addressing, voltage and ground gotchas, the 5V-vs-3.3V data-line problem, and how <strong>edevkit1</strong> drives its onboard 4-LED status chain on PIO0 SM2 with 4 bytes of SRAM and zero CPU involvement.</p>
+  <p class="small"><strong>Audience.</strong> A firmware engineer who sees a single GPIO pin marked <em>"DIN"</em> on a strip of NeoPixels and wants to know what to send it; or who is debugging a WS2812 strip that "lights one LED then dies"; or who wants to understand the PIO program that drives edevkit1's status LEDs. By the end you should be able to read a WS281x datasheet's timing page, debug "wrong color" / "ghost LED" / "every other LED off" / "first LED only" symptoms, choose between WS2812B and SK6812-RGBW for a new design, and understand exactly why the universally-shipped Pico-SDK <code>ws2812.pio</code> looks the way it does.</p>
+  <p class="small"><strong>Sister docs.</strong> For the underlying RP2350 PIO state-machine model the driver runs on, see <a href="platform_pio.html">platform_pio.html</a>. For the slightly-related but completely different APA102 / SK9822 4-wire family ("DotStar" — uses SCK + DATA, not single-wire), look up "APA102 vs WS2812". For sister protocols on edevkit1 see <a href="proto_i2c.html">proto_i2c.html</a>, <a href="proto_spi.html">proto_spi.html</a>, <a href="proto_uart.html">proto_uart.html</a>. For where WS2812 sits in the v1 design (status indication, boot-progress, error feedback), see <a href="edevkit1.html">edevkit1.html</a> §6.10.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Background</span>
+  <ol>
+    <li><a href="#what">What WS2812 is — and the family of relatives</a></li>
+    <li><a href="#why">Why "single wire" exists — pin count vs. brightness vs. cost</a></li>
+  </ol>
+  <span class="heading">The wire</span>
+  <ol>
+    <li><a href="#bit-encoding">Bit encoding — pulse width is the symbol</a></li>
+    <li><a href="#tolerances">Timing tolerances — what "800 kHz" really means</a></li>
+    <li><a href="#reset">The reset / latch window</a></li>
+    <li><a href="#color-order">Color order — GRB, RGB, RGBW, and why it matters</a></li>
+  </ol>
+  <span class="heading">Topology</span>
+  <ol>
+    <li><a href="#chain">Daisy chain — how N LEDs share one wire</a></li>
+    <li><a href="#power">Power, ground, and the brownout problem</a></li>
+    <li><a href="#level-shifter">3.3V data into a 5V LED — the universal gotcha</a></li>
+  </ol>
+  <span class="heading">edevkit1 implementation</span>
+  <ol>
+    <li><a href="#status-leds">The four onboard status LEDs</a></li>
+    <li><a href="#pio-program">The ws2812.pio program — 4 instructions, 800 kHz</a></li>
+    <li><a href="#dispatcher">The dispatcher — DMA + colour patterns + boot states</a></li>
+    <li><a href="#code">Code — push a colour, animate a boot sequence</a></li>
+  </ol>
+  <span class="heading">Reference</span>
+  <ol>
+    <li><a href="#variants">WS2812 vs WS2812B vs SK6812 vs WS2813 — what's actually different</a></li>
+    <li><a href="#pitfalls">Common pitfalls &amp; first-time bugs</a></li>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="what">What WS2812 is — and the family of relatives</h2>
+
+<p>The <strong>WS2812</strong> is an integrated RGB LED with a built-in controller chip on the same 5050-package die. Worldsemi (a Chinese silicon vendor) introduced the original WS2811 controller chip in 2010 and the integrated WS2812 in 2013. The marketing name "NeoPixel" was coined by Adafruit. Both names refer to the same protocol family, which has been cloned dozens of times and now spans:</p>
+
+<table>
+  <tr><th>Part</th><th>Variant</th><th>Notes</th></tr>
+  <tr><td><strong>WS2811</strong></td><td>Stand-alone controller chip in DIP/SO-8. Drives external RGB LEDs.</td><td>Original. Mostly historical now.</td></tr>
+  <tr><td><strong>WS2812</strong></td><td>5050 package with embedded controller, 6 pins.</td><td>First integrated version. Original timing.</td></tr>
+  <tr><td><strong>WS2812B</strong></td><td>5050 package, 4 pins (combined VDD, GND, DIN, DOUT).</td><td>Most common today. Slightly tighter timing than WS2812.</td></tr>
+  <tr><td><strong>WS2812B-V5</strong></td><td>Same package, voltage-tolerant version.</td><td>Reliably accepts 3.3V data into a 5V LED.</td></tr>
+  <tr><td><strong>WS2813</strong></td><td>Adds backup data line; single-LED failure doesn't break the chain.</td><td>Slightly more expensive; great for long strips.</td></tr>
+  <tr><td><strong>WS2815</strong></td><td>12V-powered version with backup data.</td><td>Long-strip use cases; less voltage drop.</td></tr>
+  <tr><td><strong>SK6812 (Worldsemi clone)</strong></td><td>Compatible with WS2812 timing.</td><td>Cheaper, often visually indistinguishable from WS2812B.</td></tr>
+  <tr><td><strong>SK6812-RGBW</strong></td><td>Same protocol with an extra white channel — 32 bits per LED instead of 24.</td><td>Used wherever a "true white" is wanted alongside RGB. Widely used in indicator-LED applications including <em>edevkit1</em>.</td></tr>
+  <tr><td><strong>APA102 / SK9822</strong></td><td>4-wire (data + clock), NOT compatible with WS2812.</td><td>Mentioned only to disambiguate — these use SPI-like signaling and are documented separately.</td></tr>
+</table>
+
+<div class="callout info">
+  <span class="label">In one sentence</span>
+  WS2812 is a <strong>self-clocked, pulse-width-modulated, single-wire daisy chain</strong> where each LED reads 24 (or 32, for RGBW) bits, latches them into its colour register, and forwards everything else to the next LED. There's no clock pin, no chip select, no acknowledgment — just a stream of carefully-timed pulses on one wire.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="why">Why "single wire" exists — pin count vs. brightness vs. cost</h2>
+
+<p>Before WS2811 / WS2812, addressing N LEDs in a row required either:</p>
+
+<ul>
+  <li><strong>One GPIO per LED, with PWM</strong> — works for up to maybe 6 LEDs before the host runs out of pins and PWM channels.</li>
+  <li><strong>A shift-register chain (74HC595-style) plus one PWM</strong> — gets you many LEDs, but they're either all the same brightness, or you spend a lot of CPU on per-LED PWM bit-banging.</li>
+  <li><strong>Charlieplexing or matrix scan</strong> — works for tens of LEDs, but the perceived brightness drops with the duty cycle, and the wiring gets ugly fast.</li>
+  <li><strong>An I²C LED driver (TLC59116, IS31FL3236, etc.)</strong> — fine for small numbers, but pricey at scale and stuck to one address per chip.</li>
+</ul>
+
+<p>WS2812 demolished this by combining controller + LED + driver + protocol receiver onto a single die, then exposing only <em>one</em> data wire to the outside world. Add power and ground and you can cascade <em>thousands</em> of LEDs onto a single GPIO pin. The cost: timing-critical signalling that the host MCU has to generate to micro-second precision, and a strict daisy-chain topology that's harder to debug than parallel approaches.</p>
+
+<!-- =========================================================== -->
+<h2 id="bit-encoding">Bit encoding — pulse width is the symbol</h2>
+
+<p>WS2812 uses <strong>pulse-width modulation</strong> at a fixed 1.25 μs (≈800 kHz) symbol rate. Every bit takes exactly the same total time. What distinguishes a 0-bit from a 1-bit is the <em>length of the high portion</em> of the pulse:</p>
+
+<pre><code>0-bit:  ┌──┐                            (high for ~0.4 μs)
+        │  │
+   ─────┘  └─────────────────           (low  for ~0.85 μs)
+                                        total 1.25 μs
+
+1-bit:  ┌─────────┐                     (high for ~0.8 μs)
+        │         │
+   ─────┘         └────                 (low  for ~0.45 μs)
+                                        total 1.25 μs
+
+reset:  ─────────────────────...         (low for ≥50 μs — depends on chip)
+</code></pre>
+
+<p>Two things make this work in spite of the apparent fragility:</p>
+
+<ol>
+  <li><strong>The receiver has tolerance.</strong> Each LED's controller chip has a hysteretic comparator with built-in margin. As long as the high portion is "clearly short" or "clearly long", the chip distinguishes them — the actual thresholds vary slightly per part but typically tolerate ±150 ns deviation.</li>
+  <li><strong>The line idles low between bits.</strong> Between the high-pulse and the next bit, the wire is at GND. This means a long stretch of "low" — anything more than 50 μs — is unambiguously a <em>reset</em> (latch the previously-received bits and start fresh on the next high pulse). Reset cannot be confused with a bit because no bit ever has 50 μs of low.</li>
+</ol>
+
+<h3 id="timing-table">The standard timing numbers</h3>
+
+<table>
+  <tr><th>Spec</th><th>WS2812</th><th>WS2812B</th><th>SK6812</th><th>WS2813</th></tr>
+  <tr><td>T0H (0-bit high)</td><td>0.35 μs ±150 ns</td><td>0.40 μs ±150 ns</td><td>0.30 μs ±150 ns</td><td>0.30 μs ±150 ns</td></tr>
+  <tr><td>T0L (0-bit low)</td><td>0.80 μs ±150 ns</td><td>0.85 μs ±150 ns</td><td>0.90 μs ±150 ns</td><td>0.90 μs ±150 ns</td></tr>
+  <tr><td>T1H (1-bit high)</td><td>0.70 μs ±150 ns</td><td>0.80 μs ±150 ns</td><td>0.60 μs ±150 ns</td><td>0.60 μs ±150 ns</td></tr>
+  <tr><td>T1L (1-bit low)</td><td>0.60 μs ±150 ns</td><td>0.45 μs ±150 ns</td><td>0.60 μs ±150 ns</td><td>0.60 μs ±150 ns</td></tr>
+  <tr><td>Reset (latch)</td><td>≥50 μs</td><td>≥50 μs</td><td>≥80 μs</td><td>≥250 μs</td></tr>
+  <tr><td>Bit rate</td><td>800 kHz</td><td>800 kHz</td><td>800 kHz</td><td>800 kHz</td></tr>
+</table>
+
+<p>The "WS2812 universal" timing — the values that work on essentially every part in the family — is:</p>
+
+<ul>
+  <li><strong>T0H = 0.35 μs, T0L = 0.90 μs</strong> (so 0-bit total = 1.25 μs, with extra margin)</li>
+  <li><strong>T1H = 0.70 μs, T1L = 0.55 μs</strong> (so 1-bit total = 1.25 μs)</li>
+  <li><strong>Reset = ≥80 μs</strong> (works on every part including WS2813's 250 μs requirement, with a generous safety margin)</li>
+</ul>
+
+<p>The Pico-SDK and edevkit1 both target these "universal" numbers in their PIO programs, so the same firmware drives any WS281x family LED without re-flashing.</p>
+
+<div class="callout info">
+  <span class="label">Why these specific numbers</span>
+  T0H + T0L and T1H + T1L are <strong>both 1.25 μs total</strong>. That's not coincidence — the receiver simply samples the line at a fixed offset (~625 ns, the midpoint) after each rising edge to decide if the bit was a 0 or 1. As long as the line is high at that midpoint, it's a 1; if low, it's a 0. So the "midpoint must straddle the high-vs-low boundary" — i.e. T0H must be clearly less than 625 ns and T1H clearly more.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="tolerances">Timing tolerances — what "800 kHz" really means</h2>
+
+<p>The 800 kHz figure is a marketing convenience. The actual constraint that the silicon enforces is just "the high portion of the pulse must be either short or long, not in between". Anything within ±150 ns of nominal works on every WS281x part you'll meet — and most parts tolerate ±200 ns or more before they start misreading bits.</p>
+
+<p>This matters because:</p>
+
+<ul>
+  <li><strong>You can drive WS2812 from a non-800-kHz MCU clock.</strong> If your sysclk is 150 MHz (RP2350 default), you can produce 1.25 μs symbols by counting 187 or 188 cycles (187.5 nominal). At 125 MHz you'd count 156. The resulting bit rate isn't exactly 800 kHz — it's 800 ± a few kHz — but the LEDs don't care.</li>
+  <li><strong>You can use a PIO program with integer-cycle delays</strong> (no fractional divider). A common approach: target each phase of the pulse as a multiple of a base "tick" derived from sysclk. For T0H = ~350 ns at 150 MHz, that's 52 cycles, which you encode as a sequence of NOP instructions with delays.</li>
+  <li><strong>You can transmit slower than 800 kHz</strong> — say 600 kHz with proportionally longer T0H/T1H/T0L/T1L. Most parts accept it. <strong>You cannot transmit faster than ~1 MHz</strong>; the on-chip sample-and-latch logic isn't fast enough.</li>
+</ul>
+
+<h3 id="jitter-budget">Jitter budget</h3>
+
+<p>The single biggest source of jitter on a software-driven WS2812 transmitter is <strong>interrupt latency</strong>. If your driver is a tight CPU loop and any interrupt fires mid-frame, you'll insert tens of microseconds of "low" into the middle of a pulse — which the LED reads as a <em>reset</em>. The frame is corrupted; the LEDs that already received their data show whatever colour was in flight; the rest go dark or hold their previous values.</p>
+
+<p>The two solutions:</p>
+
+<ol>
+  <li><strong>Disable interrupts for the duration of the frame.</strong> A 4-LED chain at 800 kHz takes 4 × 24 × 1.25 μs = 120 μs to transmit. Disabling interrupts for 120 μs is usually fine, but it's not a great pattern in a real-time system.</li>
+  <li><strong>Use hardware to generate the pulses.</strong> The PIO state machine (RP2350) or DMA-fed timer (STM32) drives the wire deterministically; the CPU just stages bytes into a buffer. <em>This is what every modern WS2812 driver does.</em></li>
+</ol>
+
+<!-- =========================================================== -->
+<h2 id="reset">The reset / latch window</h2>
+
+<p>"Reset" in WS2812 means: hold the line low for at least 50 μs (or 80 μs / 250 μs for some variants), then start a new bit stream. The action it triggers in each LED is "latch all the bits I've buffered into my colour register". Reset is how the host signals end-of-frame.</p>
+
+<p>This has two practical consequences:</p>
+
+<ul>
+  <li><strong>You don't transmit a frame "rate" — you transmit frames whenever you want, separated by reset.</strong> A 1-frame-per-second strobe and a 60-fps animation use the same protocol. Just send the bits, then idle for ≥50 μs.</li>
+  <li><strong>If your transmitter produces a >50 μs gap between bytes within a single frame, you've corrupted the frame.</strong> The LEDs that already received their 24 bits will latch and show their colour; the rest will be desynced. A naïve "send a byte, do something else, send another byte" CPU-loop driver fails this constraint constantly.</li>
+</ul>
+
+<div class="callout warn">
+  <span class="label">The most common bug</span>
+  "First LED is the right colour, the rest are random." Almost always: an interrupt or a function call inside the bit-banging loop introduced &gt;50 μs of low between two bits. The first LED received its 24 bits and latched; LEDs 2..N saw what looked like a half-frame and treated it as garbage.
+</div>
+
+<h3 id="reset-as-frame-marker">Reset is the frame marker</h3>
+
+<p>Some protocol families use a "start of frame" marker; WS2812 uses an "end of frame" marker (the reset). Combined with the daisy-chain shift behaviour (next section), this means a host can be totally <em>stateless</em> — every transmission is a complete frame; the chain doesn't have any persistent state beyond the colour register.</p>
+
+<!-- =========================================================== -->
+<h2 id="color-order">Color order — GRB, RGB, RGBW, and why it matters</h2>
+
+<p>Each WS2812 LED reads <strong>24 bits</strong> per frame, and the order it expects those bits is <strong>green, then red, then blue</strong> (G-R-B), each as 8 bits MSB-first. SK6812-RGBW reads <strong>32 bits</strong>: G-R-B-W.</p>
+
+<pre><code>Bits per LED, in transmission order:
+
+WS2812 / WS2812B / SK6812 (GRB):
+  bit  0 ──────── bit 23
+  G7 G6 G5 ... G0 R7 R6 ... R0 B7 ... B0
+  └ green ─┘     └ red ─┘     └ blue ─┘
+
+SK6812-RGBW (GRBW):
+  G7 ... G0 R7 ... R0 B7 ... B0 W7 ... W0
+  └ green ─┘└ red ──┘└ blue ──┘└ white ─┘
+</code></pre>
+
+<p>This is the cause of about a third of all WS2812 first-time bugs: developers send bytes in <em>RGB</em> order (because that's what they think) and end up with red showing as green and vice versa. The fix is one line — in the firmware, build a per-LED 24-bit value as <code>(green &lt;&lt; 16) | (red &lt;&lt; 8) | blue</code> instead of the more intuitive <code>(red &lt;&lt; 16) | (green &lt;&lt; 8) | blue</code>. Most driver libraries have a <code>strip.set_pixel(i, r, g, b)</code> API that does the swap internally; if you're rolling your own, remember it.</p>
+
+<h3 id="brightness">8-bit brightness, 256 levels per channel</h3>
+
+<p>Each colour channel is a flat 8-bit integer 0..255. The LED's controller drives the LED at a duty cycle proportional to that integer, with PWM at 400 Hz internal — fast enough that the eye sees a continuous brightness, slow enough that the LED's analog driver doesn't have to be fast. Common gotchas:</p>
+
+<ul>
+  <li><strong>Linear vs. perceptual brightness</strong> — the eye is logarithmic. A value of 32 looks much more than half as bright as 64. Most polished animations apply a gamma curve (typically γ=2.2) before sending. Without gamma, low values are eye-searingly bright and the dark end of the gradient is unusable.</li>
+  <li><strong>Power.</strong> A single WS2812 at full white (255, 255, 255) draws ~60 mA. A 1-meter strip of 60 LEDs at full white draws 3.6 A — significant. Never run a strip at full white from USB without thinking. edevkit1's status LEDs are limited to ~40% brightness in firmware to keep the total chain ≤ 30 mA.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="chain">Daisy chain — how N LEDs share one wire</h2>
+
+<p>The protocol's most clever trick: each LED in the chain forwards what comes after the first 24 (or 32) bits to its <strong>DOUT</strong> pin, after consuming the first 24 (or 32) bits itself. So:</p>
+
+<pre><code>HOST ── DIN ──→ [LED 1] ── DOUT ── DIN ──→ [LED 2] ── DOUT ── DIN ──→ [LED 3] ──→ ...
+
+If host sends:  [G1 R1 B1] [G2 R2 B2] [G3 R3 B3] ... reset
+LED 1 consumes: [G1 R1 B1]
+LED 1 forwards:            [G2 R2 B2] [G3 R3 B3] ... reset to LED 2
+LED 2 consumes:            [G2 R2 B2]
+LED 2 forwards:                       [G3 R3 B3] ... reset to LED 3
+LED 3 consumes:                       [G3 R3 B3]
+... etc.
+On reset, every LED latches its captured 24 bits into its colour register.
+</code></pre>
+
+<p>This is "shift-register" semantics implemented in each LED's controller. It means:</p>
+
+<ul>
+  <li><strong>You don't address LEDs by index.</strong> You send N LEDs' worth of data in physical chain order; whichever LED is wired first receives the first colour.</li>
+  <li><strong>The chain is "stateless" between frames.</strong> Each frame is a complete update. There's no "set LED 5" command — there's only "send a 5-LED frame".</li>
+  <li><strong>You can chain hundreds of LEDs.</strong> The wire between LEDs is short (typically &lt;10 cm), and each LED actively re-drives the signal at its own VDD — so signal integrity doesn't degrade along the chain.</li>
+</ul>
+
+<h3 id="reverse-direction">"My chain wraps around" / "I want LED 5 first"</h3>
+
+<p>If your physical layout has the chain wired backwards from your logical "LED 0 is leftmost" model, just reverse the array order in software. Don't try to get cute with hardware. The cost is one <code>memcpy</code> per frame.</p>
+
+<!-- =========================================================== -->
+<h2 id="power">Power, ground, and the brownout problem</h2>
+
+<p>WS2812 LEDs can draw <strong>60 mA each</strong> at full white. The cumulative current adds up <em>fast</em>:</p>
+
+<table>
+  <tr><th>Chain</th><th>Idle (off)</th><th>Single-colour at 25%</th><th>Full white</th></tr>
+  <tr><td>4 LEDs (edevkit1)</td><td>~3 mA</td><td>~30 mA</td><td>~240 mA</td></tr>
+  <tr><td>30 LEDs (½ m strip)</td><td>~30 mA</td><td>~250 mA</td><td>~1.8 A</td></tr>
+  <tr><td>60 LEDs (1 m strip)</td><td>~60 mA</td><td>~500 mA</td><td>~3.6 A</td></tr>
+  <tr><td>300 LEDs (5 m strip)</td><td>~300 mA</td><td>~2.5 A</td><td>~18 A</td></tr>
+</table>
+
+<h3 id="brownout">The brownout / restart loop</h3>
+
+<p>The most common WS2812 hardware bug: you draw too much current through too thin a wire, the voltage drop along the wire pulls VDD on the far LEDs below 4.5V, those LEDs reset, you draw less current (because resetted LEDs are off), VDD recovers, the LEDs receive the next frame, draw current again, droop again — flickering, partially-on, occasionally-bright "dancing" LEDs that the developer interprets as "data corruption" but is actually power.</p>
+
+<p><strong>Fix:</strong> inject power at every 30–60 LEDs along long strips. Use thicker wires. Add a 1000 μF cap across VDD/GND at the strip head. Don't share the host MCU's VDD with the LED VDD on long strips — give them separate paths from the regulator.</p>
+
+<h3 id="ground-return">Ground return is part of the data path</h3>
+
+<p>WS2812 communicates by the voltage difference between DATA and GND. If GND has a lot of resistance (thin wire, long path, multiple high-current ground-return junctions), the DATA signal at the far end is referenced to a different ground than at the host. The bits start to look corrupted at that end.</p>
+
+<p>Treat the GND return wire with the same respect you give VDD. Same gauge, same thickness, ideally tied at multiple points along the strip if it's long.</p>
+
+<!-- =========================================================== -->
+<h2 id="level-shifter">3.3V data into a 5V LED — the universal gotcha</h2>
+
+<p>WS2812B's data pin requires <strong>0.7 × VDD</strong> minimum to read as a logic high. With VDD = 5V, that's 3.5V minimum on DIN. RP2040, RP2350, STM32, and most modern MCUs run at 3.3V — their GPIOs output 3.3V high. <strong>That's below the threshold.</strong></p>
+
+<p>What happens:</p>
+
+<ul>
+  <li>Sometimes works at room temperature with brand-new LEDs.</li>
+  <li>Fails when the LEDs heat up (Vt rises with temperature).</li>
+  <li>Fails when the chain is long (signal sag from capacitive loading).</li>
+  <li>Fails when VDD is at the high end of its tolerance (5.25V instead of 5.0V).</li>
+  <li>Fails on cheaper SK6812 clones with tighter thresholds.</li>
+</ul>
+
+<p><strong>The fix:</strong> add a 74AHCT125 or 74HCT245 buffer between the 3.3V GPIO and the LED's DIN. These parts have a <em>TTL-compatible</em> input threshold (~2V high) and a 5V output, so they happily convert 3.3V GPIO to 4.5V DIN. They cost less than a cup of coffee and they completely eliminate this whole class of bug.</p>
+
+<p>Alternative: lower the LED's VDD. A WS2812B at VDD = 4.0V has a logic-high threshold of 0.7 × 4.0 = 2.8V, well within the 3.3V GPIO drive range. Many "Pico + WS2812" tutorials wire VDD to a forward-biased diode dropping 5V to ~4.3V for exactly this reason. Costs 1 diode, eliminates the buffer chip, slightly dims the LEDs.</p>
+
+<div class="callout warn">
+  <span class="label">edevkit1 LED chain</span>
+  edevkit1's onboard 4-LED chain uses <strong>SK6812-RGBW at VDD = 3.3V</strong>, not 5V. SK6812 at 3.3V has a logic-high threshold of 0.7 × 3.3 = 2.3V, which RP2350's 3.3V GPIO drives cleanly. No level shifter needed. This is also why we picked SK6812 over WS2812B for the bench-friendly version — the 3.3V-tolerant operation makes hand-rework easier.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="status-leds">The four onboard status LEDs</h2>
+
+<p>edevkit1 has a four-LED status indicator on the top-edge near the USB-C connector. From left to right:</p>
+
+<table>
+  <tr><th>Position</th><th>Role</th><th>Default state</th></tr>
+  <tr><td><strong>LED 0</strong></td><td>Power / boot status</td><td>Steady green = healthy<br>Pulsing yellow = bootloader<br>Steady red = brownout / fault</td></tr>
+  <tr><td><strong>LED 1</strong></td><td>USB / link status</td><td>Off = no host<br>Steady blue = enumerated<br>Blinking = data activity</td></tr>
+  <tr><td><strong>LED 2</strong></td><td>Debug-probe activity</td><td>Off = idle<br>Cyan = SWD link<br>Magenta = JTAG link<br>Pulsing = active transfer</td></tr>
+  <tr><td><strong>LED 3</strong></td><td>Protocol-tester activity</td><td>Off = idle<br>White = I²C<br>Yellow = SPI<br>Orange = QSPI<br>Pulsing = active transfer</td></tr>
+</table>
+
+<p>All four LEDs are addressable individually; the firmware encodes "boot states" as named patterns (<code>STATE_BOOT</code>, <code>STATE_RUNNING</code>, <code>STATE_FAULT</code>, etc.) that map to specific colour/brightness vectors across the four LEDs. The full mapping is in <code>firmware/app/src/boot/leds.c</code>.</p>
+
+<p>Wiring: GPIO 33 from RP2350 → 4× SK6812-RGBW in chain → DOUT of last LED is left floating (not used; could chain externally on v2). VDD is 3.3V (no level shifter). 100 nF decoupling cap at each LED's VDD-GND.</p>
+
+<!-- =========================================================== -->
+<h2 id="pio-program">The ws2812.pio program — 4 instructions, 800 kHz</h2>
+
+<p>edevkit1's WS2812 driver is a textbook PIO program — it's small enough to read in one go:</p>
+
+<pre><code>; firmware/app/pio/ws2812.pio
+;
+; SK6812-RGBW transmitter at 800 kHz, target sysclk = 150 MHz.
+; Each bit is 1.25 μs = 187.5 sysclk cycles.
+; We use 3 PIO instructions per bit, so each PIO cycle = 62.5 sysclk cycles.
+; Achieved by integer divider 62 + fractional 128/256 = 62.5 exactly.
+
+.program ws2812
+.side_set 1                           ; one side-set bit drives the data pin
+
+.wrap_target
+bitloop:
+    out  x, 1         side 0  [2]    ; pull next bit into X, hold low for 3 PIO cycles
+                                      ;   (this is the "tail of previous bit" + start-of-new low)
+    jmp  !x do_zero   side 1  [1]    ; raise high; if X==0, branch to "zero-bit" path
+do_one:
+    jmp  bitloop      side 1  [4]    ; high for 5 cycles total, then back to top
+do_zero:
+    nop               side 0  [4]    ; low for 5 cycles (i.e. high was just 2 cycles)
+.wrap
+
+; Cycle accounting:
+;   PIO cycle = 62.5 sysclk = 416.7 ns
+;   Each bit takes 8 PIO cycles total = 1.25 μs ✓
+;   1-bit:  side 0 [2]      → 3 cycles low ── 1.25 μs total
+;           side 1 [1]      → 2 cycles high
+;           side 1 [4]      → 5 cycles high (carries into next bitloop)
+;            ^ totals: 3 low + 7 high = 1.25 μs ... wait, that gives a mostly-high bit.
+;            Actually: T1H = 5+2 = 7 cycles ≈ 0.875 μs ✓ (within spec)
+;                      T1L = 3 cycles ≈ 0.375 μs (the trailing low at the start of next bit)
+;   0-bit:  side 0 [2]      → 3 cycles low
+;           side 1 [1]      → 2 cycles high
+;           side 0 [4]      → 5 cycles low
+;            ^ totals: T0H = 2 cycles ≈ 0.25 μs ✓
+;                      T0L = 8 cycles ≈ 1.0 μs ✓
+</code></pre>
+
+<p>Three things to note:</p>
+
+<ol>
+  <li>The program is <strong>4 instructions</strong>. It fits comfortably alongside the SWD/JTAG and SWO programs in PIO0's 32-instruction memory.</li>
+  <li><strong>No CPU involvement once started.</strong> Auto-pull from the TX FIFO refills the OSR; DMA refills the TX FIFO from a SRAM buffer. The CPU writes 4 × 4 bytes (16 bytes) to a buffer once per frame and the PIO program drives the wire from there.</li>
+  <li>The whole frame for 4 RGBW LEDs takes 4 × 32 × 1.25 μs = 160 μs. With 80 μs of reset added, a "full frame update" costs 240 μs, of which the CPU spends about 1 μs setting up the DMA — the other 239 μs the CPU is free.</li>
+</ol>
+
+<!-- =========================================================== -->
+<h2 id="dispatcher">The dispatcher — DMA + colour patterns + boot states</h2>
+
+<pre><code>// firmware/app/src/boot/leds.c (excerpt, simplified)
+#include &lt;hardware/pio.h&gt;
+#include &lt;hardware/dma.h&gt;
+#include "ws2812.pio.h"
+
+#define LED_COUNT 4
+#define LED_PIN   33
+
+static PIO        led_pio   = pio0;
+static uint       led_sm    = 2;
+static uint       dma_chan;
+static uint32_t   led_buf[LED_COUNT];      // packed GRBW per LED, MSB-first
+
+static uint32_t pack_grbw(uint8_t g, uint8_t r, uint8_t b, uint8_t w)
+{
+    /* PIO program shifts MSB-first, so put G in the top byte. */
+    return ((uint32_t)g &lt;&lt; 24) | ((uint32_t)r &lt;&lt; 16) |
+           ((uint32_t)b &lt;&lt;  8) | ((uint32_t)w &lt;&lt;  0);
+}
+
+void leds_init(void)
+{
+    uint offset = pio_add_program(led_pio, &amp;ws2812_program);
+    pio_sm_config c = ws2812_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&amp;c, LED_PIN);
+    sm_config_set_out_shift(&amp;c, false /*MSB-first*/, true /*autopull*/, 32);
+    sm_config_set_fifo_join(&amp;c, PIO_FIFO_JOIN_TX);  // 8-word TX = 32 bytes buffer
+    sm_config_set_clkdiv_int_frac(&amp;c, 62, 128);     // 62 + 128/256 = 62.5
+
+    pio_gpio_init(led_pio, LED_PIN);
+    pio_sm_set_consecutive_pindirs(led_pio, led_sm, LED_PIN, 1, true);
+    pio_sm_init(led_pio, led_sm, offset, &amp;c);
+    pio_sm_set_enabled(led_pio, led_sm, true);
+
+    dma_chan = dma_claim_unused_channel(true);
+}
+
+void leds_show(void)
+{
+    /* DMA the 4 packed words into the SM's TX FIFO; SM auto-pulls from there. */
+    dma_channel_config cfg = dma_channel_get_default_config(dma_chan);
+    channel_config_set_dreq(&amp;cfg, pio_get_dreq(led_pio, led_sm, true /*tx*/));
+    channel_config_set_transfer_data_size(&amp;cfg, DMA_SIZE_32);
+    channel_config_set_read_increment(&amp;cfg, true);
+    channel_config_set_write_increment(&amp;cfg, false);
+
+    dma_channel_configure(dma_chan, &amp;cfg,
+                          &amp;led_pio-&gt;txf[led_sm], led_buf, LED_COUNT, true);
+    dma_channel_wait_for_finish_blocking(dma_chan);
+    /* PIO program continues clocking the last bit out for ~1.25 μs after DMA finishes;
+       sleep 100 μs for safety + reset latch. */
+    sleep_us(100);
+}
+
+void led_set(int idx, uint8_t r, uint8_t g, uint8_t b, uint8_t w)
+{
+    if (idx &lt; 0 || idx &gt;= LED_COUNT) return;
+    led_buf[idx] = pack_grbw(g, r, b, w);
+}
+</code></pre>
+
+<!-- =========================================================== -->
+<h2 id="code">Code — push a colour, animate a boot sequence</h2>
+
+<pre><code>// Set LED 0 to dim green:
+led_set(0, 0, 64, 0, 0);   leds_show();
+
+// Set all four to white via the W channel (efficient — only one channel lit):
+led_set(0, 0, 0, 0, 64);
+led_set(1, 0, 0, 0, 64);
+led_set(2, 0, 0, 0, 64);
+led_set(3, 0, 0, 0, 64);
+leds_show();
+
+// Boot animation — pulse green from left to right:
+for (int frame = 0; frame &lt; 60; frame++) {
+    int active_led = frame / 15;       // change LED every 15 frames
+    uint8_t intensity = ((frame % 15) * 16);
+    for (int i = 0; i &lt; LED_COUNT; i++) {
+        if (i == active_led) led_set(i, 0, intensity, 0, 0);
+        else                  led_set(i, 0, 0, 0, 0);
+    }
+    leds_show();
+    sleep_ms(16);                      // ~60 fps
+}
+</code></pre>
+
+<p class="small">The full driver in <code>firmware/app/src/boot/leds.c</code> wraps this in a higher-level "named state" API (<code>leds_set_state(STATE_USB_ENUMERATED)</code>) that's the only interface most of the firmware uses. Direct colour-setting is reserved for tests and the user-controlled CLI command <code>edevkit led set</code>.</p>
+
+<!-- =========================================================== -->
+<h2 id="variants">WS2812 vs WS2812B vs SK6812 vs WS2813 — what's actually different</h2>
+
+<table>
+  <tr><th></th><th>WS2812</th><th>WS2812B</th><th>SK6812</th><th>SK6812-RGBW</th><th>WS2813</th></tr>
+  <tr><td>Pin count</td><td>6 (separate VDD/data)</td><td>4</td><td>4</td><td>4</td><td>5 (DI + DI-backup)</td></tr>
+  <tr><td>Bits per LED</td><td>24</td><td>24</td><td>24</td><td>32</td><td>24</td></tr>
+  <tr><td>Color order</td><td>GRB</td><td>GRB</td><td>GRB</td><td>GRBW</td><td>GRB</td></tr>
+  <tr><td>Reset</td><td>≥50 μs</td><td>≥50 μs</td><td>≥80 μs</td><td>≥80 μs</td><td>≥250 μs</td></tr>
+  <tr><td>Operating voltage</td><td>5V</td><td>5V (3.3V "V5" variant)</td><td>5V or 3.3V</td><td>5V or 3.3V</td><td>5V</td></tr>
+  <tr><td>Failure mode</td><td>Single LED failure breaks chain after that point</td><td>Same</td><td>Same</td><td>Same</td><td><strong>Backup line means single-LED failure does not break chain</strong></td></tr>
+  <tr><td>Cost (1k qty)</td><td>n/a (legacy)</td><td>~$0.05</td><td>~$0.04</td><td>~$0.07</td><td>~$0.10</td></tr>
+  <tr><td>Best for</td><td>—</td><td>Generic strip / panel</td><td>Cost-sensitive strip</td><td>Status indicators (true white)</td><td>Long permanent installations</td></tr>
+</table>
+
+<h3 id="rgbw-trick">SK6812-RGBW — the secret weapon for status indicators</h3>
+
+<p>The W channel on RGBW parts is a discrete white LED (typically 6500K) <em>in addition to</em> the RGB triplet. Why does this matter?</p>
+
+<ul>
+  <li><strong>True white doesn't look right from RGB alone.</strong> RGB white at full intensity is purplish; the eye sees the slight imbalance instantly. RGBW's discrete white is calibrated to look neutral.</li>
+  <li><strong>Lower power for the same perceived brightness.</strong> Driving (0,0,0,128) consumes ~25 mA. Driving (128,128,128,0) for the same perceived brightness consumes ~50 mA.</li>
+  <li><strong>Better mixing for pastel colours.</strong> Pale-blue, pale-pink, etc. — RGB has to use very low values across all three channels (which exposes the gamma quantisation) where RGBW just adds W to a pure colour.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="pitfalls">Common pitfalls &amp; first-time bugs</h2>
+
+<table>
+  <tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr>
+  <tr><td>Colours are swapped — sending "red" produces "green".</td><td>Sending bytes in RGB order; chip expects GRB.</td><td>Pack as <code>(G &lt;&lt; 16) | (R &lt;&lt; 8) | B</code>.</td></tr>
+  <tr><td>First LED works; rest are random / dark.</td><td>&gt;50 μs gap somewhere in the bit stream — likely an interrupt during a CPU bit-bang loop.</td><td>Use DMA + PIO (or DMA + timer on STM32). Don't bit-bang.</td></tr>
+  <tr><td>Chain works at room temp, fails when warm.</td><td>3.3V GPIO not meeting the 5V LED's 0.7 × VDD threshold; gets worse as Vt rises with temp.</td><td>Add a 74AHCT125 buffer, OR drop VDD with a series diode, OR switch to 3.3V-tolerant SK6812.</td></tr>
+  <tr><td>Far end of long strip flickers / dances at random.</td><td>Voltage sag along the wire from current draw; far LEDs brown out.</td><td>Inject power every 30–60 LEDs; thicker wires; bulk capacitor at the strip head.</td></tr>
+  <tr><td>"Last LED" stays on after reset — never goes off.</td><td>The PIO/timer driver is leaving the data line high after the last bit; that high is being interpreted as the start of a new (incomplete) bit.</td><td>Always end the frame with the line driven low for ≥50 μs (the reset). Leave the GPIO driving low at idle.</td></tr>
+  <tr><td>Doubling LED count doubles the time my main loop takes.</td><td>You're using a CPU bit-bang driver that stalls the entire core for the duration of the frame.</td><td>Move to PIO + DMA. The main loop should take the same time regardless of chain length.</td></tr>
+  <tr><td>Frame "tears" — top half new colour, bottom half old.</td><td>You're updating the buffer while DMA is still reading from it.</td><td>Use a double buffer, or wait for <code>dma_channel_wait_for_finish_blocking</code> before touching the buffer.</td></tr>
+  <tr><td>Sticky pixel / one LED stuck at a colour different from what you sent.</td><td>That specific LED is failing — partial silicon damage from previous overvoltage. Common after a brownout cascade.</td><td>Replace the LED. WS2813's backup-data line specifically addresses this failure mode.</td></tr>
+  <tr><td>Random pixels twinkling when you didn't ask them to.</td><td>EMI on a long DIN wire, or a poor ground.</td><td>Add a 470Ω series resistor on the DIN line right at the strip start (limits ringing and capacitive coupling). Improve ground.</td></tr>
+  <tr><td>Reflashed firmware and now the LEDs are "garbage" — fast strobing patterns.</td><td>The PIO program / clock divider is wrong for your sysclk. Common after porting from RP2040 (125 MHz) to RP2350 (150 MHz) without recomputing.</td><td>Compute the divider from <code>clock_get_hz(clk_sys)</code> at runtime, not as a hard-coded constant.</td></tr>
+</table>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<ul>
+  <li><strong>WS2812B datasheet (Worldsemi)</strong> — the canonical timing diagram. Pages 4–5 are the parts you'll want to read.</li>
+  <li><strong>SK6812 datasheet</strong> — the cheaper clone, with slightly different reset window. The datasheet is single-page and worth keeping bookmarked.</li>
+  <li><strong>SK6812-RGBW datasheet</strong> — for the 32-bit variant edevkit1 uses.</li>
+  <li><strong>Tim's WS2812 protocol cheat sheet</strong> (cpldcpu / WordPress) — empirical measurements of what actually works on what variants. Indispensable for understanding the timing tolerances.</li>
+  <li><strong>Adafruit NeoPixel Überguide</strong> — power, wiring, and visual debugging for production-style installations.</li>
+  <li><strong>Pico-SDK <code>pico-examples/pio/ws2812</code></strong> — the canonical PIO driver. Read the .pio source side-by-side with this doc.</li>
+  <li><strong>edevkit1 source</strong> at <code>firmware/app/pio/ws2812.pio</code> and <code>firmware/app/src/boot/leds.c</code> — the production driver and dispatcher.</li>
+  <li><strong><a href="platform_pio.html">platform_pio.html</a></strong> — the underlying RP2350 PIO model. Read this if any of the PIO program above seemed mysterious.</li>
+</ul>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="proto_uart.html"><span class="dir">← Previous</span><span class="cat">Protocols</span><span class="title">UART asynchronous serial</span></a>
+<a class="next" href="platform_pio.html"><span class="dir">Next →</span><span class="cat">Platform</span><span class="title">RP2350 PIO programming model</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit1 · WS2812 protocol reference · last updated with the v0.1 firmware tree.
+  Timing numbers above match SK6812 and WS2812B silicon shipping at the time of
+  writing — verify against your part's datasheet erratum before using these as authoritative.
+</footer>
+
+</div><!-- /.wrap -->
+
+<button class="scroll-top" id="scroll-top" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M18 15l-6-6-6 6"/>
+  </svg>
+</button>
+
+<script>
+  (function () {
+    var btn = document.getElementById('theme-btn');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var cur = document.documentElement.getAttribute('data-theme');
+      var next;
+      if (cur === 'dark')      next = 'light';
+      else if (cur === 'light') next = 'dark';
+      else {
+        var prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
+        next = prefersDark ? 'light' : 'dark';
+      }
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('edev_theme', next); } catch (e) {}
+    });
+  })();
+
+  (function () {
+    var btn = document.getElementById('scroll-top');
+    if (!btn) return;
+    function update() {
+      if (window.scrollY > 600) btn.classList.add('show');
+      else btn.classList.remove('show');
+    }
+    window.addEventListener('scroll', update, { passive: true });
+    btn.addEventListener('click', function () {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    update();
+  })();
+
+  (function () {
+    if (location.protocol === 'file:') {
+      var a = document.getElementById('back-to-hub');
+      if (a) a.style.display = 'none';
+    }
+  })();
+</script>
+</body>
+</html>

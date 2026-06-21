@@ -14,16 +14,23 @@ chrome unless the content is genuinely v1-only.
 
 ```
 tools/web/
-├── server.py               FastAPI app (~150 lines)
-├── requirements.txt        fastapi, uvicorn, jinja2
-├── pages/                  ← project HTML docs go here
+├── server.py                FastAPI app
+├── requirements.txt         fastapi, uvicorn, jinja2
+├── package.json             Tailwind build (devDeps only — needed to rebuild static/tailwind.css)
+├── tailwind.config.js       brand palette + custom animations
+├── tailwind.input.css       @tailwind directives
+├── pages/                   ← project HTML docs go here
 │   ├── edevkit1.html
 │   └── installation.html
-├── static/                 ← hub UI assets
-│   ├── style.css
-│   ├── script.js
+├── static/                  ← hub UI assets (served at /static)
+│   ├── tailwind.css         vendored Tailwind build (committed)
+│   ├── style.css            hub custom CSS (brand mark, search results, scrollbar, …)
+│   ├── script.js            hub interactivity (theme, search, sort, chips, …)
+│   ├── syntax.{js,css}      doc-page enhancements (highlighter, TOC rail, breadcrumbs, …)
+│   ├── manifest.webmanifest PWA metadata
+│   ├── sw.js                service worker (served from /sw.js so its scope covers /docs/*)
 │   └── favicon.svg
-└── templates/              Jinja2 templates for the hub itself
+└── templates/               Jinja2 templates for the hub itself
     ├── base.html
     ├── index.html
     └── 404.html
@@ -33,6 +40,21 @@ The hub is *just* the entry point: each doc in `pages/` is served as-is
 (its embedded styling is preserved). Internal `<a href="other.html">`
 links between docs continue to work because every doc lives in the same
 URL prefix `/docs/…`.
+
+## Rebuilding Tailwind
+
+`static/tailwind.css` is vendored (≈54 KB minified) so the hub has zero
+runtime dependency on the Tailwind CDN. After editing
+`tailwind.config.js` or adding new class names in `templates/` /
+`static/script.js`, rebuild:
+
+```bash
+cd tools/web
+npm install                    # one-time, populates node_modules/ (gitignored)
+npm run build:css              # rebuilds static/tailwind.css
+# or:
+npm run watch:css              # rebuilds on every save during dev
+```
 
 ## Run it (any OS)
 

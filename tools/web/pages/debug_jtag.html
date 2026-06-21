@@ -1,0 +1,1370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edevkit — JTAG (IEEE 1149.1) protocol</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="JTAG (IEEE 1149.1) reference for the edevkit docs hub: TAP state machine, IR/DR scans, multi-target chains, BSDL, JTAG-DP for ARM CoreSight, JTAG vs SWD, the JTAG-to-SWD switch, the 10/20-pin Cortex Debug Connector, and how edevkit1 implements JTAG on PIO0 SM0.">
+<meta name="theme-color" content="oklch(99% 0.003 240)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="oklch(16% 0.005 250)" media="(prefers-color-scheme: dark)">
+<style>
+  /* ── tokens — aligned to the docs hub design system ────────────────── */
+  :root {
+    color-scheme: light dark;
+    --brand:        oklch(56% 0.16 215);
+    --brand-2:      oklch(50% 0.18 235);
+    --brand-soft:   oklch(94% 0.04 215);
+    --brand-fg:     oklch(99% 0.005 215);
+    --brand-ring:   oklch(56% 0.16 215 / 0.28);
+    --accent:       oklch(72% 0.15 70);
+    --accent-soft:  oklch(95% 0.05 70);
+    --good:         oklch(58% 0.14 145);
+    --good-soft:    oklch(94% 0.05 145);
+    --warn:         oklch(72% 0.16 80);
+    --warn-soft:    oklch(95% 0.07 80);
+    --danger:       oklch(56% 0.20 28);
+    --danger-soft:  oklch(95% 0.05 28);
+    --info:         oklch(56% 0.16 215);
+    --info-soft:    oklch(94% 0.04 215);
+
+    --linux: var(--accent);          --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);           --mac-soft:   var(--brand-soft);
+    --win:   oklch(60% 0.18 290);    --win-soft:   oklch(94% 0.04 290);
+
+    --bg:           oklch(99.2% 0.003 240);
+    --bg-soft:      oklch(97% 0.005 240);
+    --bg-elev:      oklch(100% 0 0);
+    --line:         oklch(91% 0.012 240);
+    --line-soft:    oklch(94.5% 0.008 240);
+    --line-strong:  oklch(85% 0.014 240);
+    --grid-dot:     oklch(0% 0 0 / .055);
+    --code-bg:      oklch(96.5% 0.007 240);
+    --code-border:  oklch(91% 0.012 240);
+
+    --fg:           oklch(20% 0.02 240);
+    --fg-2:         oklch(36% 0.02 240);
+    --muted:        oklch(50% 0.02 240);
+    --faint:        oklch(64% 0.015 240);
+
+    --r-2:6px; --r-3:10px; --r-4:14px; --r-pill:999px;
+    --shadow-1: 0 1px 2px oklch(0% 0 0 / .04), 0 1px 1px oklch(0% 0 0 / .04);
+    --shadow-2: 0 1px 2px oklch(0% 0 0 / .04), 0 4px 14px oklch(0% 0 0 / .07);
+    --ease: cubic-bezier(.2, 0, 0, 1);
+    --dur: 200ms;
+
+    --font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-text: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --brand:        oklch(74% 0.14 215);
+      --brand-2:      oklch(70% 0.15 235);
+      --brand-soft:   oklch(30% 0.06 215);
+      --brand-fg:     oklch(16% 0.01 240);
+      --brand-ring:   oklch(74% 0.14 215 / 0.38);
+      --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+      --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+      --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+      --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+      --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+      --linux: var(--accent); --linux-soft: var(--accent-soft);
+      --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+      --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+      --bg:           oklch(16% 0.005 250);
+      --bg-soft:      oklch(20% 0.006 250);
+      --bg-elev:      oklch(24% 0.007 250);
+      --line:         oklch(30% 0.008 250);
+      --line-soft:    oklch(26% 0.006 250);
+      --line-strong:  oklch(40% 0.010 250);
+      --grid-dot:     oklch(100% 0 0 / .025);
+      --code-bg:      oklch(18% 0.005 250);
+      --code-border:  oklch(30% 0.008 250);
+
+      --fg:    oklch(96% 0.004 250);
+      --fg-2:  oklch(86% 0.006 250);
+      --muted: oklch(70% 0.008 250);
+      --faint: oklch(56% 0.010 250);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:        oklch(74% 0.14 215);
+    --brand-2:      oklch(70% 0.15 235);
+    --brand-soft:   oklch(30% 0.06 215);
+    --brand-fg:     oklch(16% 0.01 240);
+    --brand-ring:   oklch(74% 0.14 215 / 0.38);
+    --accent:       oklch(82% 0.14 70);   --accent-soft: oklch(30% 0.05 70);
+    --good:         oklch(74% 0.14 145);  --good-soft:   oklch(30% 0.05 145);
+    --warn:         oklch(84% 0.14 80);   --warn-soft:   oklch(30% 0.05 80);
+    --danger:       oklch(72% 0.18 28);   --danger-soft: oklch(30% 0.05 28);
+    --info:         oklch(74% 0.14 215);  --info-soft:   oklch(30% 0.06 215);
+    --linux: var(--accent); --linux-soft: var(--accent-soft);
+    --mac:   var(--brand);  --mac-soft:   var(--brand-soft);
+    --win:   oklch(76% 0.14 290); --win-soft: oklch(30% 0.06 290);
+
+    --bg:           oklch(16% 0.005 250);
+    --bg-soft:      oklch(20% 0.006 250);
+    --bg-elev:      oklch(24% 0.007 250);
+    --line:         oklch(30% 0.008 250);
+    --line-soft:    oklch(26% 0.006 250);
+    --line-strong:  oklch(40% 0.010 250);
+    --grid-dot:     oklch(100% 0 0 / .025);
+    --code-bg:      oklch(18% 0.005 250);
+    --code-border:  oklch(30% 0.008 250);
+
+    --fg:    oklch(96% 0.004 250);
+    --fg-2:  oklch(86% 0.006 250);
+    --muted: oklch(70% 0.008 250);
+    --faint: oklch(56% 0.010 250);
+  }
+
+  /* ── reset / base ──────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font-text);
+    font-size: 16.5px; line-height: 1.65;
+    color: var(--fg); background: var(--bg);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    /* graticule background — top-faded so it doesn't overwhelm */
+    background-image: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+  ::selection { background: color-mix(in oklch, var(--brand) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── topbar (sticky nav + theme toggle) ────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    background: color-mix(in oklch, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: 1040px; margin: 0 auto;
+    padding: 12px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg-2);
+    padding: 6px 10px;
+    border-radius: var(--r-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .back-link:hover { background: var(--bg-soft); color: var(--brand); }
+  .back-link .mark {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    flex-shrink: 0; position: relative;
+  }
+  .back-link .mark::after {
+    content: ""; position: absolute; inset: 3px;
+    background: var(--brand-fg);
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='black' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'><rect x='16' y='20' width='32' height='24' rx='3'/><line x1='24' y1='13' x2='24' y2='20'/><line x1='32' y1='13' x2='32' y2='20'/><line x1='40' y1='13' x2='40' y2='20'/><line x1='24' y1='44' x2='24' y2='51'/><line x1='32' y1='44' x2='32' y2='51'/><line x1='40' y1='44' x2='40' y2='51'/><path d='M 21 32 L 27 32 L 27 26 L 32 26 L 32 38 L 37 38 L 37 32 L 43 32'/></svg>");
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .topbar .doc-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .topbar .grow { flex: 1; }
+  .topbar .theme-btn {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .topbar .theme-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  .topbar .theme-btn svg { width: 16px; height: 16px; }
+  .topbar .theme-btn .sun { display: none; }
+  :root[data-theme="dark"] .topbar .theme-btn .sun { display: block; }
+  :root[data-theme="dark"] .topbar .theme-btn .moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .topbar .theme-btn .sun { display: block; }
+    :root:not([data-theme="light"]) .topbar .theme-btn .moon { display: none; }
+  }
+
+  /* ── content wrap ──────────────────────────────────────────────────── */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── hero ──────────────────────────────────────────────────────────── */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  header.hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--muted);
+    padding: 5px 11px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  header.hero .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 22%, transparent);
+  }
+
+  /* ── typography ────────────────────────────────────────────────────── */
+  h1, h2, h3, h4 { font-family: var(--font-sans); }
+  h1 {
+    font-size: clamp(32px, 5vw, 44px); line-height: 1.05;
+    margin: 14px 0 12px; letter-spacing: -0.025em; font-weight: 700;
+  }
+  h2 {
+    font-size: 26px; margin-top: 56px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.018em; font-weight: 700;
+  }
+  h3 {
+    font-size: 19px; margin-top: 28px; margin-bottom: 8px;
+    letter-spacing: -0.012em; font-weight: 600;
+  }
+  h4 {
+    font-size: 12px; margin-top: 22px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-weight: 700;
+  }
+  p, li { color: var(--fg); }
+  a { color: var(--brand); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: color-mix(in oklch, var(--brand) 80%, var(--fg)); text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  /* ── code ──────────────────────────────────────────────────────────── */
+  code, pre, .mono { font-family: var(--font-mono); }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--code-border);
+  }
+  pre {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: var(--r-3);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13.5px; line-height: 1.55;
+    box-shadow: var(--shadow-1);
+  }
+  pre code { background: transparent; padding: 0; border: 0; font-size: inherit; }
+
+  /* ── callouts ──────────────────────────────────────────────────────── */
+  .callout {
+    margin: 18px 0;
+    padding: 14px 18px;
+    border-radius: var(--r-3);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+  }
+  .callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .callout.good { background: var(--good-soft); border-left-color: var(--good); }
+  .callout.info { background: var(--brand-soft); border-left-color: var(--brand); }
+  .callout .label {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+
+  /* ── OS cards (Linux / macOS / Windows) ────────────────────────────── */
+  .os-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-3);
+    padding: 16px 20px 10px;
+    margin: 14px 0;
+    background: var(--bg-elev);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .os-card:hover { box-shadow: var(--shadow-1); }
+  .os-card.linux { border-left-color: var(--linux); background: linear-gradient(180deg, color-mix(in oklch, var(--linux-soft) 50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.mac   { border-left-color: var(--mac);   background: linear-gradient(180deg, color-mix(in oklch, var(--mac-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card.win   { border-left-color: var(--win);   background: linear-gradient(180deg, color-mix(in oklch, var(--win-soft)   50%, var(--bg-elev)) 0%, var(--bg-elev) 60%); }
+  .os-card .os-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .os-card.linux .os-tag { background: var(--linux-soft); color: var(--linux); border-color: transparent; }
+  .os-card.mac   .os-tag { background: var(--mac-soft);   color: var(--mac);   border-color: transparent; }
+  .os-card.win   .os-tag { background: var(--win-soft);   color: var(--win);   border-color: transparent; }
+  .os-card.linux .os-tag::before, .os-card.mac .os-tag::before, .os-card.win .os-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .os-card.linux .os-tag::before { background: var(--linux); }
+  .os-card.mac   .os-tag::before { background: var(--mac); }
+  .os-card.win   .os-tag::before { background: var(--win); }
+
+  /* ── numbered step ─────────────────────────────────────────────────── */
+  .step {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--r-3);
+    padding: 20px 26px;
+    margin: 30px 0 18px;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
+    box-shadow: var(--shadow-1);
+  }
+  .step .num {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    margin-right: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    letter-spacing: 0.04em;
+  }
+  .step .est {
+    float: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--bg-soft);
+    padding: 3px 12px;
+    border-radius: var(--r-pill);
+    margin-top: 4px;
+    border: 1px solid var(--line);
+  }
+  .step h3 { margin-top: 0; }
+
+  /* ── tables ────────────────────────────────────────────────────────── */
+  table {
+    border-collapse: separate; border-spacing: 0;
+    width: 100%; margin: 18px 0;
+    font-size: 14.5px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  th, td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 13px;
+    text-align: left; vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--fg-2);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td { background: color-mix(in oklch, var(--brand) 4%, transparent); }
+  td.center { text-align: center; }
+  td.mono   { font-family: var(--font-mono); font-size: 13.5px; }
+
+  /* ── TOC ───────────────────────────────────────────────────────────── */
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px 24px;
+    margin: 24px 0 36px;
+  }
+  .toc ol { margin: 0; padding-left: 24px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--fg-2); }
+  .toc a:hover { color: var(--brand); }
+  .toc .heading {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+  .toc .heading:first-child { border-top: none; padding-top: 0; }
+
+  /* ── small text + pills + badges ───────────────────────────────────── */
+  .small { font-size: 14px; color: var(--muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in oklch, var(--brand) 25%, transparent);
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 1.5px 8px;
+    border-radius: var(--r-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok    { background: var(--good-soft);   color: var(--good); }
+  .badge.part  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.no    { background: var(--danger-soft); color: var(--danger); }
+
+  /* ── checklist ─────────────────────────────────────────────────────── */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 6px 0 6px 30px;
+    position: relative;
+    border-bottom: 1px dashed var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--bg-elev);
+    transition: all var(--dur) var(--ease);
+  }
+  .checklist li.done::before {
+    border-color: var(--good);
+    background: var(--good);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+    background-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  /* ── footer ────────────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ── floating scroll-to-top ────────────────────────────────────────── */
+  .scroll-top {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    width: 42px; height: 42px;
+    display: grid; place-items: center;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--fg-2);
+    cursor: pointer;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity var(--dur) var(--ease),
+                transform var(--dur) var(--ease),
+                background var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+    box-shadow: var(--shadow-2);
+    z-index: 40;
+  }
+  .scroll-top.show { opacity: 1; transform: translateY(0); }
+  .scroll-top:hover { background: var(--brand); color: var(--brand-fg); border-color: transparent; }
+  .scroll-top svg { width: 18px; height: 18px; }
+
+  /* ── responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .topbar-inner { padding: 10px 16px; }
+    .wrap { padding: 24px 16px 64px; }
+    .step .est { float: none; display: inline-block; margin-top: 6px; }
+    table { font-size: 13.5px; }
+    th, td { padding: 7px 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  // pre-paint theme — prevents FOUC
+  (function () {
+    try {
+      var t = localStorage.getItem('edev_theme');
+      if (t === 'dark' || t === 'light')
+        document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+  <!-- edevkit:syntax-assets -->
+  <link rel="stylesheet" href="../static/syntax.css">
+  <script defer src="../static/syntax.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back-link" href="/" id="back-to-hub" title="Back to docs hub">
+      <span class="mark" aria-hidden="true"></span>
+      <span><span aria-hidden="true">←</span> edevkit</span>
+    </a>
+    <span class="doc-tag">Debug · JTAG</span>
+    <span class="grow"></span>
+    <button class="theme-btn" type="button" id="theme-btn" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">edevkit · debug · JTAG</div>
+  <h1>JTAG — IEEE 1149.1 Test Access Port</h1>
+  <p class="small">A focused reference on <strong>JTAG (IEEE 1149.1)</strong> — the four-wire boundary-scan protocol that quietly became the universal MCU debug interface. This document covers the TAP state machine, instruction and data registers, multi-target chains, BSDL, ARM CoreSight's JTAG-DP, the JTAG-to-SWD switch sequence, and how <strong>edevkit1</strong> implements JTAG on PIO0 SM0. Sister documents: <a href="debug_swd.html">debug_swd.html</a> (the 2-wire ARM successor), <a href="debug_swo.html">debug_swo.html</a> (single-wire trace), <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> (the host-facing protocol on top), and <a href="platform_pio.html">platform_pio.html</a> (the RP2350 PIO programming model that drives the bit-bang).</p>
+  <p class="small"><strong>Audience.</strong> A firmware or hardware engineer who needs to debug an ARM Cortex-M (or RISC-V, or any IEEE-1149.1 compliant chip) and wants to understand <em>why</em> JTAG looks the way it does — not just memorise the register names. By the end you should be able to read an OpenOCD config, decode a logic-analyser capture of TCK/TMS/TDI/TDO, recognise an IDCODE shift, and explain to a colleague why ARM SoCs ship both JTAG and SWD on the same pads.</p>
+  <p class="small"><strong>What's covered here vs the sister docs.</strong> This doc owns the JTAG-protocol layer in full — pin signalling, TAP FSM, IR/DR, daisy chains, BSDL, JTAG-DP, the connector pinouts. The 2-wire reformulation lives in <a href="debug_swd.html">debug_swd.html</a>; instrumentation trace lives in <a href="debug_swo.html">debug_swo.html</a>; the USB-side framing lives in <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a>. Anything Cortex-M-architectural (DAP, AP/MEM-AP semantics, DWT, ITM register layouts) is in <a href="arm_architecture.html">arm_architecture.html</a> and <a href="arm_cortex_m33.html">arm_cortex_m33.html</a>.</p>
+</header>
+
+<nav class="toc">
+  <span class="heading">Background</span>
+  <ol>
+    <li><a href="#what">What JTAG is</a></li>
+    <li><a href="#signals">The four (or five) signals</a></li>
+  </ol>
+  <span class="heading">Protocol</span>
+  <ol>
+    <li><a href="#tap-fsm">The TAP state machine</a></li>
+    <li><a href="#ir-dr">IR and DR — the two registers behind every TAP</a></li>
+    <li><a href="#idcode-walk">Worked example — reading IDCODE end to end</a></li>
+    <li><a href="#chain">Multi-target chains</a></li>
+    <li><a href="#bsdl">BSDL — Boundary-Scan Description Language</a></li>
+  </ol>
+  <span class="heading">ARM CoreSight</span>
+  <ol>
+    <li><a href="#jtag-dp">JTAG-DP — the ARM Debug Port over JTAG</a></li>
+    <li><a href="#jtag-vs-swd">JTAG vs SWD — when each wins</a></li>
+    <li><a href="#switch">The JTAG-to-SWD switch sequence</a></li>
+  </ol>
+  <span class="heading">Hardware</span>
+  <ol>
+    <li><a href="#connectors">Connectors — 20-pin and 10-pin Cortex Debug</a></li>
+    <li><a href="#edevkit">edevkit1's JTAG implementation</a></li>
+  </ol>
+  <span class="heading">Practice</span>
+  <ol>
+    <li><a href="#pitfalls">Common pitfalls</a></li>
+    <li><a href="#further">Where to learn more</a></li>
+  </ol>
+</nav>
+
+<!-- =========================================================== -->
+<h2 id="what">What JTAG is</h2>
+
+<p><strong>JTAG</strong> stands for <em>Joint Test Action Group</em>, the working group that drafted what became the <strong>IEEE 1149.1</strong> standard, "Standard Test Access Port and Boundary-Scan Architecture", first ratified in 1990. The original problem it solved had nothing to do with debugging firmware. In the late 1980s, surface-mount packages (PLCC, then BGA) were making bed-of-nails PCB testers impractical: with no exposed pin to land a probe on, you couldn't drive a logic level into a node and observe it on the next chip. JTAG's answer was to put the test-probe inside every chip: a small "boundary-scan" register sits between each pin and the core logic, and a four-wire serial port lets you shift values into and out of every pin, on every chip on the board, simultaneously. Connect TDI on chip 1 to TDO on chip 2, daisy-chain through the whole board, and a single 4-wire connector lets a test rig drive and observe every soldered pad without touching any of them mechanically.</p>
+
+<p>That was the 1990 use case. Within a few years vendors realised the same TAP that drove the boundary-scan register could also drive <em>any</em> register internal to the chip — including registers that control the CPU's debug logic. By the mid-1990s, every serious microcontroller used JTAG as the debug-and-flash-programming interface. The boundary-scan use case still exists (PCB test houses use it heavily), but for embedded developers, "JTAG" today means "the ARM/MIPS/PowerPC/RISC-V/Xilinx debug interface that happens to also support boundary scan if you want it". Nearly every CPU that ships a debug interface ships JTAG; many modern parts also ship a stripped-down 2-wire variant (SWD on ARM, cJTAG / IEEE 1149.7 elsewhere) but the 4-wire port is still the lingua franca.</p>
+
+<p>The IEEE 1149.1 standard has been revised over the decades — 1990 (original), 1993, 2001 (the version most commonly cited), and 2013 (which folded in optional procedural-language extensions). The core four-wire interface and the 16-state TAP controller have been stable since 1990; everything else has been additive.</p>
+
+<div class="callout info">
+  <span class="label">key idea</span>
+  JTAG is, fundamentally, <em>a serial path that can address any register inside any chip on the chain</em>. Picking which register is the <strong>Instruction Register</strong> step; reading or writing that register's data is the <strong>Data Register</strong> step. The 16-state state machine exists purely to multiplex those two operations onto the same TDI/TDO wires without ambiguity. Once the state machine "clicks" mentally, every JTAG operation reduces to "go to <em>state X</em>, shift <em>N bits</em>, repeat".
+</div>
+
+<h3 id="terminology">Terminology — TAP, TDR, BSR, IDCODE, BYPASS</h3>
+
+<p>The standard uses very specific words that the rest of this document leans on:</p>
+
+<table>
+  <tr><th>Term</th><th>Expansion</th><th>What it is</th></tr>
+  <tr><td><strong>TAP</strong></td><td>Test Access Port</td><td>The four-wire physical interface plus the 16-state controller behind it. Every JTAG-compliant device has exactly one TAP.</td></tr>
+  <tr><td><strong>TAP controller</strong></td><td>—</td><td>The 16-state finite-state machine inside the chip that interprets TMS values on TCK rising edges. See <a href="#tap-fsm">below</a>.</td></tr>
+  <tr><td><strong>IR</strong></td><td>Instruction Register</td><td>A shift register, vendor-defined width (4–10 bits typical), that selects which Data Register is currently exposed between TDI and TDO.</td></tr>
+  <tr><td><strong>DR</strong></td><td>Data Register</td><td>Whichever shift register the current IR value names. Could be the BSR, the IDCODE register, BYPASS, or any vendor-specific TDR.</td></tr>
+  <tr><td><strong>TDR</strong></td><td>Test Data Register</td><td>The general term for any DR. Vendors invent dozens — IDCODE, BSR, BYPASS, USERCODE, plus debug-specific ones (e.g. ARM's 35-bit DPACC/APACC).</td></tr>
+  <tr><td><strong>BSR</strong></td><td>Boundary-Scan Register</td><td>The classic IEEE-1149.1 DR — one cell per pin, lets you observe (sample) or drive (preload) the chip's pads without the core logic running. The name "boundary scan" comes from this register specifically.</td></tr>
+  <tr><td><strong>IDCODE</strong></td><td>—</td><td>A mandatory 32-bit DR that returns the chip's identity: <code>{version[31:28], part_number[27:12], JEDEC_manufacturer[11:1], 1'b1}</code>. The trailing <code>1</code> bit lets an enumeration tool walk a chain by bit-counting.</td></tr>
+  <tr><td><strong>BYPASS</strong></td><td>—</td><td>A 1-bit DR that connects TDI to TDO with one cycle of latency. Selected by the all-1s IR encoding (always). Lets you "skip" a chip in a chain so a longer DR shift only touches the device of interest.</td></tr>
+</table>
+
+<!-- =========================================================== -->
+<h2 id="signals">The four (or five) signals</h2>
+
+<p>An IEEE-1149.1 TAP has four mandatory signals plus one optional reset:</p>
+
+<table>
+  <tr><th>Pin</th><th>Direction (chip POV)</th><th>Purpose</th></tr>
+  <tr><td><strong>TCK</strong></td><td>input</td><td>Test Clock. The TAP samples TMS and TDI on the rising edge and shifts out TDO on the falling edge. Typical maxima: 10–50 MHz on modern parts; some FPGAs accept 100+ MHz.</td></tr>
+  <tr><td><strong>TMS</strong></td><td>input</td><td>Test Mode Select. The bit driven on TMS at each TCK rising edge selects the next state of the TAP FSM. TMS is the <em>only</em> control input — every JTAG operation is encoded as a sequence of TMS values.</td></tr>
+  <tr><td><strong>TDI</strong></td><td>input</td><td>Test Data In. Serial input to whichever register (IR or DR) is currently selected for shifting.</td></tr>
+  <tr><td><strong>TDO</strong></td><td>output</td><td>Test Data Out. Serial output from the same register. Tri-stated except when actively shifting, so multiple chips' TDOs can chain through TDI of the next.</td></tr>
+  <tr><td><strong>TRST</strong></td><td>input (optional)</td><td>Test Reset. Asynchronous active-low reset that forces the TAP FSM to <code>Test-Logic-Reset</code> regardless of TMS/TCK. Often omitted on cost-sensitive boards — you can always reach <code>Test-Logic-Reset</code> by holding TMS=1 for 5 TCK cycles.</td></tr>
+  <tr><td>RTCK</td><td>output (optional)</td><td>Return-TCK, on some ARM implementations. The chip echoes TCK back so the probe can run "adaptive" clocking — useful when the target's clock is much slower than the probe and the probe needs to wait for each edge to propagate. Not part of IEEE 1149.1; defined by ARM's RealView reference designs.</td></tr>
+</table>
+
+<p>Voltages, slew rates, and pull-up requirements are <em>not</em> specified by IEEE 1149.1 — that's left to the silicon vendor. In practice, Cortex-M parts use the same I/O pads as their GPIOs (1.8 V or 3.3 V LVCMOS), and probe vendors put a level-shifter at the connector. JTAG is also strictly synchronous: there is no asynchronous data path, no clock recovery, and no autobaud. The probe owns TCK and clocks every transaction at whatever rate it likes (within the target's max).</p>
+
+<div class="callout">
+  <span class="label">why TMS is the only control input</span>
+  IEEE 1149.1 was designed to be <em>cheap to implement</em>. Adding more control wires would have meant more pins on every chip in 1990 — at a time when pin count was the dominant cost. The committee's solution: encode all control as a sequence of TMS values, sampled on a single shared clock. The cost is that every JTAG operation requires walking the 16-state FSM through a specific path. The benefit is that the chip-side hardware needed to implement the standard is a four-bit state register, two shift registers, and a comparator — small enough to drop into any silicon.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="tap-fsm">The TAP state machine</h2>
+
+<p>The TAP controller is a 16-state Mealy-style finite-state machine clocked by TCK. The next state is determined entirely by the current state and the value of TMS on the most recent TCK rising edge. Every JTAG operation is a walk through this graph.</p>
+
+<p>The states divide into two parallel "columns" — one for the Data Register, one for the Instruction Register — joined at the top by the <code>Select-DR-Scan</code> / <code>Select-IR-Scan</code> branch. This symmetry is intentional: the same sequence of TMS values that shifts the DR also shifts the IR, just in the other column.</p>
+
+<pre><code>                              ┌──────────────────┐
+                              │ Test-Logic-Reset │ ◄── (TMS=1 for 5 cycles)
+                              │     (1)          │ ──┐
+                              └────────┬─────────┘   │
+                                  TMS=0│             │TMS=1
+                                       ▼             │
+                              ┌──────────────────┐   │
+                              │  Run-Test/Idle   │ ◄─┘
+                              │      (0)         │ ─────┐
+                              └────────┬─────────┘      │
+                                  TMS=1│                │TMS=0
+                                       ▼                │
+                              ┌──────────────────┐      │
+                              │  Select-DR-Scan  │      │
+                              └────┬─────────┬───┘      │
+                              TMS=0│         │TMS=1     │
+                                   ▼         ▼          │
+                            ┌──────────┐  ┌──────────────────┐
+                            │Capture-DR│  │  Select-IR-Scan  │
+                            └────┬─────┘  └────┬─────────┬───┘
+                            TMS=0│        TMS=0│         │TMS=1
+                                 ▼             ▼         ▼
+                           ┌──────────┐  ┌──────────┐  (back up to TLR)
+                           │ Shift-DR │◄┐│Capture-IR│
+                           └────┬─────┘ │└────┬─────┘
+                           TMS=0│       │ TMS=0│
+                                │ TMS=1 │      ▼
+                                ▼       │┌──────────┐
+                           ┌──────────┐ ││ Shift-IR │◄┐
+                           │ Exit1-DR │ │└────┬─────┘ │
+                           └────┬─────┘ │TMS=0│       │TMS=0
+                           TMS=0│       │     │ TMS=1 │
+                                ▼       │     ▼       │
+                           ┌──────────┐ │┌──────────┐ │
+                           │ Pause-DR │ ││ Exit1-IR │ │
+                           └────┬─────┘ │└────┬─────┘ │
+                           TMS=1│       │TMS=0│       │
+                                ▼       │     ▼       │
+                           ┌──────────┐ │┌──────────┐ │
+                           │ Exit2-DR │ ││ Pause-IR │ │
+                           └────┬─────┘ │└────┬─────┘ │
+                           TMS=1│   TMS=0     │TMS=1  │
+                                │       └─────┤       │
+                                ▼             ▼       │
+                           ┌──────────┐  ┌──────────┐ │
+                           │ Update-DR│  │ Exit2-IR │─┘ (TMS=0 → Shift-IR)
+                           └────┬─────┘  └────┬─────┘
+                           TMS=0│TMS=1   TMS=1│
+                                │             ▼
+                                │       ┌──────────┐
+                                ▼       │ Update-IR│
+                          (Run-Test     └────┬─────┘
+                           or          TMS=0 │ TMS=1
+                           Select-DR)        ▼      └─► Select-DR-Scan
+                                       (Run-Test/Idle)</code></pre>
+
+<p class="small">ASCII rendering — for the canonical bubble-diagram see IEEE 1149.1-2013 figure 6-1, or any vendor's TRM. The graph above shows transitions; both <code>Update-DR</code> and <code>Update-IR</code> can return to <code>Run-Test/Idle</code> (TMS=0) or directly to <code>Select-DR-Scan</code> (TMS=1) — these are the two ways to chain operations.</p>
+
+<h3 id="state-categories">State categories</h3>
+
+<p>The 16 states fall into five logical groups:</p>
+
+<table>
+  <tr><th>Group</th><th>States</th><th>What happens</th></tr>
+  <tr><td><strong>Reset</strong></td><td>Test-Logic-Reset</td><td>IR is forced to its reset value (selects IDCODE if implemented, BYPASS otherwise). All TDRs return to defined defaults. Held by TMS=1; entered automatically by 5+ cycles of TMS=1 from any state.</td></tr>
+  <tr><td><strong>Idle</strong></td><td>Run-Test/Idle</td><td>The "do nothing" state. Used as a parking spot between operations. Some vendor instructions (RUNBIST, etc.) use Run-Test/Idle as the active state — TCK pulses here drive built-in self-test logic.</td></tr>
+  <tr><td><strong>Capture</strong></td><td>Capture-DR, Capture-IR</td><td>The selected register is loaded in parallel from its source: Capture-IR loads the standard fixed pattern <code>...01</code> (low bits = <code>01</code>, upper bits vendor-defined); Capture-DR loads whatever data the chip wants you to read this cycle (e.g. ACK bits, peripheral status, BSR-sample of the pins).</td></tr>
+  <tr><td><strong>Shift</strong></td><td>Shift-DR, Shift-IR</td><td>Each TCK rising edge with TMS=0 shifts one bit out on TDO and one bit in from TDI. This is where actual data movement happens. Stay here for N cycles to shift N bits.</td></tr>
+  <tr><td><strong>Update</strong></td><td>Update-DR, Update-IR</td><td>The shifted value is committed in parallel to the register's "live" side. Until Update fires, the chip's behaviour reflects the <em>previous</em> register value, not what's in the shift chain.</td></tr>
+  <tr><td><strong>Transit</strong></td><td>Select-*, Exit1-*, Exit2-*, Pause-*</td><td>"Decision" states — used to navigate. <code>Pause</code> exists so a slow probe can park mid-shift without losing position.</td></tr>
+</table>
+
+<p>The Capture / Shift / Update split is the critical insight. <strong>Shifting does not change the chip's behaviour</strong>; only Update does. This is what lets the BSR drive PCB-level test patterns: you preload the desired pin states by shifting through Capture-DR → Shift-DR → Exit1-DR, then a single Update-DR pulse simultaneously drives all the pins on all the chips in the chain. No glitching during the shift.</p>
+
+<h3 id="state-walk">Worked example — TMS sequence to "shift 32 bits into DR"</h3>
+
+<p>You are in <code>Run-Test/Idle</code> and want to shift a 32-bit value into the currently-selected DR, then return to idle. The TMS sequence (one bit per TCK cycle):</p>
+
+<pre><code>cycle  TMS  state-after-rising-edge      action / data on TDI
+─────  ───  ───────────────────────────  ─────────────────────────────
+ 0      1   Select-DR-Scan
+ 1      0   Capture-DR                   (chip parallel-loads DR)
+ 2      0   Shift-DR                     bit  0 → DR[0]
+ 3      0   Shift-DR                     bit  1 → DR[1]
+ 4      0   Shift-DR                     bit  2 → DR[2]
+ 5..32  0   Shift-DR  (×31 more)         bits 3..30 → DR[3..30]
+33      1   Exit1-DR                     bit 31 → DR[31]   ← LAST bit shifts on the
+                                                              same edge that exits
+34      1   Update-DR                    (chip parallel-commits DR)
+35      0   Run-Test/Idle</code></pre>
+
+<p>Two things to note. First, the bit count is "shift cycles + 1" — the final bit goes in on the TMS=1 edge that exits Shift-DR, not on a separate cycle. Probe libraries pre-bake this off-by-one so application code can just say "shift 32 bits". Second, the order is <strong>LSB first</strong>: bit 0 of your value becomes the TDI value on cycle 2, bit 31 on cycle 33. TDO follows the same convention — the first TDO bit you read corresponds to the previous value's bit 0.</p>
+
+<!-- =========================================================== -->
+<h2 id="ir-dr">IR and DR — the two registers behind every TAP</h2>
+
+<p>Every TAP exposes exactly one IR and at any given moment exactly one DR. The IR's value names which DR is "selected"; the DR is then the only data shift register reachable through the TDI→TDO path.</p>
+
+<h3 id="ir-detail">The Instruction Register</h3>
+
+<p>The IR is a vendor-defined-width shift register (4 bits is the minimum; 4, 5, 8, and 10 are common; some FPGAs go to 16+). IEEE 1149.1 reserves four IR encodings:</p>
+
+<table>
+  <tr><th>Encoding</th><th>Mandatory?</th><th>Selects DR</th></tr>
+  <tr><td><code>BYPASS</code> = all 1s</td><td>Mandatory</td><td>1-bit BYPASS register (TDI→FF→TDO).</td></tr>
+  <tr><td><code>EXTEST</code> = all 0s (per 1990 spec) or vendor-defined (per 2001 spec)</td><td>Mandatory</td><td>Boundary-Scan Register, drive mode (preloaded values appear on pins).</td></tr>
+  <tr><td><code>SAMPLE/PRELOAD</code></td><td>Mandatory</td><td>BSR, sample mode (snapshot of current pin states, no drive).</td></tr>
+  <tr><td><code>IDCODE</code></td><td>Optional but near-universal</td><td>32-bit IDCODE register. Auto-selected at <code>Test-Logic-Reset</code> if implemented.</td></tr>
+</table>
+
+<p>Everything else is vendor-defined. ARM's CoreSight DAP, for example, defines <code>ABORT</code>, <code>DPACC</code>, <code>APACC</code>, <code>IDCODE</code>, <code>BYPASS</code> at fixed 4-bit IR encodings — see <a href="#jtag-dp">below</a>.</p>
+
+<p>The Capture-IR state loads a fixed pattern into the IR shift chain: the standard mandates that the lowest two bits load as <code>01</code> regardless of vendor. This gives test tools a way to <em>verify the IR width</em>: shift in all 1s while reading TDO, count how many cycles pass before the trailing <code>1</code> from the load pattern appears, and you've measured the IR length in bits. A surprising number of bring-up bugs reduce to "the tool guessed the IR width wrong".</p>
+
+<h3 id="dr-detail">The Data Register</h3>
+
+<p>The DR is whichever shift register the current IR value points at. A single chip will typically have many DRs implemented — IDCODE (32 bits), BYPASS (1 bit), BSR (one cell per pin, often 100+ bits on a big SoC), USERCODE (32 bits, FPGA bitstream identifier), and as many vendor-specific TDRs as the silicon designer chose. Only one is on the TDI→TDO path at a time, named by IR.</p>
+
+<p>The DR's width is implementation-defined per instruction; the same TMS walk through Capture-DR / Shift-DR / Update-DR works for all of them. The number of bits you shift has to match the selected DR's actual width — shifting too few bits leaves the chip in an undefined state at Update; shifting too many means data wraps around and you overwrite earlier bits. Tools rely on the BSDL file (or a vendor-supplied driver) to know the right shift length.</p>
+
+<!-- =========================================================== -->
+<h2 id="idcode-walk">Worked example — reading IDCODE end to end</h2>
+
+<p>The most universal "is JTAG even alive" check: enter Test-Logic-Reset, walk to Shift-DR, shift out 32 bits. At Test-Logic-Reset the IR auto-loads to IDCODE (if implemented), so the first 32 bits of TDO are the chip's IDCODE. No prior IR write needed.</p>
+
+<p>The sequence — assume you start in some unknown state:</p>
+
+<pre><code>step  TMS sequence (per TCK)            state path                           bit count
+────  ─────────────────────────────────  ──────────────────────────────────  ─────────
+1     1, 1, 1, 1, 1                      → Test-Logic-Reset (force)          5
+2     0                                  → Run-Test/Idle                     1
+3     1                                  → Select-DR-Scan                    1
+4     0                                  → Capture-DR  (DR[31:0] = IDCODE)   1
+5     0                                  → Shift-DR (1st cycle, bit 0 on TDO) 1
+6     0  × 30                            → Shift-DR (bits 1..30 on TDO)     30
+7     1                                  → Exit1-DR (bit 31 on TDO; last)    1
+8     1                                  → Update-DR                         1
+9     0                                  → Run-Test/Idle                     1
+                                                                       total: 41 cycles</code></pre>
+
+<p>The 32 TDO bits form, LSB-first:</p>
+
+<pre><code> bit  31 30..28 27..............12 11..............1  0
+     ┌─┬───────┬─────────────────┬─────────────────┬──┐
+     │V│ ver   │   part number   │ JEDEC mfr code  │ 1│   ← always 1 (LSB)
+     └─┴───────┴─────────────────┴─────────────────┴──┘
+       ▲          ▲                  ▲                ▲
+       │          │                  │                └ bit 0 reads as 1
+       │          │                  │                  always (chain marker)
+       │          │                  └ 11 bits, JEP106 manufacturer code
+       │          └ 16 bits, vendor-assigned part number
+       └ 4 bits, silicon revision
+
+example — RP2350 (no public IDCODE published as of writing; pattern only):
+       0x00000477 — common ARM CoreSight DP IDCODE on Cortex-M parts (ARM JEP106 = 0x23B → low bits 0x477)
+       0x10002927 — STM32F4 family (ST JEP106 = 0x20)
+       0x4BA00477 — generic ARM Cortex-M4 DAP-Lite
+
+byte-by-byte capture with TCK on a logic analyser, IDCODE = 0x4BA00477:
+   TDO bit-time:  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
+   value:         1  1  1  0  1  1  1  0  0  0  1  0  0  0  0  0    ← 0x47 0x77 ... reverse for LSB-first
+                                                                      (probe libraries reverse for you)</code></pre>
+
+<p>The trailing <code>1</code> at bit 0 is mandatory for IDCODE. It's how chain-discovery tools tell IDCODE apart from BYPASS: when a chip is in Test-Logic-Reset, if the first TDO bit you see is <code>1</code>, the chip implements IDCODE (and the next 31 bits are the rest of the code); if it's <code>0</code>, the chip dropped to BYPASS at reset and you've already read its only DR bit.</p>
+
+<!-- =========================================================== -->
+<h2 id="chain">Multi-target chains</h2>
+
+<p>Multiple JTAG-compliant chips on one PCB share TCK and TMS but daisy-chain TDI→TDO: chip 1's TDI is driven by the connector, chip 1's TDO connects to chip 2's TDI, and so on, with the last chip's TDO going back to the connector. From the probe's POV, the chain looks like one giant shift register whose total length is the sum of all the chips' currently-selected register widths.</p>
+
+<pre><code>       probe                 chip A           chip B           chip C
+       ┌────┐                ┌────┐          ┌────┐          ┌────┐
+TDI ──►│ TDI├──TDI───TDO────►│ TDI├──TDO────►│ TDI├──TDO────►│ TDI│──TDO──► back to probe
+       └────┘                └────┘          └────┘          └────┘
+                                ▲               ▲               ▲
+                              TCK,TMS broadcast to all simultaneously</code></pre>
+
+<p>Two consequences:</p>
+
+<ol>
+  <li><strong>Every register operation hits every chip.</strong> A TMS walk to Shift-IR shifts all the chips' IRs at once: the total shift length is <code>IR_A + IR_B + IR_C</code>. To address one chip, you put the others in BYPASS (IR = all 1s) and put your target's "real" instruction in just that chip's IR slot.</li>
+  <li><strong>Chain order matters.</strong> The chip nearest the probe's TDI sees the most-significant bits of the IR stream (because shift-DR/IR is LSB-first <em>at each chip</em>, but the chips are concatenated). When you assemble an IR shift for a 3-chip chain (4-bit IR each, target = chip B with instruction <code>0xC</code>), you send: <code>1111_1100_1111</code> → chip C gets <code>1111</code> (BYPASS), chip B gets <code>1100</code> (your instruction), chip A gets <code>1111</code> (BYPASS).</li>
+</ol>
+
+<h3 id="chain-discovery">Discovering an unknown chain</h3>
+
+<p>OpenOCD, UrJTAG, and similar tools all walk the same algorithm to discover a chain blindly:</p>
+
+<pre><code>1. Force Test-Logic-Reset (TMS=1 × 5+).
+   → All TAPs auto-select IDCODE-or-BYPASS.
+
+2. Walk to Shift-DR. Drive TDI=0 for many cycles, watch TDO.
+
+3. Decode the TDO stream:
+      - Read 32 bits. If they end with bit-0 = 1: it's an IDCODE.
+                                  Record the IDCODE value, move on.
+      - If bit-0 = 0: that chip is in BYPASS (no IDCODE).
+                      Record "1 BYPASS bit", move on by 1 bit.
+
+4. After the last chip's TDO byte, you'll start seeing the TDI=0
+   value you've been driving — that's the "end of chain" marker.
+   Count: that's how many devices total.
+
+5. To measure each chip's IR width, force TLR again, walk to
+   Shift-IR, drive TDI=1 forever, count cycles until you see the
+   Capture-IR pattern (..01) emerge on TDO. Total IR width = chain
+   IR width; deduce per-chip width from BSDL or vendor knowledge.</code></pre>
+
+<p>Most ARM dev boards have exactly one TAP on the JTAG chain (the Cortex-M's debug port), so the discovery algorithm is overkill in practice. Where you do see longer chains: FPGA + MCU on the same board (Xilinx + STM32, Lattice + nRF, etc.), or multi-die SoCs that expose a separate TAP per die.</p>
+
+<!-- =========================================================== -->
+<h2 id="bsdl">BSDL — Boundary-Scan Description Language</h2>
+
+<p><strong>BSDL</strong> is a VHDL-subset DSL, defined as part of IEEE 1149.1, that vendors use to describe a chip's TAP to test tools. Every BGA/QFN package you can buy from a name-brand vendor ships with a corresponding <code>.bsd</code> file, available from the vendor's website. A BSDL file declares:</p>
+
+<ul>
+  <li>The chip's package and pin-to-ball mapping (pin 1 = signal X, pin 2 = signal Y, …).</li>
+  <li>The IR width and the meaning of every IR encoding the chip supports — including all the boundary-scan instructions (EXTEST, SAMPLE, INTEST, RUNBIST, CLAMP, IDCODE, USERCODE, ...).</li>
+  <li>The Boundary-Scan Register cell list — which pin each cell drives or observes, and in which order they appear in the BSR shift chain.</li>
+  <li>The IDCODE value(s) supported by the part.</li>
+  <li>Any pin-level disable / safe-state behaviour for EXTEST.</li>
+</ul>
+
+<p>A snippet (heavily abbreviated, real files are 500–5000 lines):</p>
+
+<pre><code>entity STM32F407VG is
+   generic (PHYSICAL_PIN_MAP : string := "LQFP100");
+   port (PA0 : inout bit;
+         PA1 : inout bit;
+         ... );
+
+   use STD_1149_1_2001.all;
+   attribute COMPONENT_CONFORMANCE of STM32F407VG : entity is "STD_1149_1_2001";
+
+   attribute INSTRUCTION_LENGTH of STM32F407VG : entity is 5;
+   attribute INSTRUCTION_OPCODE of STM32F407VG : entity is
+       "BYPASS  (11111),"     &
+       "EXTEST  (00000),"     &
+       "SAMPLE  (00010),"     &
+       "PRELOAD (00010),"     &
+       "IDCODE  (00001)";
+
+   attribute IDCODE_REGISTER of STM32F407VG : entity is
+       "0001"        &        -- version
+       "0100000110000111" &    -- part number
+       "00000100000"  &        -- JEDEC mfr (ST = 0x20)
+       "1";                    -- mandatory LSB
+
+   attribute BOUNDARY_LENGTH of STM32F407VG : entity is 384;
+   attribute BOUNDARY_REGISTER of STM32F407VG : entity is
+       "0   (BC_1, *,        controlr, 1),"  &
+       "1   (BC_1, PA0,      output3,  X, 0, 0, Z),"  &
+       "2   (BC_1, PA0,      input,    X)," &
+       ...</code></pre>
+
+<p>Tools that consume BSDL: <a href="http://urjtag.org/">UrJTAG</a> (open-source PC-side boundary-scan controller), <a href="https://hjtag.com/">topJTAG</a> (Windows commercial), <a href="https://www.xjtag.com/">XJTAG</a> (industry-standard for production test), and the boundary-scan modules of <a href="https://openocd.org/">OpenOCD</a>. They use BSDL to map "set pin PA5 high, observe pin PB3" requests onto the right shift-DR bits.</p>
+
+<div class="callout">
+  <span class="label">when you'll touch BSDL</span>
+  Mainstream ARM firmware development almost never needs BSDL: ARM debug works through CoreSight's JTAG-DP <em>instructions</em>, not through the boundary-scan register. You'll need BSDL for: PCB factory test (using XJTAG/UrJTAG), board bring-up of a brand-new board where you suspect a manufacturing solder defect (boundary-scan can find shorts/opens without having any firmware), or working with FPGAs (where BSDL is the only way the synthesis flow knows how to talk to the device's TAP for pin mapping).
+</div>
+
+<!-- =========================================================== -->
+<h2 id="jtag-dp">JTAG-DP — the ARM Debug Port over JTAG</h2>
+
+<p>ARM's <strong>CoreSight Debug Access Port (DAP)</strong>, defined in the <em>ARM Debug Interface Architecture Specification</em> (ADIv5 and ADIv6), is the standard way every Cortex-M, Cortex-A, and Cortex-R part exposes its debug logic. The DAP is a small piece of always-on logic that sits in the chip's debug power domain and arbitrates access to <em>Access Ports</em> (APs), each of which is a bus master onto some part of the SoC. The most common AP is the <strong>MEM-AP</strong>, which exposes the AHB system bus and is how a probe reads/writes Cortex-M registers, SRAM, and peripherals.</p>
+
+<p>The DAP comes in two physical flavours:</p>
+
+<ul>
+  <li><strong>JTAG-DP</strong> — DAP commands ride on a standard IEEE-1149.1 TAP. The chip looks like any other JTAG device on the chain.</li>
+  <li><strong>SW-DP</strong> — DAP commands ride on the 2-wire SWD protocol. See <a href="debug_swd.html">debug_swd.html</a>.</li>
+</ul>
+
+<p>A SoC almost always implements both, multiplexed onto the same pads (TCK/SWCLK and TMS/SWDIO are the same pins). Which one is "active" at reset is vendor-defined; ARM provides a magic switching sequence to flip between them at runtime — see <a href="#switch">below</a>.</p>
+
+<h3 id="jtag-dp-ir">The JTAG-DP instruction set</h3>
+
+<p>The JTAG-DP IR is 4 bits wide. Its instructions:</p>
+
+<table>
+  <tr><th>IR encoding</th><th>Instruction</th><th>Selected DR (bits)</th><th>Purpose</th></tr>
+  <tr><td><code>1000</code></td><td>ABORT</td><td>35</td><td>Force-abort an in-flight transaction; clear sticky errors.</td></tr>
+  <tr><td><code>1010</code></td><td>DPACC</td><td>35</td><td>Read/write a Debug Port register (CTRL/STAT, SELECT, RDBUFF, ...).</td></tr>
+  <tr><td><code>1011</code></td><td>APACC</td><td>35</td><td>Read/write the currently-selected Access Port register (TAR, DRW, IDR, ...). This is the workhorse — every memory read/write the probe issues is an APACC.</td></tr>
+  <tr><td><code>1110</code></td><td>IDCODE</td><td>32</td><td>Standard IEEE 1149.1 IDCODE — identifies the DAP itself (e.g. <code>0x4BA00477</code> for a Cortex-M4 generic DAP).</td></tr>
+  <tr><td><code>1111</code></td><td>BYPASS</td><td>1</td><td>Standard IEEE 1149.1 BYPASS.</td></tr>
+</table>
+
+<h3 id="jtag-dp-35">The 35-bit DR for AP/DP transfers</h3>
+
+<p>Both DPACC and APACC select the same 35-bit shift register. The bit layout, on the DR shift in (from probe to chip):</p>
+
+<pre><code>shift-in (TDI side):
+   ┌────────────────────────┬───────────────────┬───┐
+   │      WDATA (32 bits)   │    A[3:2] (2)     │RnW│
+   │  data being written    │ register-select   │  │
+   └────────────────────────┴───────────────────┴───┘
+        bits 34..3              bits 2..1        bit 0
+                                                  0=Write
+                                                  1=Read
+
+shift-out (TDO side, from previous transaction):
+   ┌────────────────────────┬─────────────────────┐
+   │      RDATA (32 bits)   │    ACK (3 bits)     │
+   │  data read previously  │ result of last txn  │
+   └────────────────────────┴─────────────────────┘
+        bits 34..3                bits 2..0
+                                   010 = OK/FAULT
+                                   001 = WAIT (retry)</code></pre>
+
+<p>Note the <strong>pipelining</strong>: each 35-bit shift kicks off a transaction <em>and</em> reads the result of the <em>previous</em> transaction. This means a probe doing a memory read has to issue a dummy RDBUFF read at the end to drain the last result. ARM's <a href="https://developer.arm.com/documentation/ihi0031/latest/">ADIv5 specification</a> §3.3 describes this in detail; if you're writing your own probe firmware, this single fact will trip you up at least once.</p>
+
+<p>Compare to SWD: the same DPACC/APACC operations encode in 46 bits on SWD (8-bit header + 32-bit data + ACK + parity + turnaround) but with no pipelining — each line transaction is self-contained. JTAG is more verbose per round-trip but pipelines beautifully; SWD is more compact per line but stricter about turnarounds. Read the <a href="debug_swd.html">SWD doc</a> for the full comparison.</p>
+
+<h3 id="ap-access">Reading Cortex-M memory through JTAG-DP — the full path</h3>
+
+<p>Reading <code>0x20000000</code> (start of SRAM on a generic Cortex-M) through JTAG-DP requires:</p>
+
+<pre><code>1. IR ← APACC                    (4-bit IR shift)
+2. DR ← write(SELECT, AP=0)      (35-bit shift, configures which AP)
+3. DR ← write(MEM-AP TAR, 0x20000000)   (35-bit, target address)
+4. DR ← read(MEM-AP DRW)         (35-bit, kicks off the read)
+5. DR ← read(RDBUFF)             (35-bit, drains the pipelined result)
+   → RDATA is the 32-bit value at 0x20000000
+
+Total: ~145 TCK cycles for one 32-bit read on a single-device chain.</code></pre>
+
+<p>OpenOCD, probe-rs, pyOCD all hide this behind a clean API; if you peek under the hood you'll see exactly this sequence (or its SWD equivalent) for every memory read your debugger issues.</p>
+
+<!-- =========================================================== -->
+<h2 id="jtag-vs-swd">JTAG vs SWD — when each wins</h2>
+
+<p>For ARM Cortex-M parts, JTAG and SWD are functionally equivalent — they are two physical-layer encodings of the same DAP commands. ARM ships both because they serve different audiences.</p>
+
+<table>
+  <tr><th>Property</th><th>JTAG (IEEE 1149.1)</th><th>SWD (ARM SWD protocol)</th></tr>
+  <tr><td>Wires (excl. ground)</td><td>4 mandatory + 1 optional reset (TCK, TMS, TDI, TDO, [TRST])</td><td>2 (SWCLK, SWDIO)</td></tr>
+  <tr><td>Multi-target chain</td><td>Yes — daisy-chain TDI→TDO across N chips</td><td>No (1 target per bus; SWD multidrop adds soft-addressed multiplexing but is rarely used)</td></tr>
+  <tr><td>Boundary scan / PCB test</td><td><span class="badge ok">Yes</span></td><td><span class="badge no">No</span> — SWD only carries DAP commands, no BSR access</td></tr>
+  <tr><td>Adaptive clocking (RTCK)</td><td>Yes (where vendor implements)</td><td>No — SWD is fully synchronous to SWCLK</td></tr>
+  <tr><td>Max clock</td><td>10–50 MHz typical; some FPGAs go higher</td><td>25–50 MHz typical; 100 MHz on some probes</td></tr>
+  <tr><td>Bytes per memory access</td><td>~145 TCK cycles for a 32-bit read</td><td>~92 SWCLK cycles for the same read (no IR shift, no chain BYPASS overhead)</td></tr>
+  <tr><td>Wires shared with target?</td><td>4 dedicated pins; can't double up</td><td>2 pins; many vendors muxed SWCLK/SWDIO with GPIO functions, freeing pins for the application</td></tr>
+  <tr><td>SWO trace pin</td><td>Repurposes TDO line as SWO when in SWD mode</td><td>Adds 1 pin (SWO) for trace</td></tr>
+  <tr><td>Connector size</td><td>20-pin (1.27 mm pitch) or 10-pin Cortex Debug Connector</td><td>10-pin Cortex Debug Connector (or smaller — some vendors use 5-pin custom)</td></tr>
+  <tr><td>Universality across vendors</td><td>Works on any IEEE-1149.1 chip — not just ARM</td><td>ARM-specific (and a few RISC-V variants)</td></tr>
+</table>
+
+<p><strong>Pick JTAG when:</strong> you're working with a multi-chip board (FPGA + MCU is the canonical case), you need boundary-scan PCB diagnostics, you're working with a non-ARM target, you're already running a logic analyser that grokked TDI/TDO and can decode JTAG traces.</p>
+
+<p><strong>Pick SWD when:</strong> the target is ARM, you have pin-count pressure on the chip or connector (SWD frees 2 pins for application use), or you want SWO trace bundled with debug. SWD is the default on most modern ARM dev boards for exactly these reasons.</p>
+
+<p><strong>Most ARM Cortex-M boards expose only SWD</strong> on their debug header — the manufacturer ships a 10-pin Cortex Debug Connector wired for SWD, not JTAG. The chip still <em>supports</em> JTAG, but TDI and TDO aren't broken out. If you need JTAG on those parts (e.g. for boundary scan), you'll have to find pads on the PCB and probe directly.</p>
+
+<!-- =========================================================== -->
+<h2 id="switch">The JTAG-to-SWD switch sequence</h2>
+
+<p>An ARM Cortex-M comes out of reset with the DAP in <em>either</em> JTAG mode or SWD mode, depending on what the vendor wrote into the boot ROM and OTP. To force the part into SWD from a known-but-arbitrary state, ARM defines a magic 16-bit sequence shifted on SWDIO (which is the same physical pin as TMS).</p>
+
+<h3 id="switch-classic">The classic (ADIv5) sequence</h3>
+
+<p>The full "JTAG → SWD" handshake is:</p>
+
+<pre><code>1. Send at least 50 cycles of SWDIO=1 with SWCLK toggling.
+   → Forces the DAP out of any state. (SWD line reset; also resets a JTAG TAP
+     because TMS=1 ×5+ → Test-Logic-Reset.)
+
+2. Shift the 16-bit magic value 0xE79E (LSB first) on SWDIO,
+   one bit per SWCLK rising edge.
+
+   binary, transmit order (LSB first):
+      0  1  1  1  1  0  0  1  1  1  1  0  0  1  1  1
+      └────── 0x9E ──────┘ └────── 0xE7 ──────┘
+
+   on the wire (LSB first per byte, low byte first):
+      cycle 0: 0       cycle 8:  1
+      cycle 1: 1       cycle 9:  1
+      cycle 2: 1       cycle 10: 1
+      cycle 3: 1       cycle 11: 0
+      cycle 4: 1       cycle 12: 0
+      cycle 5: 0       cycle 13: 1
+      cycle 6: 0       cycle 14: 1
+      cycle 7: 1       cycle 15: 1
+
+3. Send another 50+ cycles of SWDIO=1 with SWCLK toggling.
+   → SWD line reset, now the DAP is firmly in SWD mode.
+
+4. Read the IDCODE on SWD by issuing a DPACC read of register 0.
+   → Confirms the part responded; you're on SWD.</code></pre>
+
+<p>The reverse sequence (SWD → JTAG) uses the magic value <code>0xE73C</code>. Both magic values were chosen because their bit patterns don't appear in any legal JTAG TMS sequence walking through the FSM — so a chip in JTAG mode will see them as innocuous TMS noise and stay in JTAG mode unless it specifically recognises the SWD-mode-request pattern.</p>
+
+<h3 id="switch-dormant">The dormant-state sequence (ADIv5.2 / ADIv6)</h3>
+
+<p>Newer ARM parts (Armv8-M, including the RP2350's M33) implement a more general "<strong>dormant state</strong>" — a fourth DP state, distinct from JTAG-active and SWD-active, that the part enters in response to a different magic. From dormant you can select JTAG <em>or</em> SWD with a follow-up sequence. The dormant-state mechanism lets future protocols (cJTAG, multi-drop SWD, vendor-specific) coexist on the same pads.</p>
+
+<p>The <em>full</em> dormant-state sequences are documented in ADIv6 §B5 — they are longer (up to 188 bits including the activation code) and tool libraries (probe-rs, OpenOCD, CMSIS-DAP firmware) bake them in. From the application engineer's POV, you ask the probe library for "SWD mode" and the right sequence runs under the hood. From the firmware POV, if you're <em>writing</em> a probe (as edevkit1 does), you copy the sequences verbatim from the ADIv6 spec; they're not memorisable.</p>
+
+<div class="callout warn">
+  <span class="label">RP2350 specifically</span>
+  The RP2350 boot ROM defaults to <strong>SWD mode</strong> on the SWCLK/SWDIO pads. To use JTAG on an RP2350 (which it supports, exposing both Cortex-M33 cores and the Hazard3 RISC-V cores via the same TAP) you need to issue the SWD-to-JTAG dormant-state sequence first. Most users never do — SWD is faster and uses fewer pins, and the RP2350's CMSIS-DAP firmware (used by Pi's official debug probe) only exposes SWD. edevkit1 firmware will support both modes; the JTAG path exists primarily for boundary-scan and non-ARM targets, not for ARM.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="connectors">Connectors — 20-pin and 10-pin Cortex Debug</h2>
+
+<p>Two pinouts dominate ARM debug headers. Both are defined by the ARM <em>Cortex Debug Connector</em> specification (originally <em>CoreSight Connector Reference</em> — current document is the <em>Arm Cortex-M Debug Connector Specification</em>, revision E.6 as of 2024). The 20-pin variant predates the 10-pin and is mostly seen on older boards or boards that need ETM trace; the 10-pin is the modern default.</p>
+
+<h3 id="conn-20">20-pin "ARM standard" header (1.27 mm pitch, 2x10)</h3>
+
+<p>Polarised key on pin 7 (removed pin = key slot). Designed to carry full JTAG, SWD, SWO, and 4-bit ETM trace.</p>
+
+<table>
+  <tr><th>Pin</th><th>Signal (JTAG mode)</th><th>Signal (SWD mode)</th><th>Notes</th></tr>
+  <tr><td class="center mono">1</td><td>VTref</td><td>VTref</td><td>Target reference voltage. Probe senses this to set its level shifters; never sources current.</td></tr>
+  <tr><td class="center mono">2</td><td>TMS</td><td>SWDIO</td><td>Same pin, different protocol.</td></tr>
+  <tr><td class="center mono">3</td><td>GND</td><td>GND</td><td></td></tr>
+  <tr><td class="center mono">4</td><td>TCK</td><td>SWCLK</td><td>Same pin, different protocol.</td></tr>
+  <tr><td class="center mono">5</td><td>GND</td><td>GND</td><td></td></tr>
+  <tr><td class="center mono">6</td><td>TDO</td><td>SWO</td><td>JTAG TDO repurposed as SWO trace in SWD mode.</td></tr>
+  <tr><td class="center mono">7</td><td>(KEY)</td><td>(KEY)</td><td>No pin — polarisation key.</td></tr>
+  <tr><td class="center mono">8</td><td>TDI</td><td>NC</td><td>Unused in SWD mode.</td></tr>
+  <tr><td class="center mono">9</td><td>GNDDetect</td><td>GNDDetect</td><td>Tied to GND on the target — probe checks for cable-attached.</td></tr>
+  <tr><td class="center mono">10</td><td>nRESET</td><td>nRESET</td><td>Open-drain target reset.</td></tr>
+  <tr><td class="center mono">11</td><td>NC / TRST</td><td>NC</td><td>Optional TRST.</td></tr>
+  <tr><td class="center mono">12</td><td>GND</td><td>GND</td><td></td></tr>
+  <tr><td class="center mono">13</td><td>TraceCLK</td><td>TraceCLK</td><td>Parallel-trace clock (4-bit ETM).</td></tr>
+  <tr><td class="center mono">14</td><td>GND</td><td>GND</td><td></td></tr>
+  <tr><td class="center mono">15</td><td>TraceData[0]</td><td>TraceData[0]</td><td>4-bit parallel trace data.</td></tr>
+  <tr><td class="center mono">16</td><td>GND</td><td>GND</td><td></td></tr>
+  <tr><td class="center mono">17</td><td>TraceData[1]</td><td>TraceData[1]</td><td></td></tr>
+  <tr><td class="center mono">18</td><td>GND</td><td>GND</td><td></td></tr>
+  <tr><td class="center mono">19</td><td>TraceData[2]</td><td>TraceData[2]</td><td></td></tr>
+  <tr><td class="center mono">20</td><td>TraceData[3]</td><td>TraceData[3]</td><td></td></tr>
+</table>
+
+<h3 id="conn-10">10-pin Cortex Debug Connector (1.27 mm pitch, 2x5)</h3>
+
+<p>The compact modern connector. Drops parallel-trace; keeps SWO. Polarisation key on pin 7. This is what you'll see on every recent ARM dev board (ST Nucleo, Nordic DK, NXP FRDM, etc.).</p>
+
+<table>
+  <tr><th>Pin</th><th>Signal (JTAG mode)</th><th>Signal (SWD mode)</th><th>Notes</th></tr>
+  <tr><td class="center mono">1</td><td>VTref</td><td>VTref</td><td>Target reference voltage.</td></tr>
+  <tr><td class="center mono">2</td><td>TMS</td><td>SWDIO</td><td></td></tr>
+  <tr><td class="center mono">3</td><td>GND</td><td>GND</td><td></td></tr>
+  <tr><td class="center mono">4</td><td>TCK</td><td>SWCLK</td><td></td></tr>
+  <tr><td class="center mono">5</td><td>GND</td><td>GND</td><td></td></tr>
+  <tr><td class="center mono">6</td><td>TDO</td><td>SWO</td><td></td></tr>
+  <tr><td class="center mono">7</td><td>(KEY)</td><td>(KEY)</td><td>No pin.</td></tr>
+  <tr><td class="center mono">8</td><td>TDI</td><td>NC</td><td>Unused in SWD mode.</td></tr>
+  <tr><td class="center mono">9</td><td>GNDDetect</td><td>GNDDetect</td><td>Tied to GND on target.</td></tr>
+  <tr><td class="center mono">10</td><td>nRESET</td><td>nRESET</td><td>Open-drain.</td></tr>
+</table>
+
+<p class="small">Pin numbering matches the 20-pin header so cables can use the same wiring on the probe side. There is also a deprecated 14-pin "JTAG ARM" header (2x7, 0.1" pitch) seen on very old boards — pin map differs; if you encounter one, look it up case-by-case.</p>
+
+<div class="callout">
+  <span class="label">level shifting</span>
+  All ARM debug connectors are <strong>VTref-referenced</strong>: the probe samples VTref (pin 1) and switches its line drivers to that voltage. Never tie VTref to the probe's own supply — the whole point is that targets at 1.8 V, 3.3 V, or 5 V can all share one connector. edevkit1 routes its probe pins through an LVC8T245 buffer with VTref-tied OE and direction control; see the <a href="edevkit1.html">v1 design spec</a> for the schematic.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="edevkit">edevkit1's JTAG implementation</h2>
+
+<p>edevkit1 implements JTAG entirely in software, using one of the RP2350's PIO state machines as a programmable bit-banger. The PIO blocks (12 state machines across 3 PIO blocks on RP2350B) are tiny dedicated processors with deterministic single-cycle GPIO access, designed exactly for protocol implementations like this. See <a href="platform_pio.html">platform_pio.html</a> for the PIO programming model.</p>
+
+<h3 id="edev-pin-budget">Pin and PIO budget</h3>
+
+<p>From the edevkit1 design spec (also recorded in CLAUDE.md):</p>
+
+<table>
+  <tr><th>edevkit1 GPIO</th><th>SWD mode</th><th>JTAG mode</th><th>Driver</th></tr>
+  <tr><td><code>GPIO12</code></td><td>SWCLK</td><td>TCK</td><td>PIO0 SM0 (output)</td></tr>
+  <tr><td><code>GPIO13</code></td><td>SWDIO (bidir)</td><td>TMS</td><td>PIO0 SM0 (bidir, OE-controlled)</td></tr>
+  <tr><td><code>GPIO14</code></td><td>SWO (UART RX)</td><td>TDO (input)</td><td>PIO0 SM1 — see <a href="debug_swo.html">debug_swo.html</a> for SWD; reused as TDO in JTAG mode</td></tr>
+  <tr><td><code>GPIO15</code></td><td>—</td><td>TDI (output)</td><td>PIO0 SM0 (output)</td></tr>
+  <tr><td><code>GPIO16</code></td><td>nRESET (open-drain)</td><td>nRESET (open-drain)</td><td>GPIO direct, not PIO</td></tr>
+  <tr><td>(optional)</td><td>—</td><td>TRST</td><td>Spare GPIO routed to header pin 11 of 20-pin connector if populated</td></tr>
+</table>
+
+<p>The single PIO state machine drives TCK, TMS, and TDI from one side-set; reads TDO via the SM's input mapping; and uses an autopull/autopush FIFO to receive instruction bytes from the host. The same SM is loaded with one of two PIO programs at runtime: <code>swd.pio</code> for SWD mode, <code>jtag.pio</code> for JTAG mode. Switching between modes at runtime swaps the program (a few hundred microseconds).</p>
+
+<h3 id="edev-jtag-pio">The JTAG PIO program — sketch</h3>
+
+<p>The full source lives at <code>firmware/app/pio/jtag.pio</code> (forthcoming). The skeleton:</p>
+
+<pre><code>; jtag.pio — bit-bang IEEE 1149.1 on PIO0 SM0
+; side-set: TCK   (1 bit)
+; out pins: TMS, TDI  (2 bits, but only 1 is driven per cycle)
+; in pin:   TDO
+;
+; The host pushes 8-bit "command" bytes:
+;   [7:6] = mode    (0=TMS clock, 1=TDI/TDO data, 2=set OE, 3=reserved)
+;   [5]   = read    (1=push TDO bit back to RX FIFO)
+;   [4:0] = count   (number of bits, 0..31)
+;
+; followed by data bytes if mode == 1 (TDI/TDO data, packed 8 bits per byte).
+
+.program jtag
+    pull block            ; fetch the next command from TX FIFO
+    out x, 5              ; X = bit count (decremented per cycle)
+    out y, 1              ; Y = read flag
+    out pins, 2     side 0 ; load TMS/TDI initial; TCK low
+
+bit_loop:
+    nop             side 1 ; TCK rising edge — chip samples TMS/TDI here
+    in pins, 1            ; read TDO into ISR (1 bit at a time)
+    jmp y--, push_bit
+    jmp pop_data
+push_bit:
+    push iffull           ; when ISR fills, send 32-bit word back to host
+pop_data:
+    out pins, 2     side 0 ; next bit on TMS/TDI; TCK falling edge
+    jmp x--, bit_loop
+    jmp 0                  ; → fetch next command</code></pre>
+
+<p>The PIO state machine runs at <code>sys_clk / divider</code>. With <code>sys_clk = 150 MHz</code> on RP2350B and divider = 3, each loop iteration takes 4 cycles, giving a <strong>TCK rate of ~12.5 MHz</strong>. That's fast enough for any Cortex-M target and most FPGAs; faster TCK is achievable by tightening the loop (combining <code>out</code> and <code>side</code> on the same cycle), at the cost of program size. The v1 design spec targets <strong>25 MHz SWD</strong> and <strong>10 MHz JTAG</strong> — JTAG is intentionally rate-capped because cable SI degrades at 4-wire, 6"-cable distances faster than at 2-wire SWD.</p>
+
+<h3 id="edev-cmsis-dap">CMSIS-DAP layer on top</h3>
+
+<p>The PIO program is the bit-pump; on the host-USB side, edevkit1 implements <strong>CMSIS-DAP v2</strong> over a USB bulk endpoint. CMSIS-DAP defines an HID/bulk command set ("DAP_JTAG_Sequence", "DAP_JTAG_IDCODE", "DAP_TransferBlock", etc.) that probe-rs / OpenOCD / pyOCD all already speak. The firmware translates each CMSIS-DAP command into a sequence of PIO commands and pushes them down. See <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> for the host-side framing in full.</p>
+
+<p>The end-to-end stack:</p>
+
+<pre><code>┌──────────────────────────┐
+│ probe-rs / OpenOCD       │  on host PC
+│  (speaks CMSIS-DAP)      │
+└─────────┬────────────────┘
+          │ USB bulk EP (CMSIS-DAP v2)
+          ▼
+┌──────────────────────────┐
+│ edevkit1 firmware        │  on RP2350B
+│  src/usb/cmsis_dap/      │  Zephyr USB-Device-Next + dispatcher
+└─────────┬────────────────┘
+          │ kernel msg-queue
+          ▼
+┌──────────────────────────┐
+│ src/proto/jtag_engine.c  │  JTAG state-machine driver
+└─────────┬────────────────┘
+          │ TX FIFO (commands)
+          ▼
+┌──────────────────────────┐
+│ PIO0 SM0 (jtag.pio)      │  bit-bang
+└─────────┬────────────────┘
+          │ GPIO12,13,14,15,16
+          ▼
+       target chip</code></pre>
+
+<p class="small">Cross-references: <a href="edevkit1.html">edevkit1.html</a> §6 (debug subsystem), §7 (PIO budget); <a href="platform_pio.html">platform_pio.html</a>; <a href="debug_swd.html">debug_swd.html</a> for the 2-wire mode; <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> for the host-USB protocol; <a href="arm_cortex_m33.html">arm_cortex_m33.html</a> for the M33 debug-architecture context.</p>
+
+<!-- =========================================================== -->
+<h2 id="pitfalls">Common pitfalls</h2>
+
+<p>The bugs you'll hit, sorted by frequency in real-world bring-up:</p>
+
+<ol>
+  <li>
+    <strong>Confusing TRST with Test-Logic-Reset.</strong>
+    These are not the same thing. TRST is an <em>asynchronous physical pin</em> that, when low, holds the TAP FSM in <code>Test-Logic-Reset</code> regardless of TCK. Many cost-sensitive boards omit TRST entirely (it's optional in IEEE 1149.1). On those boards, the only way to reach <code>Test-Logic-Reset</code> is to drive <strong>TMS=1 for at least 5 TCK cycles</strong> — that path through the FSM is guaranteed to land you in <code>Test-Logic-Reset</code> from any starting state. If your probe firmware assumes TRST exists and skips the 5-cycle TMS reset, the chain initialises incorrectly and the first IDCODE read returns garbage. Always start every session with the TMS-only reset.
+  </li>
+  <li>
+    <strong>Wrong TCK speed for a chip that needs RTCK.</strong>
+    Adaptive-clocking parts (some legacy ARM946/ARM11 SoCs, some Xilinx FPGAs in low-power modes) require the probe to wait for an RTCK echo before issuing the next TCK edge. If your probe runs free-clocking at, say, 10 MHz but the target's internal clock is 1 MHz, the TAP samples late or skips edges entirely. Symptom: IDCODE works (because the chip is fast enough to read its own pre-loaded value), but APACC reads return WAIT forever. Fix: drop TCK below the target's slowest expected clock, or implement RTCK following.
+  </li>
+  <li>
+    <strong>BSDL file mismatch — wrong IR width.</strong>
+    Boundary-scan tools rely on the BSDL file declaring the right <code>INSTRUCTION_LENGTH</code>. If the file is for a similar but not identical part (e.g. STM32F407 vs STM32F417), the IR shift length is wrong and every operation becomes silent garbage — no error, just wrong data. Always verify the IDCODE matches the BSDL's declared <code>IDCODE_REGISTER</code> attribute before trusting any other operation.
+  </li>
+  <li>
+    <strong>Forgetting BYPASS for non-target chips on a chain.</strong>
+    A 3-chip chain where you set IR for chip B but leave A and C in their default IR (which might be EXTEST!) can spike random pins on A and C. Always explicitly load BYPASS into IRs you don't care about — the all-1s pattern is mandatory and safe on every IEEE-1149.1 chip.
+  </li>
+  <li>
+    <strong>Off-by-one on the last shift bit.</strong>
+    The last bit of a Shift-DR or Shift-IR is clocked in <em>simultaneously</em> with the TMS=1 transition that exits the Shift state. New probe-firmware authors often add an extra cycle, or omit one — both fail silently. Double-check on a logic analyser.
+  </li>
+  <li>
+    <strong>Driving TDI through a chip that's in EXTEST.</strong>
+    EXTEST disconnects the chip's core from its pins and drives the pins from the BSR. If a TDI line on chip B is shared with a sensor or oscillator, EXTEST will drive that line — you can corrupt your own clock or external SPI. Use SAMPLE/PRELOAD for non-destructive observation, EXTEST only when you're <em>actually</em> driving pins for test.
+  </li>
+  <li>
+    <strong>Cable too long.</strong>
+    JTAG is fully synchronous and TDI/TDO are unterminated — at 25 MHz over 12" of ribbon, the round-trip skew between TCK and TDO eats your timing budget. Symptom: works at 1 MHz, fails at 10 MHz. Fix: shorten the cable (≤6" recommended) or drop TCK. SWD is more forgiving here because there's no TDI/TDO loop — only one bidirectional line.
+  </li>
+  <li>
+    <strong>Power sequencing with the probe.</strong>
+    If the probe is powered (5 V from USB) and the target is powered down, the probe's debug pins can backfeed the target through ESD diodes. Always verify the probe respects VTref — i.e. the probe's level shifters are disabled when VTref reads zero. edevkit1 does this with the LVC8T245 OE pin tied to a Schmitt-buffered VTref-detect circuit.
+  </li>
+  <li>
+    <strong>Mixing SWD-only headers with JTAG cables.</strong>
+    Many modern dev boards expose the 10-pin Cortex Debug Connector but only wire SWD — pins 6 (TDO/SWO) and 8 (TDI) are no-connects. Plugging a JTAG-only probe in does nothing useful. Check the schematic before assuming your cable will work.
+  </li>
+</ol>
+
+<!-- =========================================================== -->
+<h2 id="further">Where to learn more</h2>
+
+<p>Recommended reading, ordered roughly easiest → most authoritative:</p>
+
+<ol>
+  <li>
+    <strong>The <a href="https://en.wikipedia.org/wiki/JTAG">Wikipedia JTAG article</a></strong> — surprisingly thorough, with diagrams of the TAP FSM, IDCODE format, and a survey of vendor-specific extensions. Start here for context, especially the "history" section.
+  </li>
+  <li>
+    <strong>The <a href="https://openocd.org/doc-release/html/index.html">OpenOCD User's Guide</a></strong>, especially the chapters on "JTAG Hardware Dongles" and "Reset Configuration". OpenOCD is the de-facto open-source JTAG probe orchestrator; reading its docs teaches you what knobs every probe exposes.
+  </li>
+  <li>
+    <strong>OpenOCD source — <code>src/jtag/core.c</code> and <code>src/jtag/drivers/*.c</code></strong>. The <code>jtag_add_*</code> primitives (<code>jtag_add_dr_scan</code>, <code>jtag_add_ir_scan</code>, <code>jtag_add_tlr</code>) are direct expressions of the IEEE 1149.1 state-machine walks. Reading 200 lines of <code>core.c</code> teaches more than 20 pages of any PDF.
+  </li>
+  <li>
+    <strong><a href="https://standards.ieee.org/standard/1149_1-2013.html">IEEE 1149.1-2013 (or -2001)</a></strong> — the standard itself. Buying a copy ($200+) is rarely worth it for software-side work; older 1990 versions are floating around in PDF if you need to verify a corner case. The 2013 revision adds the procedural-language extension (1149.1-PDL) which most embedded developers can ignore.
+  </li>
+  <li>
+    <strong>ARM <a href="https://developer.arm.com/documentation/ihi0031/latest/">ADIv5 Architecture Specification (IHI0031)</a></strong> — the canonical spec for JTAG-DP and SW-DP. §3.3 on the 35-bit DPACC/APACC encoding is essential if you're writing probe firmware. ADIv6 (IHI0074) supersedes for Armv8/8.1-M parts but ADIv5 is still the right entry point.
+  </li>
+  <li>
+    <strong>ARM <a href="https://developer.arm.com/documentation/100748/latest/">CoreSight Technology System Design Guide</a></strong> — explains how DAPs, APs, and the trace funnel fit together. Read after ADIv5 when the system-level picture stops making sense.
+  </li>
+  <li>
+    <strong><a href="https://www.arm.com/architecture/system-architectures/coresight-debug-and-trace">Cortex Debug Connector specification</a></strong> — the connector PDFs from ARM's developer site. Authoritative for the 10-pin and 20-pin headers.
+  </li>
+  <li>
+    <strong>Stuart Hughes's <em>"How JTAG works" series</em></strong> on YouTube and his book chapters — practical, with worked examples on Xilinx FPGAs. Useful if your background is FPGA rather than MCU.
+  </li>
+  <li>
+    <strong>BSDL files at vendor sites</strong> — every major vendor publishes BSDL for every package. ST: <code>www.st.com</code> → "BSDL"; NXP: <code>www.nxp.com</code> → "Boundary Scan Description Language"; Xilinx/AMD: per-device download. UrJTAG ships an extensive BSDL collection too.
+  </li>
+  <li>
+    <strong>Joe Grand's <a href="http://www.grandideastudio.com/">JTAGulator</a></strong> — a hardware tool for finding JTAG pinouts on unknown boards. The Hackaday writeups around it are an excellent practical introduction to the protocol.
+  </li>
+  <li>
+    <strong>Sister docs in this hub:</strong> <a href="debug_swd.html">debug_swd.html</a> (the 2-wire reformulation, including the full SWD line protocol), <a href="debug_swo.html">debug_swo.html</a> (single-wire trace and ITM), <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a> (the host-facing CMSIS-DAP framing), <a href="platform_pio.html">platform_pio.html</a> (the RP2350 PIO programming model), <a href="arm_architecture.html">arm_architecture.html</a> (general M-profile programmer's model), <a href="arm_cortex_m33.html">arm_cortex_m33.html</a> (M33 specifics, debug authentication, secure-debug), and the <a href="edevkit1.html">edevkit1 v1 design spec</a> for how the debug subsystem is wired on the actual board.
+  </li>
+</ol>
+
+<p class="small">When in doubt about a JTAG-related question, search OpenOCD's mailing-list archive and the Memfault Interrupt blog before searching elsewhere. Both have decades of accumulated debugging stories and tend to surface real-world answers faster than vendor PDFs.</p>
+
+<!-- edevkit:pager-start -->
+<nav class="doc-pager" aria-label="Doc navigation">
+<a class="prev" href="usb_overview.html"><span class="dir">← Previous</span><span class="cat">USB stack</span><span class="title">USB device stack overview</span></a>
+<a class="next" href="debug_swd.html"><span class="dir">Next →</span><span class="cat">Debug</span><span class="title">SWD (Serial Wire Debug) protocol</span></a>
+</nav>
+<!-- edevkit:pager-end -->
+<footer>
+  edevkit · tools/web/pages/debug_jtag.html · references IEEE 1149.1, ARM ADIv5/ADIv6, the <a href="edevkit1.html">edevkit1 v1 design spec</a>, and sister docs <a href="debug_swd.html">debug_swd.html</a>, <a href="debug_swo.html">debug_swo.html</a>, <a href="usb_cmsis_dap.html">usb_cmsis_dap.html</a>, <a href="platform_pio.html">platform_pio.html</a>. Update when the JTAG firmware path lands or when the connector pin map shifts in a hardware revision.
+</footer>
+
+</div>
+
+<button class="scroll-top" id="scroll-top" type="button" aria-label="Scroll to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var key = 'edev_theme';
+  document.getElementById('theme-btn')?.addEventListener('click', function () {
+    var stored = localStorage.getItem(key);
+    var next = stored === 'light' ? 'dark' : stored === 'dark' ? null : 'light';
+    if (next === null) { localStorage.removeItem(key); root.removeAttribute('data-theme'); }
+    else                { localStorage.setItem(key, next); root.setAttribute('data-theme', next); }
+  });
+
+  var st = document.getElementById('scroll-top');
+  if (st) {
+    addEventListener('scroll', function () {
+      st.classList.toggle('show', scrollY > 600);
+    }, { passive: true });
+    st.addEventListener('click', function () {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  if (location.protocol === 'file:') {
+    var bl = document.getElementById('back-to-hub');
+    if (bl) {
+      bl.removeAttribute('href');
+      bl.style.cursor = 'default';
+      bl.querySelector('span:last-child').textContent = 'edevkit';
+      bl.querySelector('span:first-child[aria-hidden]')?.remove();
+    }
+  }
+
+  addEventListener('keydown', function (e) {
+    var tag = (e.target?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (e.key === 't' || e.key === 'T') document.getElementById('theme-btn')?.click();
+  });
+})();
+</script>
+
+</body>
+</html>

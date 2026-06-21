@@ -14,7 +14,7 @@ Run from this directory:
     uvicorn server:app --reload      # equivalent (no browser auto-open)
     uvicorn server:app --host 0.0.0.0 --port 8000   # bind to LAN
 
-Set EDEVKIT_DOCS_NO_BROWSER=1 to suppress browser auto-open (e.g. headless / SSH).
+Set EDEVKIT_NO_BROWSER=1 to suppress browser auto-open (e.g. headless / SSH).
 """
 
 from __future__ import annotations
@@ -41,16 +41,20 @@ TEMPLATES_DIR = ROOT / "templates"
 # `order` controls grouping order on the hub page (lower = earlier).
 
 CATEGORIES: dict[str, dict] = {
-    "edevkit1":      {"name": "Design Spec",  "icon": "📐", "order": 0},
-    "installation":  {"name": "Onboarding",   "icon": "🧭", "order": 1},
-    "shell_helpers": {"name": "Workflow",     "icon": "⚙️", "order": 2},
-    "usb_book":      {"name": "USB Book",     "icon": "📚", "order": 3},
-    "bringup":       {"name": "Bring-up",     "icon": "⚡", "order": 4},
-    "recovery":      {"name": "Recovery",     "icon": "🛟", "order": 5},
-    "firmware":      {"name": "Firmware",     "icon": "🔧", "order": 6},
-    "hardware":      {"name": "Hardware",     "icon": "🔌", "order": 7},
-    "host":          {"name": "Host tools",   "icon": "💻", "order": 8},
-    "enclosure":     {"name": "Enclosure",    "icon": "📦", "order": 9},
+    "edevkit1":      {"name": "Design Spec",   "icon": "📐", "order":  0},
+    "installation":  {"name": "Onboarding",    "icon": "🧭", "order":  1},
+    "shell_helpers": {"name": "Workflow",      "icon": "⚙️", "order":  2},
+    "arm":           {"name": "Architecture",  "icon": "🧠", "order":  3},
+    "usb":           {"name": "USB stack",     "icon": "🔌", "order":  4},
+    "debug":         {"name": "Debug",         "icon": "🔍", "order":  5},
+    "proto":         {"name": "Protocols",     "icon": "🔁", "order":  6},
+    "platform":      {"name": "Platform",      "icon": "🏗️", "order":  7},
+    "bringup":       {"name": "Bring-up",      "icon": "⚡", "order":  8},
+    "recovery":      {"name": "Recovery",      "icon": "🛟", "order":  9},
+    "firmware":      {"name": "Firmware",      "icon": "🔧", "order": 10},
+    "hardware":      {"name": "Hardware",      "icon": "📟", "order": 11},
+    "host":          {"name": "Host tools",    "icon": "💻", "order": 12},
+    "enclosure":     {"name": "Enclosure",     "icon": "📦", "order": 13},
 }
 DEFAULT_CATEGORY = {"name": "General", "icon": "📄", "order": 99}
 
@@ -62,6 +66,15 @@ _TITLE_RE   = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL
 _DESC_RE    = re.compile(r'<meta\s+name=["\']description["\']\s+content=["\']([^"\']+)["\']', re.IGNORECASE)
 _HERO_P_RE  = re.compile(r'<header[^>]*class="hero"[^>]*>.*?<p[^>]*class="[^"]*small[^"]*"[^>]*>(.*?)</p>', re.IGNORECASE | re.DOTALL)
 _TAG_RE     = re.compile(r"<[^>]+>")
+_BODY_RE    = re.compile(r"<body[^>]*>(.*?)</body>", re.IGNORECASE | re.DOTALL)
+_SECTION_RE = re.compile(
+    r'<h2[^>]*id=["\']([^"\']+)["\'][^>]*>(.*?)</h2>(.*?)(?=<h2|</body)',
+    re.IGNORECASE | re.DOTALL,
+)
+_STRIP_TAGS_BLOCK_RE = re.compile(
+    r"<(script|style|nav|header|footer)\b[^>]*>.*?</\1\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _strip(html: str) -> str:
@@ -130,6 +143,59 @@ def list_docs() -> list[dict]:
     return docs
 
 
+# --------------------------------------------------------------------------- #
+# Full-text search index                                                      #
+# --------------------------------------------------------------------------- #
+# Per-doc extraction of <h2 id="…">…</h2> sections + their following body text,
+# stripped of nav/header/footer/script/style. Cached on first build, invalidated
+# when any pages/*.html mtime changes.
+
+_search_index_cache: tuple[float, list[dict]] | None = None
+
+
+def _doc_sections(path: Path, doc_meta: dict) -> list[dict]:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    body_m = _BODY_RE.search(text)
+    body = body_m.group(1) if body_m else text
+    # drop noise blocks before section-scanning
+    body = _STRIP_TAGS_BLOCK_RE.sub("", body)
+
+    sections: list[dict] = []
+    for m in _SECTION_RE.finditer(body):
+        sec_id, heading_html, content_html = m.group(1), m.group(2), m.group(3)
+        heading = _strip(heading_html)
+        content = _strip(content_html)
+        if len(content) > 1200:
+            content = content[:1200]
+        sections.append({
+            "doc_url":      doc_meta["url"],
+            "doc_title":    doc_meta["title"],
+            "doc_category": doc_meta["category"],
+            "anchor":       sec_id,
+            "heading":      heading,
+            "text":         content,
+        })
+    return sections
+
+
+def build_search_index() -> list[dict]:
+    """List of section entries across all docs, suitable for JSON streaming."""
+    global _search_index_cache
+    if not PAGES_DIR.exists():
+        return []
+    files = sorted(PAGES_DIR.glob("*.html"))
+    fingerprint = sum(p.stat().st_mtime for p in files)
+    if _search_index_cache and _search_index_cache[0] == fingerprint:
+        return _search_index_cache[1]
+
+    by_path = {p: extract_metadata(p) for p in files}
+    index: list[dict] = []
+    for p, meta in by_path.items():
+        index.extend(_doc_sections(p, meta))
+    _search_index_cache = (fingerprint, index)
+    return index
+
+
 def group_by_category(docs: list[dict]) -> list[dict]:
     """Stable ordered groups for sidebar + main grid."""
     seen: dict[str, dict] = {}
@@ -166,12 +232,15 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 async def index(request: Request) -> HTMLResponse:
     docs = list_docs()
     groups = group_by_category(docs)
+    # Top N most-recently-modified docs for the "Recently updated" row.
+    recent = sorted(docs, key=lambda d: d["modified"], reverse=True)[:4]
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "docs":        docs,
             "groups":      groups,
+            "recent":      recent,
             "doc_count":   len(docs),
             "now":         datetime.now().strftime("%Y-%m-%d"),
         },
@@ -196,13 +265,39 @@ async def serve_doc(path: str):
 
 @app.get("/api/docs")
 async def api_docs() -> JSONResponse:
-    """JSON list of docs — powers client-side search."""
+    """JSON list of docs — powers client-side search (metadata only)."""
     return JSONResponse(list_docs())
+
+
+@app.get("/api/search-index")
+async def api_search_index() -> JSONResponse:
+    """Per-section text index across all docs — powers full-text search."""
+    return JSONResponse(build_search_index())
 
 
 @app.get("/api/health")
 async def api_health() -> JSONResponse:
     return JSONResponse({"status": "ok", "docs": len(list_docs())})
+
+
+@app.get("/sw.js", include_in_schema=False)
+async def service_worker():
+    """Serve the service worker from the site root so its scope covers /docs/*.
+
+    Must include a Service-Worker-Allowed header that matches the desired
+    scope ('/'). Browsers cache aggressively, so we also turn off caching
+    for the SW file itself — the worker handles its own resource caching."""
+    sw_path = STATIC_DIR / "sw.js"
+    if not sw_path.is_file():
+        raise HTTPException(status_code=404, detail="service worker missing")
+    return FileResponse(
+        sw_path,
+        media_type="application/javascript",
+        headers={
+            "Service-Worker-Allowed": "/",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
+    )
 
 
 @app.exception_handler(404)
@@ -248,17 +343,20 @@ if __name__ == "__main__":
     import uvicorn
 
     HOST, PORT = "127.0.0.1", 8765
+    URL = f"http://{HOST}:{PORT}/"
 
     # Auto-open the docs hub in the user's browser on first start. Suppressed
-    # by EDEVKIT_DOCS_NO_BROWSER=1 (headless / SSH / CI use). The supervisor
-    # process runs this block exactly once; uvicorn's reload child inherits the
-    # parent's behaviour but never re-runs __main__, so reloads don't re-open.
-    if os.environ.get("EDEVKIT_DOCS_NO_BROWSER", "").strip() not in ("1", "true", "yes"):
+    # by EDEVKIT_NO_BROWSER=1 (headless / SSH / CI use). The supervisor process
+    # runs this block exactly once; uvicorn's reload child inherits the parent's
+    # behaviour but never re-runs __main__, so reloads don't re-open.
+    if os.environ.get("EDEVKIT_NO_BROWSER", "").strip() not in ("1", "true", "yes"):
         threading.Thread(
             target=_open_browser_when_ready,
             args=(HOST, PORT),
             daemon=True,
         ).start()
+
+    print(f"\n  edevkit docs hub serving at {URL}\n  (set EDEVKIT_NO_BROWSER=1 to skip auto-open)\n")
 
     uvicorn.run(
         "server:app",
