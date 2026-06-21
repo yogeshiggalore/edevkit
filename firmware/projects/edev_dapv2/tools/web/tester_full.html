@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edev_dapv2 tester</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg-2: #181b22;
+    --bg-3: #20242d;
+    --fg: #e6e7eb;
+    --fg-dim: #9097a5;
+    --accent: #7aa2f7;
+    --good: #9ece6a;
+    --warn: #e0af68;
+    --bad:  #f7768e;
+    --border: #2a2f3a;
+    --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    color: var(--fg); background: var(--bg);
+  }
+  header {
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  header .id { color: var(--fg-dim); font-family: var(--mono); font-size: 12px; }
+  header .spacer { flex: 1; }
+  header .status {
+    font-size: 12px; padding: 4px 10px; border-radius: 4px;
+    background: var(--bg-3); color: var(--fg-dim);
+  }
+  header .status.on { color: var(--good); }
+  header .status.off { color: var(--bad); }
+
+  button {
+    background: var(--bg-3); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 12px; cursor: pointer; font: inherit;
+    transition: background 0.1s;
+  }
+  button:hover:not(:disabled) { background: var(--border); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #0f1115; border-color: var(--accent); }
+  button.primary:hover:not(:disabled) { filter: brightness(1.1); }
+  button.danger { background: var(--bad); color: #0f1115; border-color: var(--bad); }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 420px;
+    gap: 0;
+    height: calc(100vh - 53px);
+  }
+  .panels { overflow-y: auto; padding: 16px 20px; }
+  .panel {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 14px;
+  }
+  .panel h2 {
+    margin: 0; padding: 10px 14px;
+    font-size: 13px; font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    color: var(--fg);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .panel .body { padding: 12px 14px; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .row:last-child { margin-bottom: 0; }
+  .row label { color: var(--fg-dim); font-size: 12px; }
+  input[type="text"], input[type="number"], select {
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 5px 8px; font: inherit;
+    font-family: var(--mono); font-size: 13px;
+  }
+  input[type="text"]:focus, input[type="number"]:focus, select:focus {
+    outline: none; border-color: var(--accent);
+  }
+
+  .kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 14px;
+    font-family: var(--mono); font-size: 12px;
+  }
+  .kv dt { color: var(--fg-dim); }
+  .kv dd { margin: 0; color: var(--fg); word-break: break-all; }
+
+  .log {
+    background: #0a0c10;
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    height: 100%;
+  }
+  .log h2 {
+    margin: 0; padding: 10px 14px;
+    font-size: 13px; font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    color: var(--fg);
+  }
+  .log h2 button { padding: 2px 8px; font-size: 11px; }
+  .log .body {
+    flex: 1; overflow-y: auto; padding: 8px 12px;
+    font-family: var(--mono); font-size: 11px; line-height: 1.5;
+  }
+  .log .ln { padding: 1px 0; white-space: pre-wrap; word-break: break-all; }
+  .log .ln.tx { color: var(--accent); }
+  .log .ln.rx { color: var(--good); }
+  .log .ln.info { color: var(--fg-dim); }
+  .log .ln.error { color: var(--bad); }
+  .log .ts { color: var(--fg-dim); margin-right: 8px; }
+
+  .hex { font-family: var(--mono); }
+  .pill {
+    display: inline-block;
+    font-size: 10px; padding: 2px 6px;
+    border-radius: 3px; background: var(--bg-3);
+    color: var(--fg-dim); font-family: var(--mono);
+    margin-left: 6px;
+  }
+  .pill.good { color: var(--good); background: rgba(158, 206, 106, 0.12); }
+  .pill.bad  { color: var(--bad);  background: rgba(247, 118, 142, 0.12); }
+  .pill.warn { color: var(--warn); background: rgba(224, 175, 104, 0.12); }
+
+  .swo {
+    background: #0a0c10;
+    border-radius: 4px;
+    padding: 8px;
+    font-family: var(--mono); font-size: 11px;
+    max-height: 240px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-all;
+    color: var(--good);
+  }
+
+  .note {
+    background: rgba(122, 162, 247, 0.08);
+    border-left: 2px solid var(--accent);
+    padding: 8px 12px;
+    color: var(--fg-dim);
+    font-size: 12px;
+    border-radius: 0 4px 4px 0;
+    margin-bottom: 12px;
+  }
+  .note b { color: var(--fg); }
+</style>
+</head>
+<body>
+<header>
+  <h1>edev_dapv2 tester</h1>
+  <span class="id" id="device-id"></span>
+  <span class="spacer"></span>
+  <span class="status" id="status">disconnected</span>
+  <button id="btn-connect" class="primary">Connect</button>
+  <button id="btn-disconnect" disabled>Disconnect</button>
+</header>
+
+<main>
+  <div class="panels">
+
+    <div class="note" id="webusb-note" style="display:none;">
+      <b>WebUSB not supported.</b> This page needs Chromium-based browser (Chrome, Edge, Brave) and an HTTPS origin or <code>localhost</code>.
+    </div>
+
+    <div class="panel">
+      <h2>1 · Probe info</h2>
+      <div class="body">
+        <div class="row">
+          <button id="btn-info" disabled>Dump DAP_Info</button>
+          <span class="pill" id="info-pill">never run</span>
+        </div>
+        <dl class="kv" id="info-kv"></dl>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>2 · SWD bring-up</h2>
+      <div class="body">
+        <div class="row">
+          <label>Mode</label>
+          <select id="connect-mode">
+            <option value="1">SWD</option>
+            <option value="2">JTAG</option>
+          </select>
+          <button id="btn-connect-port" disabled>DAP_Connect</button>
+          <button id="btn-disconnect-port" disabled>DAP_Disconnect</button>
+        </div>
+        <div class="row">
+          <label>Clock</label>
+          <select id="swclk-hz">
+            <option value="100000">100 kHz</option>
+            <option value="1000000" selected>1 MHz</option>
+            <option value="5000000">5 MHz</option>
+            <option value="10000000">10 MHz</option>
+            <option value="25000000">25 MHz</option>
+          </select>
+          <button id="btn-swclk" disabled>DAP_SWJ_Clock</button>
+        </div>
+        <div class="row">
+          <button id="btn-swj-seq" disabled>Line reset + JTAG→SWD switch</button>
+          <span class="pill">canonical 136-bit sequence</span>
+        </div>
+        <div class="row">
+          <button id="btn-tcfg" disabled>DAP_TransferConfigure (idle 0, wait 64, match 0)</button>
+        </div>
+        <div class="row">
+          <button id="btn-swd-cfg" disabled>DAP_SWD_Configure (turnaround=1, no extra data phase)</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>3 · Read IDCODE  <span class="pill">one-click sequence</span></h2>
+      <div class="body">
+        <div class="row">
+          <button id="btn-idcode" class="primary" disabled>Run full sequence</button>
+          <span class="pill" id="idcode-pill">idle</span>
+        </div>
+        <dl class="kv" id="idcode-kv"></dl>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>4 · Single transfer</h2>
+      <div class="body">
+        <div class="row">
+          <label>Bank</label>
+          <select id="xfer-ap">
+            <option value="DP">DP</option>
+            <option value="AP">AP</option>
+          </select>
+          <label>Reg (A[3:2])</label>
+          <select id="xfer-addr">
+            <option value="0">0x0</option>
+            <option value="1">0x4</option>
+            <option value="2">0x8</option>
+            <option value="3">0xC</option>
+          </select>
+          <label>Dir</label>
+          <select id="xfer-dir">
+            <option value="R">Read</option>
+            <option value="W">Write</option>
+          </select>
+          <label>Data (W)</label>
+          <input type="text" id="xfer-data" value="0x00000000" size="12">
+        </div>
+        <div class="row">
+          <button id="btn-xfer" disabled>DAP_Transfer ×1</button>
+          <span class="pill" id="xfer-pill">idle</span>
+        </div>
+        <dl class="kv" id="xfer-kv"></dl>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>5 · SWJ_Pins direct drive</h2>
+      <div class="body">
+        <div class="row">
+          <button id="btn-pins-read" disabled>Read pin state</button>
+          <button id="btn-pins-rst-lo" disabled>nRESET low</button>
+          <button id="btn-pins-rst-hi" disabled>nRESET high</button>
+        </div>
+        <div class="kv" id="pins-kv"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>6 · SWO trace</h2>
+      <div class="body">
+        <div class="row">
+          <label>Transport</label>
+          <select id="swo-transport">
+            <option value="1">Polled (DAP_SWO_Data)</option>
+            <option value="2">Streamed (bulk EP 0x82)</option>
+          </select>
+          <label>Baud</label>
+          <select id="swo-baud">
+            <option value="115200">115200</option>
+            <option value="921600" selected>921600</option>
+            <option value="1000000">1 Mbaud</option>
+            <option value="2000000">2 Mbaud</option>
+          </select>
+          <button id="btn-swo-start" disabled>Start</button>
+          <button id="btn-swo-stop" disabled>Stop</button>
+        </div>
+        <div class="row">
+          <button id="btn-swo-status" disabled>DAP_SWO_Status</button>
+          <span class="pill" id="swo-pill">idle</span>
+        </div>
+        <div class="swo" id="swo-out"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>7 · Raw hex command</h2>
+      <div class="body">
+        <div class="row" style="flex-wrap:nowrap;">
+          <input type="text" id="raw-hex" style="flex:1; font-family:var(--mono);"
+                 placeholder="e.g.  00 F0   (DAP_Info Capabilities)"
+                 value="00 F0">
+          <button id="btn-raw" disabled>Send</button>
+        </div>
+        <div class="kv" id="raw-kv"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <aside class="log">
+    <h2>Log
+      <span>
+        <button id="btn-log-clear">clear</button>
+      </span>
+    </h2>
+    <div class="body" id="log"></div>
+  </aside>
+</main>
+
+<script>
+'use strict';
+
+/* ============================================================
+ * edev_dapv2 WebUSB tester
+ *
+ * Identity: VID 0x2E8A, PID 0x000C (CMSIS-DAP), vendor class.
+ * EPs:
+ *   0x01 OUT  bulk — DAP commands
+ *   0x81 IN   bulk — DAP responses
+ *   0x82 IN   bulk — SWO streamed
+ * ============================================================ */
+
+const VID = 0x2E8A;
+const PID = 0x000C;
+const EP_OUT     = 0x01;
+const EP_IN_DAP  = 0x81;
+const EP_IN_SWO  = 0x82;
+const PKT_SIZE   = 64;          /* wire-level; logical packets may span */
+
+const $ = sel => document.querySelector(sel);
+
+const els = {
+  status        : $('#status'),
+  deviceId      : $('#device-id'),
+  webusbNote    : $('#webusb-note'),
+  btnConnect    : $('#btn-connect'),
+  btnDisconnect : $('#btn-disconnect'),
+
+  btnInfo       : $('#btn-info'),
+  infoPill      : $('#info-pill'),
+  infoKv        : $('#info-kv'),
+
+  connectMode   : $('#connect-mode'),
+  btnConnectPort: $('#btn-connect-port'),
+  btnDisconnectPort: $('#btn-disconnect-port'),
+  swclkHz       : $('#swclk-hz'),
+  btnSwclk      : $('#btn-swclk'),
+  btnSwjSeq     : $('#btn-swj-seq'),
+  btnTcfg       : $('#btn-tcfg'),
+  btnSwdCfg     : $('#btn-swd-cfg'),
+
+  btnIdcode     : $('#btn-idcode'),
+  idcodePill    : $('#idcode-pill'),
+  idcodeKv      : $('#idcode-kv'),
+
+  xferAp        : $('#xfer-ap'),
+  xferAddr      : $('#xfer-addr'),
+  xferDir       : $('#xfer-dir'),
+  xferData      : $('#xfer-data'),
+  btnXfer       : $('#btn-xfer'),
+  xferPill      : $('#xfer-pill'),
+  xferKv        : $('#xfer-kv'),
+
+  btnPinsRead   : $('#btn-pins-read'),
+  btnPinsRstLo  : $('#btn-pins-rst-lo'),
+  btnPinsRstHi  : $('#btn-pins-rst-hi'),
+  pinsKv        : $('#pins-kv'),
+
+  swoTransport  : $('#swo-transport'),
+  swoBaud       : $('#swo-baud'),
+  btnSwoStart   : $('#btn-swo-start'),
+  btnSwoStop    : $('#btn-swo-stop'),
+  btnSwoStatus  : $('#btn-swo-status'),
+  swoPill       : $('#swo-pill'),
+  swoOut        : $('#swo-out'),
+
+  rawHex        : $('#raw-hex'),
+  btnRaw        : $('#btn-raw'),
+  rawKv         : $('#raw-kv'),
+
+  log           : $('#log'),
+  btnLogClear   : $('#btn-log-clear'),
+};
+
+/* ---- logging ---- */
+function log(kind, msg) {
+  const div = document.createElement('div');
+  div.className = 'ln ' + kind;
+  const ts = new Date().toISOString().slice(11, 23);
+  div.innerHTML = `<span class="ts">${ts}</span>${msg}`;
+  els.log.appendChild(div);
+  els.log.scrollTop = els.log.scrollHeight;
+}
+function hex(bytes, maxLen = 64) {
+  if (!bytes) return '';
+  const arr = Array.from(bytes.slice(0, maxLen)).map(b => b.toString(16).padStart(2, '0'));
+  return arr.join(' ') + (bytes.length > maxLen ? ` …(+${bytes.length - maxLen})` : '');
+}
+function parseHex(s) {
+  const tokens = s.trim().split(/[\s,]+/).filter(Boolean);
+  return new Uint8Array(tokens.map(t => parseInt(t.replace(/^0x/i, ''), 16)));
+}
+
+/* ---- state ---- */
+let device   = null;
+let swoTask  = null;     /* AbortController for the SWO bulk-IN loop */
+
+function setConnected(ok) {
+  els.status.textContent = ok ? 'connected' : 'disconnected';
+  els.status.className = 'status ' + (ok ? 'on' : 'off');
+  els.btnConnect.disabled = ok;
+  els.btnDisconnect.disabled = !ok;
+
+  const buttons = [
+    els.btnInfo, els.btnConnectPort, els.btnDisconnectPort, els.btnSwclk,
+    els.btnSwjSeq, els.btnTcfg, els.btnSwdCfg, els.btnIdcode, els.btnXfer,
+    els.btnPinsRead, els.btnPinsRstLo, els.btnPinsRstHi,
+    els.btnSwoStart, els.btnSwoStop, els.btnSwoStatus, els.btnRaw
+  ];
+  buttons.forEach(b => b.disabled = !ok);
+
+  if (!ok) {
+    els.deviceId.textContent = '';
+    els.infoKv.innerHTML  = '';
+    els.idcodeKv.innerHTML = '';
+    els.xferKv.innerHTML  = '';
+    els.pinsKv.innerHTML  = '';
+    els.rawKv.innerHTML   = '';
+  }
+}
+
+/* ---- WebUSB transport ---- */
+
+async function connect() {
+  if (!navigator.usb) {
+    log('error', 'navigator.usb not available — use Chrome/Edge over localhost or HTTPS');
+    return;
+  }
+  try {
+    device = await navigator.usb.requestDevice({
+      filters: [{ vendorId: VID, productId: PID }]
+    });
+    await device.open();
+    if (device.configuration === null) {
+      await device.selectConfiguration(1);
+    }
+    /* The vendor interface (CMSIS-DAP) is interface 0. */
+    await device.claimInterface(0);
+
+    setConnected(true);
+    const sn = device.serialNumber || '(no serial)';
+    els.deviceId.textContent = `${device.manufacturerName} · ${device.productName} · ${sn}`;
+    log('info', `connected ${device.manufacturerName} / ${device.productName} / serial ${sn}`);
+  } catch (e) {
+    log('error', 'connect failed: ' + e);
+    device = null;
+    setConnected(false);
+  }
+}
+
+async function disconnect() {
+  if (swoTask) {
+    swoTask.abort();
+    swoTask = null;
+  }
+  if (device) {
+    try { await device.releaseInterface(0); } catch (e) {}
+    try { await device.close(); } catch (e) {}
+  }
+  device = null;
+  setConnected(false);
+  log('info', 'disconnected');
+}
+
+/* Send a DAP command and read the response.
+ *
+ * Per CMSIS-DAP v2, each request is one bulk OUT URB and each response
+ * is one bulk IN URB. The first byte of the response echoes the cmd. */
+async function dap(req) {
+  if (!device) throw new Error('not connected');
+  if (req.length > PKT_SIZE) {
+    /* The firmware advertises 512-byte logical packets but the wire-
+     * level max is 64 — TinyUSB handles fragmentation for us. */
+  }
+  log('tx', `→ ${hex(req)}`);
+  await device.transferOut(EP_OUT, req);
+  const result = await device.transferIn(EP_IN_DAP, 512);
+  if (result.status !== 'ok') {
+    throw new Error('transferIn status = ' + result.status);
+  }
+  const resp = new Uint8Array(result.data.buffer);
+  log('rx', `← ${hex(resp)}`);
+  if (resp.length > 0 && resp[0] !== req[0] && req[0] !== 0x7F) {
+    /* 0x7F (ExecuteCommands) responds with 0x7F+count; other commands
+     * echo the cmd byte. */
+    log('error', `cmd echo mismatch: sent 0x${req[0].toString(16)}, got 0x${resp[0].toString(16)}`);
+  }
+  return resp;
+}
+
+/* ---- DAP_Info subcommands ---- */
+
+const INFO_SUBS = [
+  [0x01, 'Vendor name',     'string'],
+  [0x02, 'Product name',    'string'],
+  [0x03, 'Serial number',   'string'],
+  [0x04, 'Protocol version','string'],
+  [0x09, 'Product FW ver',  'string'],
+  [0xF0, 'Capabilities',    'bits'],
+  [0xFE, 'Packet count',    'u8'],
+  [0xFF, 'Packet size',     'u16'],
+  [0xFD, 'SWO buffer size', 'u32'],
+  [0xF1, 'TD timer freq',   'u32'],
+];
+
+const CAP_BITS = [
+  'SWD', 'JTAG', 'SWO UART', 'SWO Manch.',
+  'Atomic', 'TD Timer', 'SWO Streamed', 'UART Comm'
+];
+
+function decodeInfo(sub, kind, payload) {
+  const n = payload[0];
+  if (n === 0) return '(empty)';
+  const data = payload.slice(1, 1 + n);
+  if (kind === 'string') {
+    return new TextDecoder().decode(data).replace(/\0+$/, '');
+  }
+  if (kind === 'u8')  return data[0];
+  if (kind === 'u16') return data[0] | (data[1] << 8);
+  if (kind === 'u32') return (data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24)) >>> 0;
+  if (kind === 'bits') {
+    const byte0 = data[0] || 0;
+    const set = [];
+    for (let i = 0; i < 8; i++) if (byte0 & (1 << i)) set.push(CAP_BITS[i]);
+    return `0x${byte0.toString(16).padStart(2, '0')} [ ${set.join(', ')} ]`;
+  }
+  return hex(data);
+}
+
+async function runInfoDump() {
+  els.infoKv.innerHTML = '';
+  els.infoPill.textContent = 'running';
+  els.infoPill.className = 'pill warn';
+  for (const [sub, label, kind] of INFO_SUBS) {
+    try {
+      const resp = await dap(new Uint8Array([0x00, sub]));
+      const decoded = decodeInfo(sub, kind, resp.slice(1));
+      addKv(els.infoKv, label, decoded);
+    } catch (e) {
+      addKv(els.infoKv, label, '(error: ' + e.message + ')');
+    }
+  }
+  els.infoPill.textContent = 'done';
+  els.infoPill.className = 'pill good';
+}
+
+function addKv(dl, k, v) {
+  const dt = document.createElement('dt'); dt.textContent = k;
+  const dd = document.createElement('dd'); dd.textContent = v;
+  dl.appendChild(dt); dl.appendChild(dd);
+}
+
+/* ---- SWJ setup ---- */
+
+const ACK_NAMES = { 1: 'OK', 2: 'WAIT', 4: 'FAULT', 7: 'NO_ACK' };
+
+async function dapConnect(mode) {
+  const resp = await dap(new Uint8Array([0x02, mode]));
+  if (resp[1] === 0) throw new Error('DAP_Connect failed (port reported as 0)');
+  log('info', 'DAP_Connect → ' + (resp[1] === 1 ? 'SWD' : 'JTAG'));
+}
+async function dapDisconnect() { await dap(new Uint8Array([0x03])); }
+async function dapSwjClock(hz) {
+  await dap(new Uint8Array([0x11, hz & 0xff, (hz>>8)&0xff, (hz>>16)&0xff, (hz>>24)&0xff]));
+}
+async function dapTransferConfigure(idle, wait, match) {
+  await dap(new Uint8Array([0x04, idle, wait & 0xff, (wait>>8)&0xff, match & 0xff, (match>>8)&0xff]));
+}
+async function dapSwdConfigure(byte) {
+  await dap(new Uint8Array([0x13, byte]));
+}
+
+/* Canonical JTAG→SWD switch sequence (per ARM ADI v5):
+ *   ≥50 bits high  (line reset)
+ *    16 bits 0xE79E (LSB first on wire)
+ *   ≥50 bits high  (sync)
+ * We pack into 136 bits = 17 bytes. */
+async function dapSwjSequence() {
+  const bits = 136;
+  const data = new Uint8Array(17);
+  /* First 7 bytes = 56 bits of 1 */
+  for (let i = 0; i < 7; i++) data[i] = 0xff;
+  /* Next 2 bytes = 0xE79E (low byte first on wire = LSB-first packing) */
+  data[7] = 0x9E;
+  data[8] = 0xE7;
+  /* Next 7 bytes = 56 bits of 1 */
+  for (let i = 9; i < 16; i++) data[i] = 0xff;
+  /* Last byte = 8 bits of 0 (trailing idle) */
+  data[16] = 0x00;
+
+  const req = new Uint8Array([0x12, bits, ...data]);
+  await dap(req);
+}
+
+/* ---- DAP_Transfer ---- */
+
+function buildTransferRequestByte(apOrDp, addr2bits, isRead) {
+  /* Bit 0: APnDP (0=DP, 1=AP)
+   * Bit 1: RnW   (0=W, 1=R)
+   * Bits 2-3: A[3:2]   (addr index 0..3 → address 0/4/8/C) */
+  let b = 0;
+  if (apOrDp === 'AP') b |= 0x01;
+  if (isRead)          b |= 0x02;
+  b |= (addr2bits & 0x03) << 2;
+  return b;
+}
+
+async function dapTransfer1(reqByte, data32) {
+  const isWrite = (reqByte & 0x02) === 0;
+  const buf = [];
+  buf.push(0x05);            /* cmd */
+  buf.push(0x00);            /* DAP index (SWD ignores) */
+  buf.push(0x01);            /* count = 1 */
+  buf.push(reqByte);
+  if (isWrite) {
+    buf.push(data32 & 0xff, (data32>>8)&0xff, (data32>>16)&0xff, (data32>>24)&0xff);
+  }
+  const resp = await dap(new Uint8Array(buf));
+  /* Response: [05, count, ack, data×4(if read & ok)] */
+  const done = resp[1];
+  const ack  = resp[2];
+  let value = null;
+  if (done > 0 && ack === 0x01 && !isWrite) {
+    value = (resp[3] | (resp[4]<<8) | (resp[5]<<16) | (resp[6]<<24)) >>> 0;
+  }
+  return { done, ack, value };
+}
+
+/* ---- DAP_SWJ_Pins helpers ---- */
+
+async function dapSwjPinsRead() {
+  /* values=0, select=0 (don't drive anything), wait=0 — just readback */
+  const resp = await dap(new Uint8Array([0x10, 0, 0, 0,0,0,0]));
+  return resp[1];
+}
+async function dapSwjPinsDrive(value, select, waitUs = 1000) {
+  const resp = await dap(new Uint8Array([0x10, value, select,
+                          waitUs & 0xff, (waitUs>>8)&0xff,
+                          (waitUs>>16)&0xff, (waitUs>>24)&0xff]));
+  return resp[1];
+}
+
+/* ---- Read IDCODE full sequence ---- */
+
+async function runReadIdcode() {
+  els.idcodeKv.innerHTML = '';
+  els.idcodePill.textContent = 'running';
+  els.idcodePill.className = 'pill warn';
+  try {
+    await dapConnect(1);                   /* SWD */
+    addKv(els.idcodeKv, 'DAP_Connect', 'SWD');
+    const hz = parseInt(els.swclkHz.value, 10);
+    await dapSwjClock(hz);
+    addKv(els.idcodeKv, 'SWCLK', `${hz/1e6} MHz`);
+    await dapTransferConfigure(0, 64, 0);
+    await dapSwdConfigure(0x00);
+    await dapSwjSequence();
+    addKv(els.idcodeKv, 'SWJ sequence', 'line reset + JTAG→SWD');
+
+    /* Read DP[0] = IDCODE — APnDP=0, RnW=1, A[3:2]=00 → request byte 0x02 */
+    const r = await dapTransfer1(0x02, 0);
+    const ackName = ACK_NAMES[r.ack] || `0x${r.ack.toString(16)}`;
+    addKv(els.idcodeKv, 'ACK', ackName);
+    if (r.value !== null) {
+      addKv(els.idcodeKv, 'IDCODE', '0x' + r.value.toString(16).padStart(8, '0'));
+      /* Decode well-known IDCODEs */
+      const designer = (r.value >> 1) & 0x7FF;
+      const partno   = (r.value >> 12) & 0xFFFF;
+      addKv(els.idcodeKv, '  Designer (JEP106)', '0x' + designer.toString(16));
+      addKv(els.idcodeKv, '  Part number', '0x' + partno.toString(16));
+      els.idcodePill.textContent = 'ok';
+      els.idcodePill.className = 'pill good';
+    } else {
+      els.idcodePill.textContent = 'no IDCODE';
+      els.idcodePill.className = 'pill bad';
+    }
+  } catch (e) {
+    log('error', 'IDCODE sequence: ' + e.message);
+    els.idcodePill.textContent = 'error';
+    els.idcodePill.className = 'pill bad';
+  }
+}
+
+/* ---- SWO streaming ---- */
+
+async function swoStream(controller) {
+  /* Continuously transferIn on EP 0x82, append decoded bytes to the
+   * SWO panel. ITM frames are raw bytes — for v0.1 we just display
+   * printable chars and hex for the rest. */
+  let buf = '';
+  while (!controller.signal.aborted) {
+    try {
+      const r = await device.transferIn(EP_IN_SWO, 64);
+      if (controller.signal.aborted) break;
+      if (r.status !== 'ok' || r.data.byteLength === 0) continue;
+      const bytes = new Uint8Array(r.data.buffer);
+      for (const b of bytes) {
+        buf += (b >= 32 && b < 127) ? String.fromCharCode(b) :
+               (b === 0x0a)         ? '\n' :
+               `\\x${b.toString(16).padStart(2, '0')}`;
+      }
+      els.swoOut.textContent = buf.slice(-8192);
+      els.swoOut.scrollTop = els.swoOut.scrollHeight;
+    } catch (e) {
+      if (controller.signal.aborted) break;
+      log('error', 'SWO stream: ' + e.message);
+      break;
+    }
+  }
+}
+
+async function swoStart() {
+  const transport = parseInt(els.swoTransport.value, 10);
+  const baud = parseInt(els.swoBaud.value, 10);
+  await dap(new Uint8Array([0x17, transport]));                          /* Transport */
+  await dap(new Uint8Array([0x18, 1]));                                  /* Mode = UART */
+  const br = await dap(new Uint8Array([0x19, baud & 0xff, (baud>>8)&0xff,
+                                        (baud>>16)&0xff, (baud>>24)&0xff]));
+  const actual = (br[1] | (br[2]<<8) | (br[3]<<16) | (br[4]<<24)) >>> 0;
+  log('info', `SWO actual baud = ${actual}`);
+  if (actual === 0) {
+    els.swoPill.textContent = 'baud unachievable';
+    els.swoPill.className = 'pill bad';
+    return;
+  }
+  await dap(new Uint8Array([0x1a, 1]));                                  /* Control = start */
+  els.swoPill.textContent = `streaming @ ${actual}`;
+  els.swoPill.className = 'pill good';
+
+  if (transport === 2) {
+    swoTask = new AbortController();
+    swoStream(swoTask).catch(() => {});
+  }
+}
+
+async function swoStop() {
+  if (swoTask) { swoTask.abort(); swoTask = null; }
+  await dap(new Uint8Array([0x1a, 0]));                                  /* Control = stop */
+  els.swoPill.textContent = 'stopped';
+  els.swoPill.className = 'pill';
+}
+
+async function swoStatus() {
+  const r = await dap(new Uint8Array([0x1b]));
+  const status = r[1];
+  const count  = (r[2] | (r[3]<<8) | (r[4]<<16) | (r[5]<<24)) >>> 0;
+  const active = (status & 0x01) !== 0;
+  const over   = (status & 0x80) !== 0;
+  els.swoPill.textContent = `${active ? 'active' : 'idle'} · ${count} B ready` + (over ? ' · OVERRUN' : '');
+  els.swoPill.className = 'pill ' + (over ? 'bad' : (active ? 'good' : ''));
+}
+
+/* ---- raw hex ---- */
+
+async function sendRaw() {
+  els.rawKv.innerHTML = '';
+  try {
+    const req = parseHex(els.rawHex.value);
+    if (req.length === 0) { addKv(els.rawKv, 'error', 'no bytes parsed'); return; }
+    const resp = await dap(req);
+    addKv(els.rawKv, 'request',  hex(req));
+    addKv(els.rawKv, 'response', hex(resp));
+  } catch (e) {
+    addKv(els.rawKv, 'error', e.message);
+  }
+}
+
+/* ---- wire up UI ---- */
+
+if (!navigator.usb) {
+  els.webusbNote.style.display = '';
+}
+
+els.btnConnect.addEventListener('click', connect);
+els.btnDisconnect.addEventListener('click', disconnect);
+els.btnLogClear.addEventListener('click', () => { els.log.innerHTML = ''; });
+
+els.btnInfo.addEventListener('click', () => runInfoDump().catch(e => log('error', e.message)));
+
+els.btnConnectPort.addEventListener('click', async () => {
+  try { await dapConnect(parseInt(els.connectMode.value, 10)); } catch (e) { log('error', e.message); }
+});
+els.btnDisconnectPort.addEventListener('click', async () => {
+  try { await dapDisconnect(); log('info', 'DAP_Disconnect'); } catch (e) { log('error', e.message); }
+});
+els.btnSwclk.addEventListener('click', async () => {
+  try { await dapSwjClock(parseInt(els.swclkHz.value, 10)); log('info', 'SWCLK set'); } catch (e) { log('error', e.message); }
+});
+els.btnSwjSeq.addEventListener('click', async () => {
+  try { await dapSwjSequence(); log('info', 'SWJ_Sequence sent'); } catch (e) { log('error', e.message); }
+});
+els.btnTcfg.addEventListener('click', async () => {
+  try { await dapTransferConfigure(0, 64, 0); log('info', 'TransferConfigure idle=0 wait=64 match=0'); } catch (e) { log('error', e.message); }
+});
+els.btnSwdCfg.addEventListener('click', async () => {
+  try { await dapSwdConfigure(0); log('info', 'SWD_Configure turnaround=1 data_phase=0'); } catch (e) { log('error', e.message); }
+});
+
+els.btnIdcode.addEventListener('click', () => runReadIdcode());
+
+els.btnXfer.addEventListener('click', async () => {
+  els.xferKv.innerHTML = '';
+  els.xferPill.textContent = 'running';
+  els.xferPill.className = 'pill warn';
+  try {
+    const ap     = els.xferAp.value;
+    const addr   = parseInt(els.xferAddr.value, 10);
+    const isRead = els.xferDir.value === 'R';
+    const data32 = parseInt(els.xferData.value, 16) >>> 0;
+    const reqByte = buildTransferRequestByte(ap, addr, isRead);
+    addKv(els.xferKv, 'request byte', '0x' + reqByte.toString(16).padStart(2, '0'));
+    const r = await dapTransfer1(reqByte, data32);
+    const ackName = ACK_NAMES[r.ack] || `0x${r.ack.toString(16)}`;
+    addKv(els.xferKv, 'ACK', ackName);
+    if (r.value !== null) {
+      addKv(els.xferKv, 'value', '0x' + r.value.toString(16).padStart(8, '0'));
+    }
+    els.xferPill.textContent = ackName;
+    els.xferPill.className = 'pill ' + (r.ack === 1 ? 'good' : 'bad');
+  } catch (e) {
+    els.xferPill.textContent = 'error';
+    els.xferPill.className = 'pill bad';
+    log('error', e.message);
+  }
+});
+
+const PIN_NAMES = ['SWCLK', 'SWDIO', 'TDI', 'TDO', '(rsvd4)', '(rsvd5)', '(rsvd6)', 'nRESET'];
+async function refreshPins() {
+  els.pinsKv.innerHTML = '';
+  try {
+    const v = await dapSwjPinsRead();
+    for (let i = 0; i < 8; i++) {
+      if (PIN_NAMES[i].startsWith('(')) continue;
+      addKv(els.pinsKv, PIN_NAMES[i], ((v >> i) & 1) ? 'HIGH' : 'low');
+    }
+  } catch (e) { log('error', e.message); }
+}
+
+els.btnPinsRead.addEventListener('click', refreshPins);
+els.btnPinsRstLo.addEventListener('click', async () => {
+  try { await dapSwjPinsDrive(0x00, 0x80, 100000); refreshPins(); } catch (e) { log('error', e.message); }
+});
+els.btnPinsRstHi.addEventListener('click', async () => {
+  try { await dapSwjPinsDrive(0x80, 0x80, 100000); refreshPins(); } catch (e) { log('error', e.message); }
+});
+
+els.btnSwoStart.addEventListener('click', () => swoStart().catch(e => log('error', e.message)));
+els.btnSwoStop .addEventListener('click', () => swoStop ().catch(e => log('error', e.message)));
+els.btnSwoStatus.addEventListener('click', () => swoStatus().catch(e => log('error', e.message)));
+
+els.btnRaw.addEventListener('click', () => sendRaw());
+els.rawHex.addEventListener('keydown', e => { if (e.key === 'Enter') sendRaw(); });
+
+setConnected(false);
+log('info', 'ready — click Connect to begin');
+</script>
+</body>
+</html>

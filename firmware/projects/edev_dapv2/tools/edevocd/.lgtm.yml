@@ -1,0 +1,52 @@
+path_classifiers:
+  docs:
+    - scripts/generate_command_help.py
+  test:
+    # Mark all code under the src/ directory as test related.
+    # Really, the crc analyzer is not for test, but LGTM can't build embedded.
+    - src
+    - exclude: src/analyzer
+
+queries:
+  # Exclude warning about 'if' or 'while' statements that have an 'else' clause, when there is not
+  # a 'break' statement within the main statement body (ie, it uses a 'return' to exit). This style
+  # is used in some places in pyocd to reflect that the 'else' body is logically part of the main
+  # statement. In particular, the Timeout class is used in this pattern:
+  #
+  #     with Timeout(TIMEOUT) as t:
+  #         while t.check():
+  #             # code...
+  #         else:
+  #             # handle timeout...
+  #
+  # In some cases the 'while' block will exit with only a 'return', so the 'else' isn't really
+  # necessary, but retaining it maintains the expected pattern.
+  - exclude: "py/redundant-else"
+
+  # Exclude cases where there is an import of the same module via 'import foo' and 'from foo import ...'.
+  # The query for this is too general and catches a lot of cases that are not really errors, especially
+  # with includes of types for annotations.
+  #
+  # Example 1:
+  #
+  #   import pyocd
+  #   from pyocd import debug
+  #
+  # These two imports trigger this query, even though it's pretty clearly a reasonable usage.
+  #
+  # Example 2:
+  #
+  #   if TYPE_CHECKING:
+  #     import types
+  #
+  #   def foo():
+  #     import types
+  #
+  # In this case, types is only needed within foo() at runtime and is not imported globally to reduce
+  # namespace pollution and import times. But when type checking it's types is also imported. The query
+  # doesn't see the TYPE_CHECKING predicate and triggers.
+  - exclude: "py/import-and-import-from"
+
+  # This query triggers on logging of the probe's UID as specified on the command line in cleartext.
+  # Clearly the UID is not sensitive data, at least in the traditional sense.
+  - exclude: "py/clear-text-logging-sensitive-data"

@@ -1,0 +1,12 @@
+# Test output files
+output
+*.txt
+*.xml
+
+# pyocd config for test
+pyocd.yaml
+
+# gdb history
+.gdb_history
+
+

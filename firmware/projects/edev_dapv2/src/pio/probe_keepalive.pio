@@ -1,0 +1,63 @@
+; ----------------------------------------------------------------------
+; probe_keepalive.pio — slow SWCLK toggle to keep the target's debug
+; logic awake between real SWD transactions.
+;
+; WHY: Modern low-power MCUs (notably nRF5340) clock-gate their DP if no
+; SWCLK edges arrive for a few hundred microseconds. The next real
+; transaction then FAULTs because the DP had to spin back up. J-Link
+; ships a "continuous SWCLK" feature for exactly this. We emulate it on
+; PIO0 SM1 (probe.pio owns SM0). Handoff is explicit:
+;
+;     SWD transaction in flight  ──→  SM0 enabled, SM1 disabled
+;     Probe idle between commands ──→  SM0 disabled, SM1 enabled
+;
+; The probe.c keepalive_takeover / keepalive_relinquish functions
+; orchestrate the swap. Both SMs are NEVER enabled simultaneously —
+; that would cause electrical contention on the SWCLK pin.
+;
+; Frequency tuning: see edev_probe_keepalive_sm_init below. Default is
+; chosen to be slow enough to not stress the target (~few kHz) but fast
+; enough that the chip never sees more than ~hundreds of µs of quiet.
+;
+; SPDX-License-Identifier: MIT
+; ----------------------------------------------------------------------
+
+.program probe_keepalive
+.side_set 1                          ; SWCLK on side-set pin
+
+.wrap_target
+    nop side 0 [15]                  ; SWCLK low,  hold 16 PIO cycles
+    nop side 1 [15]                  ; SWCLK high, hold 16 PIO cycles
+.wrap
+
+
+% c-sdk {
+#include "hardware/clocks.h"
+#include "hardware/gpio.h"
+#include "hardware/pio.h"
+
+#include "hw/probe_pins.h"
+
+static inline void edev_probe_keepalive_sm_init(PIO pio, uint sm, uint offset)
+{
+    pio_sm_config cfg = probe_keepalive_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&cfg, EDEV_PROBE_PIN_SWCLK);
+    /* The keep-alive SM does NOT use TX/RX FIFOs — it just toggles
+     * SWCLK forever. So no shift config is needed.
+     *
+     * Set a large clock divider so SWCLK toggles at a few kHz, slow
+     * enough to be gentle on the target wire but fast enough to keep
+     * the chip's DP awake. 32 PIO cycles per full period × divider →
+     * target ~5 kHz when sysclk = 150 MHz, divider = 1000.
+     */
+    uint32_t clk_sys_hz = clock_get_hz(clk_sys);
+    /* Choose divider so f_swclk ≈ 5 kHz.
+     *   f_swclk = clk_sys / (divider × 32)  →  divider = clk_sys / 160000 */
+    uint32_t divider = clk_sys_hz / 160000u;
+    if (divider == 0u)     divider = 1u;
+    if (divider > 65535u)  divider = 65535u;
+    sm_config_set_clkdiv_int_frac(&cfg, (uint16_t)divider, 0);
+
+    pio_sm_init(pio, sm, offset, &cfg);
+}
+%}
