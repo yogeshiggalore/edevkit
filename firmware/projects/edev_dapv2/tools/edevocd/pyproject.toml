@@ -12,6 +12,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools_scm]
 write_to = "pyocd/_version.py"
 local_scheme = "dirty-tag"
+# This fork lives inside the edevkit monorepo, not its own .git, so
+# setuptools_scm can't infer a version from git tags. Pin a static
+# fallback; the `+edev` local segment marks this as our fork. Bump
+# the literal when you cut an edevocd release.
+fallback_version = "0.44.1+edev"
 
 [tool.pytest.ini_options]
 testpaths = ["test/unit"]
