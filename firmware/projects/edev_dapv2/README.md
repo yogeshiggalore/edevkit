@@ -47,6 +47,31 @@ Default board is `pico2_w`. For a stock Pico 2:
 cmake -DPICO_BOARD=pico2 ..
 ```
 
+## Recommended host options
+
+The probe runs PIO-driven SWD at up to 25 MHz. probe-rs's "auto"
+clock picks ~1 MHz conservatively — pass `--speed 8000` (8 MHz) for
+~4× faster memory dumps. Tested on nRF52840:
+
+| `--speed` | 1 MB read | reliability |
+| --- | --- | --- |
+| (default) | 16.4 s | 100 % |
+| 8000      |  4.5 s | 100 % ← **recommended** |
+| 10000     | ~4.2 s |  ~70 % |
+| 12000+    | varies | unstable on jumper wiring |
+
+Reliability above 8 MHz depends on wiring quality. With short jumper
+leads to a target on a development board, 8 MHz is the sweet spot.
+For mounted probes with short controlled-impedance traces, 15–25 MHz
+should be achievable.
+
+```sh
+probe-rs read --probe 2e8a:000c --chip nRF52840_xxAA \
+              --protocol swd --speed 8000 \
+              b32 0x00000000 262144 > flash.txt
+# 1 MB of nRF52840 flash in ~4.5 seconds, byte-identical to J-Link.
+```
+
 ## Pinout (v0.1, 3.3 V single domain)
 
 | Pico 2 W GPIO | Pin | Signal | Notes |
