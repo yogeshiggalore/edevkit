@@ -468,6 +468,22 @@ async def api_identify():
     return d
 
 
+# ── Target reset ──────────────────────────────────────────────────────
+
+@app.post("/api/reset")
+async def api_reset(body: dict = Body(...)):
+    kind = body.get("kind", "system")
+    if kind not in ("system", "halt", "ctrl_ap"):
+        raise HTTPException(status_code=400, detail=f"unknown reset kind: {kind}")
+    serial = await _resolve_serial()
+    result = await pyocd_diag.do_reset(
+        serial=serial,
+        frequency_hz=session.speed_khz * 1000,
+        kind=kind,
+    )
+    return result
+
+
 # ── Entry point ───────────────────────────────────────────────────────
 
 if __name__ == "__main__":

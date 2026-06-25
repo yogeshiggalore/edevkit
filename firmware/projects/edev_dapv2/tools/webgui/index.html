@@ -203,6 +203,38 @@
     <pre id="diagOut" class="dump bg-slate-50 border border-slate-200 rounded p-3 mt-3 max-h-72 overflow-auto"></pre>
   </section>
 
+  <!-- ── Target reset ────────────────────────────────── -->
+  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-5 lg:col-span-2">
+    <div class="flex items-center mb-3">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Target reset</h2>
+    </div>
+    <p class="text-xs text-slate-500 mb-3">
+      Three different reset paths. <b>System reset</b> is the standard ARM SYSRESETREQ.
+      <b>Reset &amp; halt</b> sets DEMCR.VC_CORERESET first so the core stops at the reset vector
+      (useful for debugging boot code). <b>Nordic CTRL-AP reset</b> writes 1 to the CTRL-AP RESET
+      register and works even when APPROTECT blocks the AHB-AP.
+    </p>
+    <div class="flex flex-wrap gap-2">
+      <button id="resetSysBtn"    data-label="System reset"
+              class="px-3 py-1.5 text-sm bg-slate-900 hover:bg-slate-700 text-white rounded disabled:opacity-60 disabled:cursor-not-allowed">System reset</button>
+      <button id="resetHaltBtn"   data-label="Reset &amp; halt"
+              class="px-3 py-1.5 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded disabled:opacity-60 disabled:cursor-not-allowed">Reset &amp; halt</button>
+      <button id="resetCtrlApBtn" data-label="Nordic CTRL-AP reset"
+              class="px-3 py-1.5 text-sm bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded text-amber-900 disabled:opacity-60 disabled:cursor-not-allowed">Nordic CTRL-AP reset</button>
+    </div>
+
+    <!-- Result card. Hidden until a reset has run; color-coded on completion. -->
+    <div id="resetResult" class="hidden mt-4 rounded-lg border p-3 text-sm">
+      <div class="flex items-center gap-2 mb-1">
+        <span id="resetIcon"  class="font-bold"></span>
+        <span id="resetTitle" class="font-semibold"></span>
+        <span class="flex-1"></span>
+        <span id="resetTime"  class="text-xs text-slate-500 mono"></span>
+      </div>
+      <pre id="resetMessage" class="mono text-xs whitespace-pre-wrap"></pre>
+    </div>
+  </section>
+
   <!-- ── CDC log ─────────────────────────────────────── -->
   <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-5 lg:col-span-2">
     <div class="flex items-center mb-3">
@@ -811,6 +843,79 @@ async function doDiag() {
   setStatus(j.success ? "ok" : "warn", "diag done");
 }
 
+// ─── Target reset ───────────────────────────────────────────────────
+async function doReset(kind, clickedBtnId) {
+  const btnIds = ["resetSysBtn", "resetHaltBtn", "resetCtrlApBtn"];
+  const clicked = $(clickedBtnId);
+  const originalLabel = clicked.innerHTML;
+
+  // 1. Disable all reset buttons, show "running" state on the clicked one.
+  btnIds.forEach((b) => { $(b).disabled = true; });
+  clicked.innerHTML = `<span class="inline-block animate-pulse">⏳</span> ${originalLabel}…`;
+
+  // 2. Show an "in progress" result card immediately.
+  showResetResult({
+    state: "running",
+    title: `${originalLabel}…`,
+    message: `Issuing ${kind} reset — talking to probe…`,
+  });
+  setStatus("idle", `reset (${kind})…`);
+
+  const startedAt = performance.now();
+  try {
+    const r = await fetch("/api/reset", {
+      method: "POST", headers: {"content-type": "application/json"},
+      body: JSON.stringify({ kind }),
+    });
+    const j = await r.json();
+    const elapsed = ((performance.now() - startedAt) / 1000).toFixed(2);
+    showResetResult({
+      state: j.ok ? "ok" : "err",
+      title: `${originalLabel}: ${j.ok ? "SUCCESS" : "FAILED"}`,
+      message: j.message || (j.ok ? "(no message)" : "(no detail)"),
+      elapsed,
+    });
+    setStatus(j.ok ? "ok" : "err", j.ok ? "reset issued" : "reset failed");
+  } catch (e) {
+    const elapsed = ((performance.now() - startedAt) / 1000).toFixed(2);
+    showResetResult({
+      state: "err",
+      title: `${originalLabel}: FAILED`,
+      message: `Network/server error: ${e.message || e}`,
+      elapsed,
+    });
+    setStatus("err", "reset failed");
+  } finally {
+    // 3. Restore button labels and re-enable.
+    btnIds.forEach((b) => {
+      const el = $(b);
+      el.disabled = false;
+      el.innerHTML = el.dataset.label;
+    });
+  }
+}
+
+function showResetResult({ state, title, message, elapsed }) {
+  const card = $("resetResult");
+  card.classList.remove("hidden", "bg-emerald-50", "border-emerald-200",
+                       "bg-rose-50", "border-rose-200",
+                       "bg-amber-50", "border-amber-200");
+  let icon = "";
+  if (state === "ok")      { card.classList.add("bg-emerald-50", "border-emerald-200"); icon = "✓"; }
+  else if (state === "err"){ card.classList.add("bg-rose-50",    "border-rose-200");    icon = "✗"; }
+  else                     { card.classList.add("bg-amber-50",   "border-amber-200");   icon = "…"; }
+  $("resetIcon").textContent    = icon;
+  $("resetIcon").className      = "font-bold " + (
+    state === "ok"  ? "text-emerald-600" :
+    state === "err" ? "text-rose-600"    : "text-amber-600"
+  );
+  $("resetTitle").textContent   = title;
+  $("resetMessage").textContent = message;
+  $("resetTime").textContent    = elapsed
+    ? `${new Date().toLocaleTimeString()} · ${elapsed}s`
+    : new Date().toLocaleTimeString();
+}
+
 // ─── CDC log (SSE) ──────────────────────────────────────────────────
 function toggleLog() {
   if (state.logSource) {
@@ -855,6 +960,9 @@ $("hexPageSize").onchange      = renderHexPage;
 $("hexOffset").addEventListener("keydown", (e) => { if (e.key === "Enter") renderHexPage(); });
 $("compareBtn").onclick        = doCompare;
 $("diagBtn").onclick           = doDiag;
+$("resetSysBtn").onclick       = () => doReset("system",  "resetSysBtn");
+$("resetHaltBtn").onclick      = () => doReset("halt",    "resetHaltBtn");
+$("resetCtrlApBtn").onclick    = () => doReset("ctrl_ap", "resetCtrlApBtn");
 $("logToggleBtn").onclick      = toggleLog;
 $("logClearBtn").onclick       = clearLog;
 

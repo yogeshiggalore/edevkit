@@ -231,3 +231,164 @@ async def read_dp_targetid(*, serial, frequency_hz):
     return await loop.run_in_executor(
         None, _read_dp_targetid_sync, serial, frequency_hz
     )
+
+
+# ── Reset operations (pyocd-backed) ───────────────────────────────────
+
+def _recover_dp(dp):
+    """Clean up DP state after a reset so the next probe-rs invocation can
+    connect cleanly. Raw-AP operations (halt-on-reset, CTRL-AP) and
+    target reboot can leave: (a) sticky-error bits in CTRL/STAT,
+    (b) the DP in a state probe-rs's fresh-connect logic doesn't recover.
+
+    Sequence: clear ABORT.*CLR bits, then re-run dp.connect() so the
+    DP-line-reset / DPIDR-read handshake runs again."""
+    try:
+        dp.write_dp(0x0, 0x0000001E)   # STKCMPCLR|STKERRCLR|WDERRCLR|ORUNERRCLR
+    except Exception:
+        pass
+    try:
+        dp.connect()
+    except Exception:
+        pass
+    try:
+        dp.power_up_debug()
+    except Exception:
+        pass
+
+
+def _reset_sync(serial, frequency_hz, kind):
+    """kind ∈ {"system", "halt", "ctrl_ap"}. Returns (ok, message)."""
+    from pyocd.core.helpers import ConnectHelper
+
+    try:
+        sess = ConnectHelper.session_with_chosen_probe(
+            unique_id=serial,
+            target_override="cortex_m",
+            connect_mode="attach",
+            options={
+                "frequency": frequency_hz,
+                "dap_protocol": "swd",
+                "auto_unlock": False,
+            },
+        )
+    except Exception as e:
+        return False, f"open session: {e}"
+    if not sess:
+        return False, "no probe matched"
+
+    try:
+        sess.open(init_board=False)
+        target = sess.board.target
+        try:
+            target.dp.connect()
+        except Exception:
+            pass
+        try:
+            target.dp.power_up_debug()
+        except Exception:
+            pass
+
+        if kind == "system":
+            # SYSRESETREQ via AIRCR. pyocd's target.reset() handles it.
+            target.reset()
+            _recover_dp(target.dp)
+            return True, "system reset issued (SYSRESETREQ)"
+
+        if kind == "halt":
+            # Set DEMCR.VC_CORERESET=1, then SYSRESETREQ — core stops at
+            # the reset vector. We can't call target.reset_and_halt()
+            # because init_board=False leaves no selected core. Do the
+            # AHB-AP memory transactions directly via DP register access.
+            import time
+            dp = target.dp
+            # Locate the first AHB-AP (class 8 MEM-AP + type 1 AHB).
+            ahb_ap = None
+            for i in range(8):
+                try:
+                    dp.write_dp(0x8, (i << 24) | 0xF0)
+                    idr = dp.read_ap((i << 24) | 0xFC)
+                except Exception:
+                    continue
+                if idr and ((idr >> 13) & 0xF) == 0x8 and (idr & 0xF) == 0x1:
+                    ahb_ap = i
+                    break
+            if ahb_ap is None:
+                return False, "no AHB-AP found for halt-on-reset"
+
+            # AHB-AP register-level memory access:
+            #   CSW @ 0x00, TAR @ 0x04, DRW @ 0x0C.
+            #   CSW = 0x23000002: HPROT=0x23, AddrInc=off, Size=32-bit.
+            def ap_select_bank0():
+                dp.write_dp(0x8, (ahb_ap << 24) | 0x00)
+            def ap_write32(addr, value):
+                ap_select_bank0()
+                dp.write_ap((ahb_ap << 24) | 0x00, 0x23000002)  # CSW
+                dp.write_ap((ahb_ap << 24) | 0x04, addr)        # TAR
+                dp.write_ap((ahb_ap << 24) | 0x0C, value)       # DRW
+                dp.read_dp(0x0C)                                # RDBUFF flush
+            def ap_read32(addr):
+                ap_select_bank0()
+                dp.write_ap((ahb_ap << 24) | 0x00, 0x23000002)
+                dp.write_ap((ahb_ap << 24) | 0x04, addr)
+                _ = dp.read_ap((ahb_ap << 24) | 0x0C)           # post the read
+                return dp.read_dp(0x0C)                          # RDBUFF
+
+            try:
+                demcr = ap_read32(0xE000EDFC)
+                ap_write32(0xE000EDFC, demcr | 0x1)              # VC_CORERESET
+                ap_write32(0xE000ED0C, 0x05FA0004)               # AIRCR.SYSRESETREQ
+                time.sleep(0.05)
+            except Exception as e:
+                return False, f"halt-reset write: {e}"
+            _recover_dp(dp)
+            return True, (
+                f"reset issued with halt-on-reset (DEMCR.VC_CORERESET=1 + "
+                f"AIRCR.SYSRESETREQ via AHB-AP#{ahb_ap})"
+            )
+
+        if kind == "ctrl_ap":
+            # Nordic CTRL-AP RESET register at offset 0x000. Find the AP
+            # with the right IDR and write 1, then 0, to assert+release.
+            import time
+            dp = target.dp
+            ctrl_ap = None
+            for i in range(8):
+                try:
+                    dp.write_dp(0x8, (i << 24) | 0xF0)
+                    idr = dp.read_ap((i << 24) | 0xFC)
+                except Exception:
+                    continue
+                if idr in (0x02880000, 0x12880000):
+                    ctrl_ap = i
+                    break
+            if ctrl_ap is None:
+                return False, "no Nordic CTRL-AP found (0x02880000 / 0x12880000)"
+            try:
+                dp.write_dp(0x8, (ctrl_ap << 24) | 0x00)
+                dp.write_ap((ctrl_ap << 24) | 0x00, 0x00000001)  # assert
+                time.sleep(0.05)
+                dp.write_ap((ctrl_ap << 24) | 0x00, 0x00000000)  # release
+            except Exception as e:
+                return False, f"CTRL-AP write: {e}"
+            _recover_dp(dp)
+            return True, f"Nordic CTRL-AP reset issued (AP#{ctrl_ap})"
+
+        return False, f"unknown reset kind: {kind}"
+
+    except Exception as e:
+        return False, f"reset: {e}"
+    finally:
+        try:
+            sess.close()
+        except Exception:
+            pass
+
+
+async def do_reset(*, serial, frequency_hz, kind):
+    """kind ∈ {"system", "halt", "ctrl_ap"}. Returns {ok, message}."""
+    loop = asyncio.get_running_loop()
+    ok, msg = await loop.run_in_executor(
+        None, _reset_sync, serial, frequency_hz, kind
+    )
+    return {"ok": ok, "message": msg}
