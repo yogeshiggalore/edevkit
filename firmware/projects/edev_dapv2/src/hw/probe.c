@@ -1,438 +1,496 @@
 /*
- * probe.c — SWD bit-bang shim. Sits on top of probe.pio (loaded via
- * pio_add_program) and exposes the four primitives the DAP transfer
- * code needs:
+ * probe.c — PIO-driven SWD bit-bang (edev_dapv2 v0.2).
  *
- *   probe_write_bits  → "drive SWDIO out, toggle SWCLK, shift N bits"
- *   probe_read_bits   → "tristate SWDIO, toggle SWCLK, sample N bits"
- *   probe_hiz_clocks  → "drive nothing, toggle SWCLK N times"
- *   probe_set_swclk_freq_khz → "retune the SM clock divider"
+ * The previous SIO bit-bang topped out around 64 KB reads before
+ * probabilistic parity errors compounded. PIO has hardware-deterministic
+ * timing — no marginal sampling, no nop-loop calibration. PIO program is
+ * in src/pio/probe_swd.pio.
  *
- * The PIO program reads 32-bit control words from the TX FIFO; this
- * file translates the high-level calls into the right control-word
- * format. See probe.pio for the bit layout.
+ * Pin mapping:
+ *   PROBE_PIN_SWCLK — side-set, driven LOW/HIGH per phase
+ *   PROBE_PIN_SWDIO — OUT/IN/SET base; pindirs toggled by PIO `set pindirs`
+ *
+ * Speed: PIO clock divided down. PIO cycles per SWD bit = 6 (3 low + 3
+ * high). At PIO 150 MHz → 25 MHz SWD; PIO 6 MHz → 1 MHz SWD.
+ *
+ * The higher-level API (probe_swd_transfer, probe_swj_sequence, etc.)
+ * is unchanged so dap_handle_transfer keeps working.
  */
 
-#include "probe.h"
-#include "jtag.h"
-#include "probe_pins.h"
+#include "hw/probe.h"
+#include "hw/probe_pins.h"
+#include "dap/dap_internal.h"
 
 #include "pico/stdlib.h"
-#include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
+#include "hardware/clocks.h"
 
-#include "probe.pio.h"
-#include "probe_keepalive.pio.h"
+#include "probe_swd.pio.h"
 
-/* ------------------------------------------------------------------ */
-/*  Keep-alive SM — independent of EDEV_PROBE_SM (which runs probe.pio).  */
-/* ------------------------------------------------------------------ */
+#include <string.h>
 
-#ifndef EDEV_PROBE_KEEPALIVE_SM
-#define EDEV_PROBE_KEEPALIVE_SM   1u
-#endif
+/* ----------------------------------------------------------------------
+ * Configuration state
+ * ---------------------------------------------------------------------- */
 
-/* ------------------------------------------------------------------ */
+static uint8_t  s_turnaround  = 1;
+static uint8_t  s_data_phase  = 0;
+static uint8_t  s_idle_cycles = 0;
+static uint16_t s_wait_retry  = 100;
+static uint16_t s_match_retry = 0;
+static uint32_t s_clock_hz    = 1000000u;
 
-static struct {
-    uint     pio_offset;
-    bool     initialised;
-    bool     pio_owns_pins;
-    uint32_t current_freq_khz;
-} s = {
-    .initialised = false,
-    .pio_owns_pins = false,
-};
+/* Use PIO1 — PIO0 is taken by cyw43_arch for the WiFi chip's SPI bus
+ * on pico2_w (even when we link the "none" variant for LED-only).
+ * Mixing on the same PIO causes program-slot conflicts. */
+#define PROBE_PIO        pio1
 
-static struct {
-    uint     pio_offset;
-    bool     loaded;             /* PIO program is in memory */
-    bool     globally_enabled;   /* set via probe_keepalive_set_enabled */
-    bool     running;            /* SM currently driving SWCLK */
-} s_ka = {
-    .loaded = false,
-    .globally_enabled = true,    /* default ON */
-    .running = false,
-};
+static uint s_pio_sm;
+static uint s_pio_offset;
 
-/* Command-word builder. The dispatch addresses come from the generated
- * pio header (probe_offset_*). bit_count == 256 wraps to 0 and is
- * fine because the SM does `out x, 8` (the top bits past 256 are not
- * encodable). count == 0 is forbidden — caller checks. */
-typedef enum {
-    CMD_WRITE,
-    CMD_READ,
-    CMD_TURNAROUND,
-    CMD_FETCH_ONLY,
-} cmd_kind_t;
+#define PROBE_SM s_pio_sm
 
-static inline uint32_t make_cmd(uint32_t bit_count, bool drive, cmd_kind_t kind)
+/* ----------------------------------------------------------------------
+ * PIO primitives
+ * ---------------------------------------------------------------------- */
+
+/* Build the opcode word used to enter a PIO function.
+ *   bits  0:7   = absolute PIO PC (relative offset + program base)
+ *   bits  8:12  = count - 1
+ *   bits 13:31  = 19 data bits (for writes; ignored for reads)
+ *
+ * NB: `out pc, 8` in PIO sets ABSOLUTE PC. The pioasm-generated
+ * `probe_swd_offset_*` macros are RELATIVE to program start. Add
+ * the load offset (s_pio_offset) so the jump lands correctly. */
+static inline uint32_t pio_opcode(uint8_t func, uint8_t count, uint32_t data)
 {
-    uint dst;
-    switch (kind) {
-        case CMD_WRITE:      dst = s.pio_offset + probe_offset_write_cmd;     break;
-        case CMD_READ:       dst = s.pio_offset + probe_offset_read_cmd;      break;
-        case CMD_TURNAROUND: dst = s.pio_offset + probe_offset_turnaround_cmd;break;
-        default:             dst = s.pio_offset + probe_offset_fetch_cmd;     break;
-    }
-    /* The PIO program does `out x, 8` consuming the bottom 8 bits as
-     * count - 1. So we encode (bit_count - 1) in the low byte. */
-    uint32_t count_field = (bit_count - 1u) & 0xFFu;
-    uint32_t oe_field    = drive ? (1u << 8) : 0u;
-    uint32_t pc_field    = ((uint32_t)dst & 0x1Fu) << 9;
-    return count_field | oe_field | pc_field;
+    return (uint32_t)(func + s_pio_offset)
+         | (((uint32_t)(count - 1u) & 0x1Fu) << 8)
+         | (((data & 0x7FFFFu)) << 13);
 }
 
-/* ------------------------------------------------------------------ */
-/*  init / deinit                                                      */
-/* ------------------------------------------------------------------ */
-
-void probe_init(void)
+/* Drain RX FIFO discarding any stale data. */
+static inline void pio_drain_rx(void)
 {
-    if (s.initialised) {
-        return;
-    }
-
-    /* GPIO + PIO program load, courtesy of the c-sdk helpers emitted
-     * into probe.pio.h. */
-    edev_probe_gpio_init();
-    s.pio_offset = pio_add_program(pio0, &probe_program);
-
-    pio_sm_config cfg = probe_program_get_default_config(s.pio_offset);
-    edev_probe_sm_init(&cfg);
-    pio_sm_init(pio0, EDEV_PROBE_SM, s.pio_offset, &cfg);
-
-    probe_set_swclk_freq_khz(EDEV_PROBE_DEFAULT_SWCLK_KHZ);
-
-    /* Start the SM at fetch_cmd — the first thing it should do on boot
-     * is wait for a command word from the FIFO. */
-    pio_sm_exec(pio0, EDEV_PROBE_SM, s.pio_offset + probe_offset_fetch_cmd);
-    pio_sm_set_enabled(pio0, EDEV_PROBE_SM, true);
-
-    s.pio_owns_pins = true;
-    s.initialised   = true;
-
-    /* Load keep-alive PIO program into the same PIO0 bank (probe.pio
-     * uses ~10 instruction slots; keepalive uses 2 — plenty of room).
-     * The SM stays DISABLED until the first probe_*_bits call returns,
-     * after which keepalive_takeover() activates it. */
-    if (!s_ka.loaded) {
-        s_ka.pio_offset = pio_add_program(pio0, &probe_keepalive_program);
-        edev_probe_keepalive_sm_init(pio0, EDEV_PROBE_KEEPALIVE_SM, s_ka.pio_offset);
-        s_ka.loaded = true;
-    }
-
-    /* JTAG pad init (TDI/TDO) — pins are SIO-owned even when SWD is
-     * active, so the host can probe them via DAP_SWJ_Pins safely. */
-    jtag_init();
-}
-
-void probe_deinit(void)
-{
-    if (!s.initialised) {
-        return;
-    }
-    pio_sm_set_enabled(pio0, EDEV_PROBE_SM, false);
-    pio_remove_program(pio0, &probe_program, s.pio_offset);
-    s.initialised = false;
-    s.pio_owns_pins = false;
-}
-
-/* ------------------------------------------------------------------ */
-/*  clock divider                                                      */
-/* ------------------------------------------------------------------ */
-
-void probe_set_swclk_freq_khz(uint32_t freq_khz)
-{
-    if (!s.initialised) {
-        s.current_freq_khz = freq_khz;
-        return;
-    }
-    if (freq_khz == 0u) {
-        freq_khz = 1u;
-    }
-
-    /* The PIO program emits one SWCLK transition every 2 PIO cycles
-     * (out + delay [1] = 2 cycles for SWCLK low, then jmp + delay [1]
-     * = 2 cycles for SWCLK high) → SWCLK period = 4 PIO cycles. So
-     * the desired PIO clock is 4 × SWCLK frequency. */
-    uint32_t clk_sys_khz = clock_get_hz(clk_sys) / 1000u;
-    uint32_t divider = (clk_sys_khz + (freq_khz * 4u) - 1u) / (freq_khz * 4u);
-    if (divider == 0u)     divider = 1u;
-    if (divider > 65535u)  divider = 65535u;
-
-    pio_sm_set_clkdiv_int_frac(pio0, EDEV_PROBE_SM, (uint16_t)divider, 0);
-    s.current_freq_khz = freq_khz;
-}
-
-/* ------------------------------------------------------------------ */
-/*  bit transfer primitives                                            */
-/* ------------------------------------------------------------------ */
-
-/* ------------------------------------------------------------------ */
-/*  Keep-alive helpers — see probe_keepalive.pio for theory of ops.    */
-/* ------------------------------------------------------------------ */
-
-static void keepalive_relinquish(void)
-{
-    /* Stop the keep-alive SM (if running) and leave SWCLK in a known
-     * LOW state. Called whenever we're about to hand SWCLK back to the
-     * probe SM for a real transaction.
-     *
-     * The SM might have been paused mid-`nop side 1` (SWCLK high). To
-     * guarantee LOW regardless, briefly switch SWCLK to SIO output and
-     * drive it low directly. The next call to ensure_pio_pin_ownership
-     * reassigns the pin back to PIO via pio_gpio_init. */
-    if (!s_ka.running) {
-        return;
-    }
-    pio_sm_set_enabled(pio0, EDEV_PROBE_KEEPALIVE_SM, false);
-    gpio_set_function(EDEV_PROBE_PIN_SWCLK, GPIO_FUNC_SIO);
-    gpio_set_dir(EDEV_PROBE_PIN_SWCLK, GPIO_OUT);
-    gpio_put(EDEV_PROBE_PIN_SWCLK, 0);
-    s_ka.running = false;
-}
-
-static void wait_probe_sm_idle(void)
-{
-    /* Drain the probe SM back to fetch_cmd (its idle state, side-set
-     * holds SWCLK low while it stalls on `pull`). After this returns,
-     * it's safe to disable the SM and hand off to keep-alive. */
-    if (!s.pio_owns_pins) {
-        return;
-    }
-    while (pio_sm_get_tx_fifo_level(pio0, EDEV_PROBE_SM) > 0) {
-        tight_loop_contents();
-    }
-    /* Spin briefly for the SM to reach fetch_cmd. Bounded — if the SM
-     * is wedged elsewhere we don't want to hang the USB stack. */
-    uint32_t fetch_pc = s.pio_offset + probe_offset_fetch_cmd;
-    for (uint32_t spin = 0; spin < 10000u; ++spin) {
-        if (pio_sm_get_pc(pio0, EDEV_PROBE_SM) == fetch_pc) {
-            break;
-        }
-        tight_loop_contents();
+    while (!pio_sm_is_rx_fifo_empty(PROBE_PIO, PROBE_SM)) {
+        (void) pio_sm_get(PROBE_PIO, PROBE_SM);
     }
 }
 
-static void keepalive_takeover(void)
+/* Write N bits LSB-first from `data`. N can be 1..32. */
+static void swd_write_n(uint32_t data, uint8_t n)
 {
-    /* Disable the probe SM, leave SWCLK at side-set 0 (its fetch_cmd
-     * state), then enable the keep-alive SM. This is the inverse of
-     * keepalive_relinquish + ensure_pio_pin_ownership combined. */
-    if (!s_ka.globally_enabled || !s_ka.loaded) {
-        return;
-    }
-    /* Make sure the probe SM finished its last transaction. */
-    wait_probe_sm_idle();
-    /* Disable the probe SM so it stops driving SWCLK low. */
-    pio_sm_set_enabled(pio0, EDEV_PROBE_SM, false);
-    s.pio_owns_pins = false;
-    /* Reset keep-alive SM to start of program, then enable. */
-    pio_sm_restart(pio0, EDEV_PROBE_KEEPALIVE_SM);
-    pio_sm_clkdiv_restart(pio0, EDEV_PROBE_KEEPALIVE_SM);
-    pio_sm_exec(pio0, EDEV_PROBE_KEEPALIVE_SM,
-                pio_encode_jmp(s_ka.pio_offset));
-    pio_sm_set_enabled(pio0, EDEV_PROBE_KEEPALIVE_SM, true);
-    s_ka.running = true;
-}
-
-void probe_keepalive_set_enabled(bool enable)
-{
-    s_ka.globally_enabled = enable;
-    if (!enable && s_ka.running) {
-        keepalive_relinquish();
-        /* No probe transaction in flight, so leave SWCLK low quietly. */
+    /* 19 bits ride in the opcode word, the rest in a follow-up word.
+     * The PIO program's autopull (threshold 32) pulls the second
+     * word automatically when OSR drains. */
+    uint32_t op = pio_opcode(probe_swd_offset_write_bits, n, data);
+    pio_sm_put_blocking(PROBE_PIO, PROBE_SM, op);
+    if (n > 19) {
+        pio_sm_put_blocking(PROBE_PIO, PROBE_SM, data >> 19);
     }
 }
 
-bool probe_keepalive_is_enabled(void)
+/* Read N bits LSB-first, return value with first received bit at LSB. */
+static uint32_t swd_read_n(uint8_t n)
 {
-    return s_ka.globally_enabled;
-}
-
-/* ------------------------------------------------------------------ */
-
-static inline void ensure_pio_pin_ownership(void)
-{
-    /* Always pause keep-alive at the start of any real PIO transaction.
-     * This is the inverse of keepalive_takeover() called at the end. */
-    keepalive_relinquish();
-
-    if (!s.pio_owns_pins) {
-        /* The host has been driving GPIOs via DAP_SWJ_Pins (or we just
-         * bit-banged DAP_SWJ_Sequence via SIO); hand them back to PIO.
-         *
-         * Critically, we also FORCE the SM to restart at fetch_cmd.
-         * Without this, if the SM was paused mid-bitloop by a previous
-         * release_pio_pins() (which can race with an in-flight write),
-         * resuming would pick up half-way through a transaction with a
-         * stale FIFO state — producing the "No ACK" signature pyocd
-         * was hitting on its first DAP_Transfer after DAP_SWJ_Pins. */
-        pio_gpio_init(pio0, EDEV_PROBE_PIN_SWCLK);
-        pio_gpio_init(pio0, EDEV_PROBE_PIN_SWDIO);
-        pio_sm_set_consecutive_pindirs(pio0, EDEV_PROBE_SM, EDEV_PROBE_PIN_SWCLK, 2, true);
-
-        /* Drain any stale FIFO entries from before the disable. */
-        pio_sm_clear_fifos(pio0, EDEV_PROBE_SM);
-        /* Restart at fetch_cmd — known clean state. */
-        pio_sm_restart       (pio0, EDEV_PROBE_SM);
-        pio_sm_clkdiv_restart(pio0, EDEV_PROBE_SM);
-        pio_sm_exec          (pio0, EDEV_PROBE_SM,
-                              s.pio_offset + probe_offset_fetch_cmd);
-
-        pio_sm_set_enabled(pio0, EDEV_PROBE_SM, true);
-        s.pio_owns_pins = true;
-    }
-}
-
-void probe_write_bits(uint32_t bit_count, uint32_t data)
-{
-    if (bit_count == 0u) {
-        return;
-    }
-    ensure_pio_pin_ownership();
-    pio_sm_put_blocking(pio0, EDEV_PROBE_SM, make_cmd(bit_count, true, CMD_WRITE));
-    pio_sm_put_blocking(pio0, EDEV_PROBE_SM, data);
-    keepalive_takeover();
-}
-
-uint32_t probe_read_bits(uint32_t bit_count)
-{
-    if (bit_count == 0u) {
-        return 0;
-    }
-    ensure_pio_pin_ownership();
-    pio_sm_put_blocking(pio0, EDEV_PROBE_SM, make_cmd(bit_count, false, CMD_READ));
-    uint32_t v = pio_sm_get_blocking(pio0, EDEV_PROBE_SM);
-    /* PIO reads shift right then push. For a < 32 bit read, the bits
-     * land in the upper part of the word — right-align them. */
-    if (bit_count < 32u) {
-        v >>= (32u - bit_count);
-    }
-    keepalive_takeover();
+    uint32_t op = pio_opcode(probe_swd_offset_read_bits, n, 0);
+    pio_sm_put_blocking(PROBE_PIO, PROBE_SM, op);
+    uint32_t v = pio_sm_get_blocking(PROBE_PIO, PROBE_SM);
+    /* ISR was right-shifted N times; bits occupy positions 32-N .. 31.
+     * Shift back so first-received bit is at bit 0. */
+    if (n < 32) v >>= (32 - n);
     return v;
 }
 
-void probe_hiz_clocks(uint32_t bit_count)
+/* Clock N bits with SWDIO undriven (host releases the line) — used
+ * for turnaround periods between host and target driving. We do this
+ * as a "read" (sets pindirs=0) and discard the data. */
+static void swd_clock_idle_n(uint8_t n)
 {
-    if (bit_count == 0u) {
-        return;
-    }
-    ensure_pio_pin_ownership();
-    pio_sm_put_blocking(pio0, EDEV_PROBE_SM, make_cmd(bit_count, false, CMD_TURNAROUND));
-    pio_sm_put_blocking(pio0, EDEV_PROBE_SM, 0);
-    keepalive_takeover();
+    (void) swd_read_n(n);
 }
 
-/* ------------------------------------------------------------------ */
-/*  Direct-GPIO bit-bang for DAP_SWJ_Sequence                          */
-/* ------------------------------------------------------------------ */
+/* ----------------------------------------------------------------------
+ * Init / connect / disconnect / reset
+ * ---------------------------------------------------------------------- */
 
-static void release_pio_pins(void);   /* forward decl */
-
-void probe_swj_bitbang(uint32_t bit_count, const uint8_t *data)
+/* Install the PIO program once. Claims an SM and finds program offset. */
+static void probe_pio_install(void)
 {
-    if (bit_count == 0u) {
-        return;
+    /* Claim an unused SM on PROBE_PIO. Panics if none available. */
+    int sm = pio_claim_unused_sm(PROBE_PIO, true);
+    s_pio_sm = (uint) sm;
+    s_pio_offset = pio_add_program(PROBE_PIO, &probe_swd_program);
+}
+
+/* Configure SM for SWD operation on the given pins. */
+static void probe_pio_configure(uint32_t freq_hz)
+{
+    pio_sm_set_enabled(PROBE_PIO, PROBE_SM, false);
+
+    pio_sm_config c = probe_swd_program_get_default_config(s_pio_offset);
+
+    /* SWCLK on side-set. */
+    sm_config_set_sideset_pins(&c, PROBE_PIN_SWCLK);
+
+    /* SWDIO on OUT/IN/SET (all share the same physical pin). */
+    sm_config_set_out_pins(&c, PROBE_PIN_SWDIO, 1);
+    sm_config_set_in_pins(&c, PROBE_PIN_SWDIO);
+    sm_config_set_set_pins(&c, PROBE_PIN_SWDIO, 1);
+
+    /* OUT shift right (LSB first), autopull at 32. */
+    sm_config_set_out_shift(&c, true /*right*/, true /*autopull*/, 32);
+    /* IN shift right, no autopush — we use explicit `push`. */
+    sm_config_set_in_shift(&c, true /*right*/, false /*autopush*/, 32);
+
+    /* Clock divider — PIO does 6 cycles per SWD bit.
+     * Effective SWD frequency = PIO clock / 6. */
+    uint32_t sys_hz = clock_get_hz(clk_sys);
+    float pio_hz = (float) freq_hz * 6.0f;
+    float div = (float) sys_hz / pio_hz;
+    if (div < 1.0f)   div = 1.0f;
+    if (div > 65535.0f) div = 65535.0f;
+    sm_config_set_clkdiv(&c, div);
+
+    /* Initialize pins for PIO control. */
+    pio_gpio_init(PROBE_PIO, PROBE_PIN_SWCLK);
+    pio_gpio_init(PROBE_PIO, PROBE_PIN_SWDIO);
+
+    /* SWCLK is always output (driven by PIO). */
+    pio_sm_set_consecutive_pindirs(PROBE_PIO, PROBE_SM, PROBE_PIN_SWCLK, 1, true);
+    /* SWDIO direction is managed by PIO `set pindirs` instructions. */
+
+    pio_sm_init(PROBE_PIO, PROBE_SM, s_pio_offset, &c);
+    pio_sm_clear_fifos(PROBE_PIO, PROBE_SM);
+    pio_sm_set_enabled(PROBE_PIO, PROBE_SM, true);
+}
+
+void probe_init(void)
+{
+    /* Other pins (nRESET, nTRST, TDI, TDO) stay SIO-managed. */
+    gpio_init(PROBE_PIN_TDI);
+    gpio_init(PROBE_PIN_TDO);
+    gpio_init(PROBE_PIN_NRESET);
+    gpio_init(PROBE_PIN_NTRST);
+
+    gpio_set_dir(PROBE_PIN_TDI,    GPIO_IN);
+    gpio_set_dir(PROBE_PIN_TDO,    GPIO_IN);
+    gpio_set_dir(PROBE_PIN_NRESET, GPIO_IN);
+    gpio_set_dir(PROBE_PIN_NTRST,  GPIO_IN);
+
+    /* Install PIO program AND configure the SM up front, because the
+     * host (probe-rs / OpenOCD) sends DAP_SWJ_Sequence to wake the
+     * target BEFORE DAP_Connect. If the SM isn't running, our TX
+     * FIFO fills and pio_sm_put_blocking hangs. */
+    probe_pio_install();
+    probe_pio_configure(s_clock_hz);
+}
+
+void probe_connect_swd(void)
+{
+    /* PIO is already configured by probe_init. Nothing more to do —
+     * the host can immediately start sending SWD operations. */
+    pio_drain_rx();
+}
+
+void probe_disconnect(void)
+{
+    pio_sm_set_enabled(PROBE_PIO, PROBE_SM, false);
+    gpio_set_dir(PROBE_PIN_SWCLK, GPIO_IN);
+    gpio_set_dir(PROBE_PIN_SWDIO, GPIO_IN);
+}
+
+void probe_reset_target(void)
+{
+    gpio_put(PROBE_PIN_NRESET, 0);
+    gpio_set_dir(PROBE_PIN_NRESET, GPIO_OUT);
+    sleep_ms(100);
+    gpio_set_dir(PROBE_PIN_NRESET, GPIO_IN);
+}
+
+void probe_set_clock(uint32_t hz)
+{
+    if (hz == 0) hz = 1000000u;
+    s_clock_hz = hz;
+    /* Re-configure SM with new divider if it's running. */
+    probe_pio_configure(s_clock_hz);
+}
+
+void probe_set_swd_config(uint8_t turnaround, uint8_t data_phase)
+{
+    s_turnaround = (turnaround & 0x3u) + 1u;
+    s_data_phase = data_phase & 1u;
+}
+
+void probe_set_xfer_config(uint8_t idle_cycles,
+                           uint16_t wait_retry, uint16_t match_retry)
+{
+    s_idle_cycles = idle_cycles;
+    s_wait_retry  = wait_retry;
+    s_match_retry = match_retry;
+}
+
+/* ----------------------------------------------------------------------
+ * SWJ_Pins helpers — direct GPIO outside PIO. We park the SM briefly
+ * so PIO doesn't fight us.
+ * ---------------------------------------------------------------------- */
+
+#define SWJ_PIN_SWCLK  (1u << 0)
+#define SWJ_PIN_SWDIO  (1u << 1)
+#define SWJ_PIN_TDI    (1u << 2)
+#define SWJ_PIN_TDO    (1u << 3)
+#define SWJ_PIN_NTRST  (1u << 5)
+#define SWJ_PIN_NRESET (1u << 7)
+
+void probe_swj_set_pins(uint8_t pin_select, uint8_t pin_output)
+{
+    /* If any of SWCLK or SWDIO is selected, temporarily yield from PIO
+     * back to SIO so we can drive those lines directly. */
+    bool yield_pio = (pin_select & (SWJ_PIN_SWCLK | SWJ_PIN_SWDIO)) != 0;
+    if (yield_pio) {
+        pio_sm_set_enabled(PROBE_PIO, PROBE_SM, false);
+        gpio_init(PROBE_PIN_SWCLK);
+        gpio_init(PROBE_PIN_SWDIO);
     }
 
-    /* Release PIO ownership (disables the SM) and take both pins via
-     * SIO. SWCLK starts LOW, SWDIO output. The next call into PIO will
-     * re-init via ensure_pio_pin_ownership(). */
-    release_pio_pins();
-    gpio_set_function(EDEV_PROBE_PIN_SWCLK, GPIO_FUNC_SIO);
-    gpio_set_function(EDEV_PROBE_PIN_SWDIO, GPIO_FUNC_SIO);
-    gpio_set_dir(EDEV_PROBE_PIN_SWCLK, GPIO_OUT);
-    gpio_set_dir(EDEV_PROBE_PIN_SWDIO, GPIO_OUT);
-    gpio_put(EDEV_PROBE_PIN_SWCLK, 0);
-
-    /* Half-period delay for SWCLK. SWJ_Sequence isn't latency-sensitive
-     * (called only at protocol switch / line reset), so use a fixed
-     * conservative 1 µs half-period = 500 kHz wire rate. This matches
-     * PIO's known-working rate range and avoids the ~10 MHz that
-     * naked gpio_put() loops produce on RP2350 @ 150 MHz, which is
-     * faster than many target wires can reliably propagate. Hosts
-     * that ask for slower clocks via DAP_SWJ_Clock get even slower. */
-    uint32_t half_us = 1u;
-    if (s.current_freq_khz > 0u && s.current_freq_khz < 500u) {
-        half_us = 500u / s.current_freq_khz;   /* 1/(2f) in µs */
-        if (half_us == 0u) half_us = 1u;
+    if (pin_select & SWJ_PIN_SWCLK) {
+        gpio_set_dir(PROBE_PIN_SWCLK, GPIO_OUT);
+        gpio_put(PROBE_PIN_SWCLK, !!(pin_output & SWJ_PIN_SWCLK));
     }
-
-    uint32_t byte_val = 0;
-    uint32_t bits_in_byte = 0;
-    for (uint32_t i = 0; i < bit_count; i++) {
-        if (bits_in_byte == 0u) {
-            byte_val = *data++;
-            bits_in_byte = 8u;
+    if (pin_select & SWJ_PIN_SWDIO) {
+        gpio_set_dir(PROBE_PIN_SWDIO, GPIO_OUT);
+        gpio_put(PROBE_PIN_SWDIO, !!(pin_output & SWJ_PIN_SWDIO));
+    }
+    if (pin_select & SWJ_PIN_TDI) {
+        gpio_set_dir(PROBE_PIN_TDI, GPIO_OUT);
+        gpio_put(PROBE_PIN_TDI, !!(pin_output & SWJ_PIN_TDI));
+    }
+    if (pin_select & SWJ_PIN_NTRST) {
+        gpio_set_dir(PROBE_PIN_NTRST, GPIO_OUT);
+        gpio_put(PROBE_PIN_NTRST, !!(pin_output & SWJ_PIN_NTRST));
+    }
+    if (pin_select & SWJ_PIN_NRESET) {
+        /* Open-drain: drive 0 only. */
+        if (pin_output & SWJ_PIN_NRESET) {
+            gpio_set_dir(PROBE_PIN_NRESET, GPIO_IN);
+        } else {
+            gpio_put(PROBE_PIN_NRESET, 0);
+            gpio_set_dir(PROBE_PIN_NRESET, GPIO_OUT);
         }
-        /* Set SWDIO before SWCLK rising edge — target samples on rise. */
-        gpio_put(EDEV_PROBE_PIN_SWDIO, (byte_val & 1u) != 0u);
-        byte_val >>= 1;
-        bits_in_byte--;
-
-        busy_wait_us(half_us);
-        gpio_put(EDEV_PROBE_PIN_SWCLK, 1);
-        busy_wait_us(half_us);
-        gpio_put(EDEV_PROBE_PIN_SWCLK, 0);
     }
 
-    /* Leave SWCLK LOW, SWDIO OUTPUT at last value. Subsequent PIO use
-     * will reclaim ownership through ensure_pio_pin_ownership(). */
-}
-
-/* ------------------------------------------------------------------ */
-/*  direct GPIO drive (DAP_SWJ_Pins)                                   */
-/* ------------------------------------------------------------------ */
-
-static void take_pin_for_sio(uint pin, bool drive_out, bool value)
-{
-    gpio_set_function(pin, GPIO_FUNC_SIO);
-    gpio_set_dir(pin, drive_out);
-    if (drive_out) {
-        gpio_put(pin, value);
+    if (yield_pio) {
+        /* Restore PIO control of SWCLK/SWDIO. */
+        probe_pio_configure(s_clock_hz);
     }
 }
 
-static void release_pio_pins(void)
+uint8_t probe_swj_get_pins(void)
 {
-    /* Also disable keep-alive — the caller is about to take direct
-     * SIO control of SWCLK (DAP_SWJ_Pins / direct bit-bang); two
-     * drivers on one pin is electrical contention. */
-    keepalive_relinquish();
-    if (!s.pio_owns_pins) {
-        return;
+    uint8_t v = 0;
+    if (gpio_get(PROBE_PIN_SWCLK))  v |= SWJ_PIN_SWCLK;
+    if (gpio_get(PROBE_PIN_SWDIO))  v |= SWJ_PIN_SWDIO;
+    if (gpio_get(PROBE_PIN_TDI))    v |= SWJ_PIN_TDI;
+    if (gpio_get(PROBE_PIN_TDO))    v |= SWJ_PIN_TDO;
+    if (gpio_get(PROBE_PIN_NTRST))  v |= SWJ_PIN_NTRST;
+    if (gpio_get(PROBE_PIN_NRESET)) v |= SWJ_PIN_NRESET;
+    return v;
+}
+
+/* ----------------------------------------------------------------------
+ * Raw SWJ / SWD bit sequences
+ * ---------------------------------------------------------------------- */
+
+void probe_swj_sequence(uint16_t bit_count, const uint8_t *data)
+{
+    /* Write bits in chunks of up to 32 at a time. */
+    uint16_t bits_left = bit_count;
+    uint16_t byte_pos  = 0;
+    while (bits_left) {
+        uint8_t chunk = (bits_left > 32u) ? 32u : (uint8_t) bits_left;
+        uint32_t word = 0;
+        for (uint8_t i = 0; i < chunk; ++i) {
+            uint8_t bit = (data[byte_pos + (i >> 3)] >> (i & 7u)) & 1u;
+            word |= (uint32_t) bit << i;
+        }
+        swd_write_n(word, chunk);
+        bits_left -= chunk;
+        byte_pos  += (chunk + 7u) / 8u;
     }
-    pio_sm_set_enabled(pio0, EDEV_PROBE_SM, false);
-    s.pio_owns_pins = false;
 }
 
-void probe_drive_swclk(bool high)
+uint16_t probe_swd_sequence(uint8_t sequence_count,
+                            const uint8_t *info_and_data, uint16_t data_len,
+                            uint8_t *out, uint16_t out_cap)
 {
-    release_pio_pins();
-    take_pin_for_sio(EDEV_PROBE_PIN_SWCLK, true, high);
+    if (out_cap < 1) return 0;
+    out[0] = DAP_OK;
+    uint16_t out_pos = 1;
+    uint16_t in_pos  = 0;
+
+    for (uint8_t s = 0; s < sequence_count; ++s) {
+        if (in_pos >= data_len) { out[0] = DAP_ERROR; return out_pos; }
+        uint8_t info = info_and_data[in_pos++];
+
+        uint16_t bits = info & 0x3Fu;
+        if (bits == 0) bits = 64;
+        uint16_t bytes = (bits + 7u) / 8u;
+        bool is_in = (info & 0x80u) != 0;
+
+        if (is_in) {
+            if (out_pos + bytes > out_cap) { out[0] = DAP_ERROR; return out_pos; }
+            uint16_t bits_left = bits;
+            uint16_t bit_pos   = 0;
+            while (bits_left) {
+                uint8_t chunk = (bits_left > 32u) ? 32u : (uint8_t) bits_left;
+                uint32_t v = swd_read_n(chunk);
+                for (uint8_t i = 0; i < chunk; ++i) {
+                    uint8_t bit = (v >> i) & 1u;
+                    if (bit) out[out_pos + ((bit_pos + i) >> 3)] |= 1u << ((bit_pos + i) & 7u);
+                }
+                bits_left -= chunk;
+                bit_pos   += chunk;
+            }
+            /* Zero the remaining bits in the last partial byte. */
+            for (uint16_t i = 0; i < bytes; ++i) {
+                /* (already zero from LHS init? defensive) */
+                (void) out[out_pos + i];
+            }
+            out_pos += bytes;
+        } else {
+            if (in_pos + bytes > data_len) { out[0] = DAP_ERROR; return out_pos; }
+            uint16_t bits_left = bits;
+            uint16_t byte_off  = 0;
+            while (bits_left) {
+                uint8_t chunk = (bits_left > 32u) ? 32u : (uint8_t) bits_left;
+                uint32_t word = 0;
+                for (uint8_t i = 0; i < chunk; ++i) {
+                    uint8_t bit = (info_and_data[in_pos + byte_off + (i >> 3)]
+                                   >> (i & 7u)) & 1u;
+                    word |= (uint32_t) bit << i;
+                }
+                swd_write_n(word, chunk);
+                bits_left -= chunk;
+                byte_off  += (chunk + 7u) / 8u;
+            }
+            in_pos += bytes;
+        }
+    }
+    return out_pos;
 }
 
-void probe_drive_swdio(bool high)
+/* ----------------------------------------------------------------------
+ * SWD transfer (the workhorse)
+ * ---------------------------------------------------------------------- */
+
+static inline uint8_t parity32(uint32_t v)
 {
-    release_pio_pins();
-    take_pin_for_sio(EDEV_PROBE_PIN_SWDIO, true, high);
+    return (uint8_t) (__builtin_popcount(v) & 1u);
 }
 
-void probe_drive_nreset(bool high)
+static inline uint8_t parity4(uint8_t v)
 {
-    /* nRESET is open-drain. "high" means tristate (target's pull-up
-     * brings it up); "low" means drive a hard ground. */
-    if (high) {
-        gpio_set_dir(EDEV_PROBE_PIN_RESET, GPIO_IN);
+    return (uint8_t) (__builtin_popcount(v & 0x0Fu) & 1u);
+}
+
+static uint8_t probe_swd_xact(uint8_t request, uint32_t data_value,
+                              uint32_t *data_out);
+
+uint8_t probe_swd_transfer(uint8_t request, uint32_t data_value,
+                           uint32_t *data_out)
+{
+    /* Parity-error retry. Should rarely fire with PIO since timing is
+     * deterministic, but kept as a safety net. */
+    uint8_t ack;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        ack = probe_swd_xact(request, data_value, data_out);
+        if (ack == DAP_TRANSFER_OK) return ack;
+        if (ack != (DAP_TRANSFER_OK | DAP_TRANSFER_ERROR)) return ack;
+        if (!(request & DAP_TRANSFER_RnW)) return ack;
+    }
+    return ack;
+}
+
+static uint8_t probe_swd_xact(uint8_t request, uint32_t data_value,
+                              uint32_t *data_out)
+{
+    /* Build 8-bit packet request: start, APnDP, RnW, A2, A3, parity,
+     * stop, park — LSB first. */
+    uint8_t header = 0
+        | (1u << 0)                              /* start */
+        | ((request & 0x0Fu) << 1)               /* APnDP/RnW/A2/A3 */
+        | ((uint8_t)parity4(request) << 5)       /* parity */
+        | (0u << 6)                              /* stop */
+        | (1u << 7);                             /* park */
+
+    /* Phase 1: write 8-bit header. */
+    swd_write_n(header, 8);
+
+    /* Phase 2: turnaround (target takes line). PIO `read_bits` sets
+     * pindirs to IN for us. */
+    swd_clock_idle_n(s_turnaround);
+
+    /* Phase 3: read 3-bit ACK. */
+    uint8_t ack = (uint8_t) swd_read_n(3);
+
+    if (ack == 0x1u) {
+        if (request & DAP_TRANSFER_RnW) {
+            /* READ: target keeps driving 32 data + 1 parity. */
+            uint32_t data = swd_read_n(32);
+            uint8_t target_parity = (uint8_t) swd_read_n(1);
+            /* Turnaround back to host. */
+            swd_clock_idle_n(s_turnaround);
+
+            if (data_out) *data_out = data;
+            if (parity32(data) != target_parity) {
+                return DAP_TRANSFER_OK | DAP_TRANSFER_ERROR;
+            }
+        } else {
+            /* WRITE: turnaround back to host, then host drives 32 data + parity. */
+            swd_clock_idle_n(s_turnaround);
+            swd_write_n(data_value, 32);
+            swd_write_n(parity32(data_value), 1);
+        }
+
+        /* Idle cycles. */
+        if (s_idle_cycles) {
+            /* Up to 256 cycles. Drive 0 in chunks. */
+            uint16_t left = s_idle_cycles;
+            while (left) {
+                uint8_t chunk = (left > 32u) ? 32u : (uint8_t) left;
+                swd_write_n(0u, chunk);
+                left -= chunk;
+            }
+        }
+        return DAP_TRANSFER_OK;
+    }
+
+    /* WAIT / FAULT path with data_phase asymmetry. */
+    if (s_data_phase) {
+        if (request & DAP_TRANSFER_RnW) {
+            /* Target keeps driving — read 33 dummy bits. */
+            (void) swd_read_n(32);
+            (void) swd_read_n(1);
+            swd_clock_idle_n(s_turnaround);
+        } else {
+            /* Turnaround then host drives 33 zeros. */
+            swd_clock_idle_n(s_turnaround);
+            swd_write_n(0u, 32);
+            swd_write_n(0u, 1);
+        }
     } else {
-        gpio_set_dir(EDEV_PROBE_PIN_RESET, GPIO_OUT);
-        gpio_put(EDEV_PROBE_PIN_RESET, 0);
+        swd_clock_idle_n(s_turnaround);
     }
+
+    if (ack == 0x2u) return DAP_TRANSFER_WAIT;
+    if (ack == 0x4u) return DAP_TRANSFER_FAULT;
+    if (ack == 0x7u) return DAP_TRANSFER_NO_ACK;
+    return DAP_TRANSFER_NO_ACK | DAP_TRANSFER_ERROR;
 }
 
-bool probe_read_swclk (void) { return gpio_get(EDEV_PROBE_PIN_SWCLK); }
-bool probe_read_swdio (void) { return gpio_get(EDEV_PROBE_PIN_SWDIO); }
-bool probe_read_nreset(void) { return gpio_get(EDEV_PROBE_PIN_RESET); }
+bool probe_swd_write_abort(uint32_t value)
+{
+    uint8_t ack = probe_swd_transfer(0u, value, NULL);
+    return ack == DAP_TRANSFER_OK;
+}

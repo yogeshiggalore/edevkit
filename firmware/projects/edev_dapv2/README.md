@@ -1,65 +1,83 @@
 # edev_dapv2
 
-A from-scratch CMSIS-DAP v2 debug-probe firmware for RP2350. Substrate is
-**pico-sdk + TinyUSB**; everything above that layer — descriptors, MS OS
-2.0 BOS chain, vendor-class driver, DAP dispatcher, every command handler,
-SWD/JTAG/SWO PIO programs, ring buffers — is in this tree.
+A from-scratch **pure CMSIS-DAP v2** debug-probe firmware for RP2350.
 
-Target hosts:
-[probe-rs](https://probe.rs/),
-[pyocd](https://pyocd.io/),
-[OpenOCD](https://openocd.org/).
-Target board for v0.1: a stock Raspberry Pi Pico 2 or a Seeed XIAO RP2350,
-3.3 V single-domain.
+The substrate is **pico-sdk + TinyUSB**. Above that layer — descriptors,
+MS OS 2.0 BOS chain, custom vendor-class driver, DAP dispatcher, every
+command handler, SWD/JTAG/SWO PIO programs — is in this tree.
 
-For why each design choice was made and what the source tree looks like,
-see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Pure transport: no DAP_VENDOR commands in firmware, no custom host tool.
+Works out-of-the-box with [probe-rs](https://probe.rs/),
+[pyocd](https://pyocd.io/), and [OpenOCD](https://openocd.org/).
 
-For step-by-step bring-up on a fresh board, see
-[`docs/BRINGUP.md`](docs/BRINGUP.md) once it exists.
+Target board: **Raspberry Pi Pico 2 W** (RP2350A + CYW43439), 3.3 V
+single-domain. Stock Pico 2 also supported via `-DPICO_BOARD=pico2`.
+
+## Status
+
+| Milestone | What | State |
+| --- | --- | --- |
+| M1 | Boot, clocks, task loop scaffold, LED heartbeat | **in progress** |
+| M2 | USB enumerates as CMSIS-DAP v2 | pending |
+| M3 | `pyocd list` / `probe-rs list` see the probe | pending |
+| M4 | DAP_Info round-trips | pending |
+| M5 | SWD reads IDCODE of a real Cortex-M | pending |
+| M6 | Full flash via probe-rs on a real target | pending |
+| M7 | JTAG TAP scan + flash | pending |
+| M8 | SWO trace bytes streamed | pending |
 
 ## Quick start
 
 ```sh
+# First configure clones pico-sdk (~380 MB, one-time).
 mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPICO_BOARD=pico2 ..
+cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 make -j
-# hold BOOTSEL on the Pico 2, plug USB, drag-drop edev_dapv2.uf2 onto the
-# RP2350 BOOTSEL mass-storage volume
 
-pyocd list           # should see "edev_dapv2 CMSIS-DAP" at 2e8a:000c
-probe-rs list        # ditto
+# Hold BOOTSEL on the Pico 2 W, plug USB. Drag-drop the .uf2 onto the
+# RPI-RP2 mass-storage volume.
+ls edev_dapv2_v0_1.uf2
 ```
 
-The `pico-sdk/` directory is a symlink to `../dap_v2/pico-sdk/` to avoid
-duplicating the 382 MB SDK checkout. If you build standalone, set
-`PICO_SDK_PATH` in the environment or pass `-DPICO_SDK_PATH=…` to cmake.
+To use an existing SDK checkout, set `PICO_SDK_PATH` in your shell or
+pass `-DPICO_SDK_PATH=/path/to/pico-sdk` to cmake.
 
-## Status
+Default board is `pico2_w`. For a stock Pico 2:
+```sh
+cmake -DPICO_BOARD=pico2 ..
+```
 
-| Milestone | State |
-| --- | --- |
-| M1 — boot, clocks, LED blink | in progress |
-| M2 — USB enumerates as CMSIS-DAP v2 | pending |
-| M3 — `pyocd list` / `probe-rs list` see the probe | pending |
-| M4 — DAP_Info round-trips | pending |
-| M5 — SWD reads IDCODE of a real Cortex-M | pending |
-| M6 — full flash via probe-rs on a real target | pending |
-| M7 — JTAG TAP scan | pending |
-| M8 — SWO trace bytes streamed | pending |
+## Pinout (v0.1, 3.3 V single domain)
 
-## Relation to `dap_v2/`
+| Pico 2 W GPIO | Pin | Signal | Notes |
+| ---: | ---: | --- | --- |
+| GP2 | 4 | SWCLK / TCK | PIO0 SM0, push-pull |
+| GP3 | 5 | SWDIO / TMS | PIO0 SM0, bidir |
+| GP4 | 6 | TDI (JTAG only) | PIO0 SM0 |
+| GP5 | 7 | TDO / SWO (mux) | PIO0 SM0 (JTAG); PIO0 SM1 (SWO) |
+| GP6 | 9 | nRESET (open-drain) | SIO; drive 0 only |
+| GP7 | 10 | nTRST (optional) | SIO |
+| GP0 | 1 | UART TX → target RX | hw UART0 |
+| GP1 | 2 | UART RX ← target TX | hw UART0 |
+| GP26 / ADC0 | 31 | Vtgt sense (optional) | reports voltage to host |
+| GP22 | 29 | Status LED (optional, external) | 330 Ω + LED to GND |
 
-This is a **fresh start**. The sibling `dap_v2/` directory (pico-sdk +
-TinyUSB-based CMSIS-DAP probe, v0.3.3 at the time of this writing) is left
-untouched as a known-working baseline to diff against. `edev_dapv2` was
-created to answer the question *"if we wrote a CMSIS-DAP v2 probe with
-modern eyes, no SDK lock-in, and only the parts the protocol actually
-needs, what would it look like?"*
+The on-board LED on Pico 2 W is wired to the CYW43439 chip, not an
+RP2350 GPIO, so the heartbeat blink is a no-op on this board. Wire an
+external LED to GP22 if you want visual sign-of-life.
+
+The pinout maps directly to the standard 10-pin Cortex Debug
+connector (1.27 mm) — see the firmware-design doc for the table.
+
+## Toolchain
+
+- `arm-none-eabi-gcc` 11+ recommended (10.3 also works for v0.1)
+- `cmake` 3.13+
+- `make` or `ninja`
+- For OTA / probing later: `picotool`, `probe-rs`, `pyocd`, `openocd`
 
 ## License
 
-TBD. Code originating in this tree is © Edevkit. The single piece of
-imported third-party material is the upstream RP2350 QSPI 2nd-stage
-bootloader (`boot/boot2_*.S`), which carries its own BSD-3-Clause notice
-from the Raspberry Pi pico-sdk.
+Code originating in this tree is © Edevkit, MIT-licensed unless a file
+header says otherwise. Imported third-party material carries its
+upstream notice.

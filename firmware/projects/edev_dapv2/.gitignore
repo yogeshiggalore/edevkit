@@ -1,0 +1,22 @@
+# Build artifacts
+build/
+build_*/
+*.o
+*.d
+
+# CMake-generated
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+compile_commands.json
+
+# pico-sdk FetchContent (if used)
+_deps/
+
+# In-tree SDK if symlinked
+pico-sdk
+
+# Editor noise
+.DS_Store
+*.swp
+*.swo

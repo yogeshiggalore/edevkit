@@ -1,553 +1,436 @@
 /*
- * dap_swd.c — SWD-and-transfer commands. The meat of the CMSIS-DAP
- * protocol.
+ * dap_swd.c — DAP_TransferConfigure, DAP_Transfer, DAP_TransferBlock,
+ * DAP_SWD_Configure, DAP_SWD_Sequence.
  *
- *   0x04 DAP_TransferConfigure  — save idle/retry counts
- *   0x05 DAP_Transfer           — N independent AP/DP transfers
- *   0x06 DAP_TransferBlock      — N transfers on one register, bulk
- *   0x07 DAP_TransferAbort      — async cancel (best-effort)
- *   0x08 DAP_WriteABORT         — write DP[0x00] ABORT register
- *   0x13 DAP_SWD_Configure      — turnaround cycles + data-phase
- *   0x1D DAP_SWD_Sequence       — arbitrary SWD bit sequences
- *
- * The transfer engine in swd_transfer() is the SWD line protocol:
- * 8-bit packet, turnaround, 3-bit ACK, optional 32-bit data + parity,
- * back-turnaround, idle cycles. Every other transfer command is a
- * loop over swd_transfer().
- *
- * Modelled on raspberrypi/debugprobe (Apache-2.0). The transfer
- * decision tree and parity handling are standard ARM Debug Interface
- * v5 / v6 protocol — there's no creative interpretation here.
+ * These five commands implement the actual host-driven ADIv5 state
+ * machine. Most of the cleverness lives in `probe_swd_transfer()`;
+ * here we parse CMSIS-DAP wire-format and drive that function.
  */
 
-#include "dap_internal.h"
+#include "dap/dap_internal.h"
+#include "hw/probe.h"
+#include "util/log.h"
 
 #include <stdbool.h>
 #include <string.h>
 
-#include "hw/probe.h"
+/* Per-xact tracing — VERY heavy at runtime. Off by default; enable
+ * only for SWD-level debugging. Each xact adds ~10 chars to the log
+ * ring and slows DAP processing during large reads. */
+#ifndef EDEV_LOG_TRANSFER
+#define EDEV_LOG_TRANSFER 0  /* off for speed */
+#endif
 
-/* ----- request byte bit fields (host's view, NOT the wire format) -- */
-#define TFR_APnDP        (1u << 0)
-#define TFR_RnW          (1u << 1)
-#define TFR_A2           (1u << 2)
-#define TFR_A3           (1u << 3)
-#define TFR_VALUE_MATCH  (1u << 4)
-#define TFR_MATCH_MASK   (1u << 5)
-#define TFR_TIMESTAMP    (1u << 7)
+#if EDEV_LOG_TRANSFER
+#  define LX_PUTC(c)      log_putc(c)
+#  define LX_PUTS(s)      log_puts(s)
+#  define LX_HEX(p, n)    log_hex((p), (n))
+#else
+#  define LX_PUTC(c)      ((void)0)
+#  define LX_PUTS(s)      ((void)0)
+#  define LX_HEX(p, n)    ((void)0)
+#endif
 
-/* ----- exported transfer/SWD config (declared extern in dap_internal.h) */
-uint8_t  dap_tfr_idle_cycles       = 0;
-uint16_t dap_tfr_wait_retry        = 64;
-uint16_t dap_tfr_match_retry       = 0;
-uint8_t  dap_swd_turnaround_cycles = 1;
-uint8_t  dap_swd_data_phase        = 0;
+/* TransferConfigure state — shared across Transfer / TransferBlock. */
+static uint16_t s_wait_retry  = 100;
+static uint16_t s_match_retry = 0;
+static uint8_t  s_idle_cycles = 0;
 
-/* ----- per-connection runtime state shared across transfers --------- */
-static uint32_t s_match_mask = 0xFFFFFFFFu;
-
-void dap_swd_init(void)
+uint16_t dap_handle_xfer_config(const uint8_t *req, uint16_t req_len,
+                                uint8_t *resp, uint16_t resp_cap)
 {
-    dap_tfr_idle_cycles       = 0;
-    dap_tfr_wait_retry        = 64;
-    dap_tfr_match_retry       = 0;
-    dap_swd_turnaround_cycles = 1;
-    dap_swd_data_phase        = 0;
-    s_match_mask              = 0xFFFFFFFFu;
+    if (req_len < 5 || resp_cap < 1) return 0;
+    s_idle_cycles = req[0];
+    s_wait_retry  = (uint16_t)(req[1] | (req[2] << 8));
+    s_match_retry = (uint16_t)(req[3] | (req[4] << 8));
+    probe_set_xfer_config(s_idle_cycles, s_wait_retry, s_match_retry);
+    resp[0] = DAP_OK;
+    return 1;
 }
 
-/* ------------------------------------------------------------------ */
-/*  0x04 DAP_TransferConfigure                                         */
-/* ------------------------------------------------------------------ */
-
-uint16_t dap_handle_transfer_configure(const uint8_t *req, uint16_t req_avail,
-                                       uint8_t *resp, uint16_t resp_cap,
-                                       uint16_t *resp_used)
+uint16_t dap_handle_swd_config(const uint8_t *req, uint16_t req_len,
+                               uint8_t *resp, uint16_t resp_cap)
 {
-    if (req_avail < 6u || resp_cap < 2u) {
-        *resp_used = 0;
-        return 0;
-    }
-    dap_tfr_idle_cycles = req[1];
-    dap_tfr_wait_retry  = (uint16_t)((uint16_t)req[2] | ((uint16_t)req[3] << 8));
-    dap_tfr_match_retry = (uint16_t)((uint16_t)req[4] | ((uint16_t)req[5] << 8));
-
-    resp[1] = 0;
-    *resp_used = 2u;
-    return 6u;
+    if (req_len < 1 || resp_cap < 1) return 0;
+    uint8_t cfg = req[0];
+    /* cfg bits: 0..1 turnaround (0..3 → 1..4), 2 data_phase */
+    probe_set_swd_config(cfg & 0x3u, (cfg >> 2) & 0x1u);
+    resp[0] = DAP_OK;
+    return 1;
 }
 
-/* ------------------------------------------------------------------ */
-/*  0x13 DAP_SWD_Configure                                             */
-/* ------------------------------------------------------------------ */
-
-uint16_t dap_handle_swd_configure(const uint8_t *req, uint16_t req_avail,
-                                  uint8_t *resp, uint16_t resp_cap,
-                                  uint16_t *resp_used)
+uint16_t dap_handle_swd_seq(const uint8_t *req, uint16_t req_len,
+                            uint8_t *resp, uint16_t resp_cap)
 {
-    if (req_avail < 2u || resp_cap < 2u) {
-        *resp_used = 0;
-        return 0;
-    }
-    uint8_t cfg = req[1];
-    dap_swd_turnaround_cycles = (uint8_t)((cfg & 0x03u) + 1u);
-    dap_swd_data_phase        = (uint8_t)((cfg >> 2) & 0x01u);
-
-    resp[1] = 0;
-    *resp_used = 2u;
-    return 2u;
+    if (req_len < 1) return 0;
+    uint8_t count = req[0];
+    return probe_swd_sequence(count, req + 1, (uint16_t)(req_len - 1),
+                              resp, resp_cap);
 }
 
-/* ------------------------------------------------------------------ */
-/*  Issue trailing idle cycles after a successful transfer.            */
-/* ------------------------------------------------------------------ */
+/* DAP_Transfer (0x05) — list of per-xact ops with optional match-mask.
+ *
+ * Request payload (after command byte 0x05):
+ *   req[0]    DAP index (irrelevant in SWD; always 0)
+ *   req[1]    transfer count
+ *   req[2..]  per-xact: 1 byte request, then optional u32 (write data
+ *             or match value), maybe match-mask u32 if set in xact byte
+ *
+ * Response payload:
+ *   resp[0]   transfers actually executed
+ *   resp[1]   last ACK (3 LSB) + status bits
+ *   resp[2..] u32 read values for each read xact (concatenated)
+ */
+/* DP register encoding for the RDBUFF read request byte:
+ *   bit0 APnDP=0 (DP), bit1 RnW=1 (read), bit2 A2=1, bit3 A3=1 → 0x0E
+ * RDBUFF is at DP address 0x0C (A[3:2]=11). */
+#define DP_READ_RDBUFF_REQ  0x0Eu
 
-static void emit_idle(void)
+uint16_t dap_handle_transfer(const uint8_t *req, uint16_t req_len,
+                             uint8_t *resp, uint16_t resp_cap)
 {
-    uint32_t n = dap_tfr_idle_cycles;
-    while (n > 0u) {
-        uint32_t chunk = n > 32u ? 32u : n;
-        probe_write_bits(chunk, 0u);
-        n -= chunk;
-    }
-}
+    if (req_len < 2 || resp_cap < 2) return 0;
 
-/* ------------------------------------------------------------------ */
-/*  Single SWD transfer — the protocol primitive.                      */
-/*                                                                      */
-/*  request bits 0..3 = APnDP / RnW / A2 / A3                          */
-/*  *data is the value to write (for write) or where to put the read   */
-/*  result (for read). May be NULL on read if the caller doesn't care. */
-/*                                                                      */
-/*  Returns the 3-bit SWD ACK, or DAP_TRANSFER_ERROR on parity/protocol*/
-/*  failure.                                                            */
-/* ------------------------------------------------------------------ */
+    /* req[0] is DAP index — ignored. */
+    uint8_t count = req[1];
 
-uint8_t swd_transfer(uint32_t request, uint32_t *data)
-{
-    /* Build the 8-bit SWD packet:
-     *   bit 0 = start (1)
-     *   bit 1 = APnDP
-     *   bit 2 = RnW
-     *   bit 3 = A2
-     *   bit 4 = A3
-     *   bit 5 = parity (over bits 1..4)
-     *   bit 6 = stop (0)
-     *   bit 7 = park (1) */
-    uint8_t prq = 0x81u;   /* start + park already set */
-    uint8_t parity = 0;
-    for (uint8_t n = 1; n < 5u; n++) {
-        uint8_t bit = (uint8_t)((request >> (n - 1u)) & 0x1u);
-        prq    |= (uint8_t)(bit << n);
-        parity = (uint8_t)(parity + bit);
-    }
-    prq |= (uint8_t)((parity & 1u) << 5);
+    LX_PUTC('[');
+    LX_HEX(&count, 1);
 
-    probe_write_bits(8u, prq);
+    uint16_t in_pos  = 2;
+    uint16_t out_pos = 2;        /* reserve resp[0], resp[1] */
+    uint8_t  executed = 0;
+    uint8_t  last_ack = 0;
 
-    /* Read turnaround + 3-bit ACK in one shot, then shift to extract
-     * just the ACK in the LSBs. The turnaround clocks happen with
-     * SWDIO already tristated by the PIO program (OE=0 for reads). */
-    uint32_t ack_field = probe_read_bits((uint32_t)(dap_swd_turnaround_cycles + 3u));
-    uint8_t  ack       = (uint8_t)((ack_field >> dap_swd_turnaround_cycles) & 0x07u);
+    uint32_t match_mask = 0;
 
-    if (ack == DAP_TRANSFER_OK) {
-        if (request & TFR_RnW) {
-            /* Read: 32 data bits + 1 parity bit, then turnaround back
-             * to drive. */
-            uint32_t val      = probe_read_bits(32u);
-            uint32_t par_bit  = probe_read_bits(1u);
-            uint32_t computed = (uint32_t)__builtin_popcount(val) & 1u;
-            if (par_bit != computed) {
-                /* Wire ACK was OK but data parity failed. Keep ACK=OK
-                 * in bits 0:2 and OR in ProtocolError (bit 3) — spec
-                 * requires bits 0:2 to be a valid wire-ACK value. */
-                ack = DAP_TRANSFER_OK | DAP_TRANSFER_ERROR;
-            } else if (data) {
-                *data = val;
-            }
-            probe_hiz_clocks(dap_swd_turnaround_cycles);
-        } else {
-            /* Write: turnaround back to drive, then 32 data + 1
-             * parity. */
-            probe_hiz_clocks(dap_swd_turnaround_cycles);
-            uint32_t val = data ? *data : 0u;
-            probe_write_bits(32u, val);
-            probe_write_bits(1u, (uint32_t)__builtin_popcount(val) & 1u);
-        }
-        emit_idle();
-        return ack;
-    }
+    /* Posted-AP-read pipeline tracking. Per CMSIS-DAP reference
+     * DAP.c — an AP read is "posted": we issue the wire transaction
+     * but ignore the data (it's pipeline junk). The actual data is
+     * captured on the NEXT transaction, either another AP read
+     * (which returns the previous AP read's value via the chip
+     * pipeline) OR an explicit DP.RDBUFF read.
+     *
+     * `post_read` = true means we have an AP read pending whose data
+     * we still need to capture. */
+    bool post_read = false;
 
-    /* WAIT or FAULT — target couldn't service the transfer. */
-    if (ack == DAP_TRANSFER_WAIT || ack == DAP_TRANSFER_FAULT) {
-        /* If the host explicitly asked for "always do the data phase"
-         * (DAP_SWD_Configure config bit 2) we still have to consume
-         * (read) or send (write) the 33 data+parity bits so the line
-         * stays in sync. Without data-phase, the bus simply doesn't
-         * transfer the data part and only the turnaround is left. */
-        if (dap_swd_data_phase && (request & TFR_RnW)) {
-            (void)probe_read_bits(33u);
-        }
-        probe_hiz_clocks(dap_swd_turnaround_cycles);
-        if (dap_swd_data_phase && !(request & TFR_RnW)) {
-            probe_write_bits(32u, 0u);
-            probe_write_bits(1u, 0u);
-        }
-        return ack;
-    }
+    for (uint8_t i = 0; i < count; ++i) {
+        if (in_pos >= req_len) { last_ack = DAP_TRANSFER_ERROR; break; }
+        uint8_t xact = req[in_pos++];
 
-    /* Wire ACK was NO_ACK (0b111 — target not responding) or an illegal
-     * code (0/3/5/6 from timing glitch). Drain the line so the next
-     * packet finds it clean. */
-    uint32_t drain = (uint32_t)dap_swd_turnaround_cycles + 32u + 1u;
-    while (drain > 0u) {
-        uint32_t chunk = drain > 32u ? 32u : drain;
-        (void)probe_read_bits(chunk);
-        drain -= chunk;
-    }
-    /* Return NO_ACK (0x07) in the wire-ACK field, not 0x08 alone: spec
-     * requires bits 0:2 ∈ {1,2,4,7}. Setting only bit 3 leaves bits 0:2
-     * at 0, which pyocd rejects as "Unexpected ACK '0'". For illegal
-     * codes we also OR in ProtocolError so the host knows it wasn't a
-     * clean NO_ACK. */
-    return (ack == 0x07u) ? DAP_TRANSFER_NO_ACK
-                          : (DAP_TRANSFER_NO_ACK | DAP_TRANSFER_ERROR);
-}
+        bool is_read = (xact & DAP_TRANSFER_RnW) != 0;
+        bool is_ap   = (xact & DAP_TRANSFER_APnDP) != 0;
 
-/* ------------------------------------------------------------------ */
-/*  0x05 DAP_Transfer                                                  */
-/* ------------------------------------------------------------------ */
-
-uint16_t dap_handle_transfer(const uint8_t *req, uint16_t req_avail,
-                             uint8_t *resp, uint16_t resp_cap,
-                             uint16_t *resp_used)
-{
-    if (req_avail < 3u || resp_cap < 3u) {
-        *resp_used = 0;
-        return 0;
-    }
-    /* req[1] is the DAP_Index — for SWD it's ignored. JTAG would use
-     * it to select a TAP. */
-    (void)req[1];
-
-    uint8_t req_count = req[2];
-    uint16_t req_idx = 3u;
-    uint16_t resp_idx = 3u;       /* leave [1]=count [2]=ack for end */
-    uint8_t  done = 0;
-    uint8_t  ack = DAP_TRANSFER_OK;
-
-    if (dap_active_port != EDEV_DAP_PORT_SWD) {
-        /* Spec is fuzzy about "what if no port" — openocd returns OK
-         * with 0 transfers, probe-rs returns ERROR. We pick ERROR
-         * because hosts treat that as "give up cleanly". */
-        resp[1] = 0;
-        resp[2] = DAP_TRANSFER_ERROR;
-        *resp_used = 3u;
-        return req_avail;
-    }
-
-    for (uint8_t i = 0; i < req_count; i++) {
-        if (req_idx >= req_avail) {
-            break;
-        }
-        uint8_t tr = req[req_idx++];
-        bool is_read  = (tr & TFR_RnW) != 0;
-        bool vm       = (tr & TFR_VALUE_MATCH) != 0;   /* read-with-match */
-        bool mm_write = (tr & TFR_MATCH_MASK)  != 0;   /* write mask */
-
-        if (mm_write && !is_read) {
-            /* Special: DAP "write match mask" — the 32-bit value is
-             * stored as the mask, not actually transferred. The host
-             * uses this before issuing a VM read. */
-            if ((uint16_t)(req_idx + 4u) > req_avail) {
-                break;
-            }
-            s_match_mask = (uint32_t)req[req_idx]            |
-                           ((uint32_t)req[req_idx + 1] << 8) |
-                           ((uint32_t)req[req_idx + 2] << 16)|
-                           ((uint32_t)req[req_idx + 3] << 24);
-            req_idx += 4u;
-            done++;
+        /* Update match_mask — separate op, doesn't count as a transfer. */
+        if (xact & DAP_TRANSFER_MATCH_MASK) {
+            if (in_pos + 4u > req_len) { last_ack = DAP_TRANSFER_ERROR; break; }
+            match_mask = (uint32_t)req[in_pos]
+                       | ((uint32_t)req[in_pos+1] <<  8)
+                       | ((uint32_t)req[in_pos+2] << 16)
+                       | ((uint32_t)req[in_pos+3] << 24);
+            in_pos += 4;
+            last_ack = DAP_TRANSFER_OK;
             continue;
         }
 
         uint32_t data_in = 0;
-        uint32_t expected_match = 0;
         if (!is_read) {
-            if ((uint16_t)(req_idx + 4u) > req_avail) { break; }
-            data_in = (uint32_t)req[req_idx]            |
-                      ((uint32_t)req[req_idx + 1] << 8) |
-                      ((uint32_t)req[req_idx + 2] << 16)|
-                      ((uint32_t)req[req_idx + 3] << 24);
-            req_idx += 4u;
-        } else if (vm) {
-            if ((uint16_t)(req_idx + 4u) > req_avail) { break; }
-            expected_match = (uint32_t)req[req_idx]            |
-                             ((uint32_t)req[req_idx + 1] << 8) |
-                             ((uint32_t)req[req_idx + 2] << 16)|
-                             ((uint32_t)req[req_idx + 3] << 24);
-            req_idx += 4u;
+            if (in_pos + 4u > req_len) { last_ack = DAP_TRANSFER_ERROR; break; }
+            data_in = (uint32_t)req[in_pos]
+                    | ((uint32_t)req[in_pos+1] <<  8)
+                    | ((uint32_t)req[in_pos+2] << 16)
+                    | ((uint32_t)req[in_pos+3] << 24);
+            in_pos += 4;
         }
 
-        /* WAIT-retry loop: spec says the probe retries internally up
-         * to dap_tfr_wait_retry times before reporting the final ACK. */
-        uint32_t read_val = 0;
-        uint32_t wait_left = dap_tfr_wait_retry;
-        do {
-            uint32_t arg = is_read ? read_val : data_in;
-            ack = swd_transfer(tr, &arg);
-            if (is_read) {
-                read_val = arg;
+        uint32_t match_value = 0;
+        bool match_mode = (xact & DAP_TRANSFER_MATCH_VALUE) && is_read;
+        if (match_mode) {
+            if (in_pos + 4u > req_len) { last_ack = DAP_TRANSFER_ERROR; break; }
+            match_value = (uint32_t)req[in_pos]
+                        | ((uint32_t)req[in_pos+1] <<  8)
+                        | ((uint32_t)req[in_pos+2] << 16)
+                        | ((uint32_t)req[in_pos+3] << 24);
+            in_pos += 4;
+        }
+
+        uint8_t ack = DAP_TRANSFER_OK;
+        uint32_t data_out = 0;
+        uint16_t retries;
+
+        /* Flush a pending posted AP read BEFORE we touch a non-AP
+         * transaction or a write, since changing DP.SELECT or doing
+         * any non-AP op would lose the AP pipeline. */
+        if (post_read && (!is_ap || !is_read || match_mode)) {
+            retries = s_wait_retry;
+            uint32_t prev_data = 0;
+            do {
+                ack = probe_swd_transfer(DP_READ_RDBUFF_REQ, 0, &prev_data);
+            } while (ack == DAP_TRANSFER_WAIT && retries-- > 0);
+            LX_PUTS(" F");
+            LX_HEX(&ack, 1);
+            if (ack != DAP_TRANSFER_OK) {
+                last_ack = ack;
+                post_read = false;
+                break;
             }
-        } while (ack == DAP_TRANSFER_WAIT && (wait_left-- > 0u));
-
-        if (ack != DAP_TRANSFER_OK) {
-            /* Stop the batch on any non-OK ACK — that's what hosts
-             * expect. The accumulated count + ack at the end of the
-             * response tells the host where we stopped. */
-            break;
+            /* Push the pending AP read's value into response. */
+            if (out_pos + 4u > resp_cap) { post_read = false; break; }
+            resp[out_pos++] = (uint8_t)(prev_data      );
+            resp[out_pos++] = (uint8_t)(prev_data >>  8);
+            resp[out_pos++] = (uint8_t)(prev_data >> 16);
+            resp[out_pos++] = (uint8_t)(prev_data >> 24);
+            ++executed;
+            post_read = false;
         }
 
-        if (vm) {
-            /* MATCH_MASK semantics: keep re-reading until
-             * (value & mask) == (expected & mask) or match_retry
-             * exhausted. */
-            uint32_t match_left = dap_tfr_match_retry;
-            while ((read_val & s_match_mask) != (expected_match & s_match_mask)) {
-                if (match_left == 0u) {
-                    ack |= DAP_TRANSFER_MISMATCH;
-                    break;
-                }
-                match_left--;
-                wait_left = dap_tfr_wait_retry;
-                uint32_t arg = read_val;
+        /* Now execute THIS transaction with WAIT retry. For posted AP
+         * reads, the first one passes NULL for data (ignore wire junk);
+         * subsequent AP reads capture the pipeline data into data_out. */
+        retries = s_wait_retry;
+        if (is_ap && is_read && !match_mode) {
+            if (!post_read) {
+                /* First AP read in a sequence — POST it (ignore data). */
                 do {
-                    ack = swd_transfer(tr, &arg);
-                } while (ack == DAP_TRANSFER_WAIT && (wait_left-- > 0u));
-                if (ack != DAP_TRANSFER_OK) {
-                    break;
+                    ack = probe_swd_transfer((uint8_t)(xact & 0x0Fu),
+                                             data_in, NULL);
+                } while (ack == DAP_TRANSFER_WAIT && retries-- > 0);
+                last_ack = ack;
+                LX_PUTC('p'); LX_HEX(&xact, 1); LX_PUTC(':'); LX_HEX(&ack, 1);
+                if (ack != DAP_TRANSFER_OK) break;
+                post_read = true;
+                /* No data to push for the posted read yet. */
+                continue;
+            } else {
+                /* Sequel AP read: chip returns the PREVIOUS AP read's
+                 * value in data_out via the pipeline. Capture and push. */
+                do {
+                    ack = probe_swd_transfer((uint8_t)(xact & 0x0Fu),
+                                             data_in, &data_out);
+                } while (ack == DAP_TRANSFER_WAIT && retries-- > 0);
+                last_ack = ack;
+                LX_PUTC('r'); LX_HEX(&xact, 1); LX_PUTC(':'); LX_HEX(&ack, 1);
+                if (ack == DAP_TRANSFER_OK) {
+                    uint8_t b[4] = {
+                        (uint8_t)data_out, (uint8_t)(data_out >> 8),
+                        (uint8_t)(data_out >> 16), (uint8_t)(data_out >> 24),
+                    };
+                    LX_PUTC('='); LX_HEX(b, 4);
                 }
-                read_val = arg;
+                if (ack != DAP_TRANSFER_OK) break;
+                if (out_pos + 4u > resp_cap) break;
+                resp[out_pos++] = (uint8_t)(data_out      );
+                resp[out_pos++] = (uint8_t)(data_out >>  8);
+                resp[out_pos++] = (uint8_t)(data_out >> 16);
+                resp[out_pos++] = (uint8_t)(data_out >> 24);
+                ++executed;
+                /* post_read stays true — this AP read is now itself
+                 * posted, awaiting its own flush. */
+                continue;
             }
-            if ((ack & ~DAP_TRANSFER_MISMATCH) != DAP_TRANSFER_OK) {
-                break;
-            }
-            /* VM reads don't return the value (spec) — only an ACK. */
-        } else if (is_read) {
-            if ((uint16_t)(resp_idx + 4u) > resp_cap) {
-                break;
-            }
-            resp[resp_idx++] = (uint8_t)(read_val);
-            resp[resp_idx++] = (uint8_t)(read_val >> 8);
-            resp[resp_idx++] = (uint8_t)(read_val >> 16);
-            resp[resp_idx++] = (uint8_t)(read_val >> 24);
         }
 
-        done++;
-    }
-
-    resp[1] = done;
-    resp[2] = ack;
-    *resp_used = resp_idx;
-    return req_idx;
-}
-
-/* ------------------------------------------------------------------ */
-/*  0x06 DAP_TransferBlock                                             */
-/* ------------------------------------------------------------------ */
-
-uint16_t dap_handle_transfer_block(const uint8_t *req, uint16_t req_avail,
-                                   uint8_t *resp, uint16_t resp_cap,
-                                   uint16_t *resp_used)
-{
-    if (req_avail < 5u || resp_cap < 4u) {
-        *resp_used = 0;
-        return 0;
-    }
-    (void)req[1];   /* dap_index — JTAG only */
-
-    uint16_t count = (uint16_t)((uint16_t)req[2] | ((uint16_t)req[3] << 8));
-    uint8_t  tr    = req[4];
-    bool     is_read = (tr & TFR_RnW) != 0;
-    uint16_t req_idx = 5u;
-    uint16_t resp_idx = 4u;
-    uint16_t done = 0;
-    uint8_t  ack = DAP_TRANSFER_OK;
-
-    if (dap_active_port != EDEV_DAP_PORT_SWD) {
-        resp[1] = 0; resp[2] = 0;
-        resp[3] = DAP_TRANSFER_ERROR;
-        *resp_used = 4u;
-        return req_avail;
-    }
-
-    for (uint16_t i = 0; i < count; i++) {
-        uint32_t data = 0;
-        if (!is_read) {
-            if ((uint16_t)(req_idx + 4u) > req_avail) { break; }
-            data = (uint32_t)req[req_idx]            |
-                   ((uint32_t)req[req_idx + 1] << 8) |
-                   ((uint32_t)req[req_idx + 2] << 16)|
-                   ((uint32_t)req[req_idx + 3] << 24);
-            req_idx += 4u;
-        }
-
-        uint32_t wait_left = dap_tfr_wait_retry;
+        /* DP read, write, or match-mode read. Just do it. */
         do {
-            ack = swd_transfer(tr, &data);
-        } while (ack == DAP_TRANSFER_WAIT && (wait_left-- > 0u));
+            ack = probe_swd_transfer((uint8_t)(xact & 0x0Fu),
+                                     data_in, &data_out);
+        } while (ack == DAP_TRANSFER_WAIT && retries-- > 0);
+        last_ack = ack;
 
-        if (ack != DAP_TRANSFER_OK) {
-            break;
+        LX_PUTC(is_read ? 'r' : 'w');
+        LX_HEX(&xact, 1);
+        LX_PUTC(':');
+        LX_HEX(&ack, 1);
+        if (ack == DAP_TRANSFER_OK && (is_read || !is_read)) {
+            uint32_t v = is_read ? data_out : data_in;
+            uint8_t b[4] = {
+                (uint8_t)(v), (uint8_t)(v >> 8),
+                (uint8_t)(v >> 16), (uint8_t)(v >> 24),
+            };
+            LX_PUTC('='); LX_HEX(b, 4);
+        }
+
+        if (ack != DAP_TRANSFER_OK) break;
+
+        if (match_mode) {
+            uint16_t mretries = s_match_retry;
+            while (((data_out & match_mask) != match_value) && mretries > 0) {
+                ack = probe_swd_transfer((uint8_t)(xact & 0x0Fu), 0, &data_out);
+                if (ack != DAP_TRANSFER_OK) { last_ack = ack; break; }
+                --mretries;
+            }
+            if ((data_out & match_mask) != match_value && last_ack == DAP_TRANSFER_OK) {
+                last_ack = DAP_TRANSFER_OK | DAP_TRANSFER_MISMATCH;
+            }
+            ++executed;
+            continue;
         }
 
         if (is_read) {
-            if ((uint16_t)(resp_idx + 4u) > resp_cap) { break; }
-            resp[resp_idx++] = (uint8_t)(data);
-            resp[resp_idx++] = (uint8_t)(data >> 8);
-            resp[resp_idx++] = (uint8_t)(data >> 16);
-            resp[resp_idx++] = (uint8_t)(data >> 24);
+            if (out_pos + 4u > resp_cap) break;
+            resp[out_pos++] = (uint8_t)(data_out      );
+            resp[out_pos++] = (uint8_t)(data_out >>  8);
+            resp[out_pos++] = (uint8_t)(data_out >> 16);
+            resp[out_pos++] = (uint8_t)(data_out >> 24);
         }
-        done++;
+        ++executed;
     }
 
-    resp[1] = (uint8_t)(done & 0xFFu);
-    resp[2] = (uint8_t)(done >> 8);
-    resp[3] = ack;
-    *resp_used = resp_idx;
-    return req_idx;
-}
-
-/* ------------------------------------------------------------------ */
-/*  0x07 DAP_TransferAbort                                             */
-/* ------------------------------------------------------------------ */
-
-uint16_t dap_handle_transfer_abort(const uint8_t *req, uint16_t req_avail,
-                                   uint8_t *resp, uint16_t resp_cap,
-                                   uint16_t *resp_used)
-{
-    /* Spec: TransferAbort cancels an in-flight DAP_Transfer/Block,
-     * and is *async* — it shouldn't be bundled in an ExecuteCommands.
-     * Our dispatcher is single-threaded; by the time we see the abort
-     * command the previous transfer has already completed (we drained
-     * the request ring sequentially). So this is effectively a no-op.
-     * We emit a status byte for well-formedness. */
-    (void)req;
-    if (req_avail < 1u || resp_cap < 2u) {
-        *resp_used = 0;
-        return 0;
-    }
-    resp[1] = 0;
-    *resp_used = 2u;
-    return 1u;
-}
-
-/* ------------------------------------------------------------------ */
-/*  0x08 DAP_WriteABORT                                                */
-/* ------------------------------------------------------------------ */
-
-uint16_t dap_handle_write_abort(const uint8_t *req, uint16_t req_avail,
-                                uint8_t *resp, uint16_t resp_cap,
-                                uint16_t *resp_used)
-{
-    if (req_avail < 6u || resp_cap < 2u) {
-        *resp_used = 0;
-        return 0;
-    }
-    (void)req[1];  /* dap_index — JTAG */
-    uint32_t abort = (uint32_t)req[2]            |
-                     ((uint32_t)req[3] << 8)     |
-                     ((uint32_t)req[4] << 16)    |
-                     ((uint32_t)req[5] << 24);
-
-    if (dap_active_port != EDEV_DAP_PORT_SWD) {
-        resp[1] = DAP_TRANSFER_ERROR;
-        *resp_used = 2u;
-        return 6u;
-    }
-
-    /* The DP ABORT register is at address 0 in the DP. A direct write
-     * (no read of CTRL/STAT) per spec. We use DP, write, A2=0, A3=0
-     * → request byte = 0 (all four lower bits zero, RnW=0, APnDP=0,
-     * A2=0, A3=0). */
-    uint32_t request = 0u;       /* DP / write / A2=0 / A3=0 */
-    uint8_t ack = swd_transfer(request, &abort);
-
-    resp[1] = (ack == DAP_TRANSFER_OK) ? 0u : DAP_TRANSFER_ERROR;
-    *resp_used = 2u;
-    return 6u;
-}
-
-/* ------------------------------------------------------------------ */
-/*  0x1D DAP_SWD_Sequence                                              */
-/* ------------------------------------------------------------------ */
-
-uint16_t dap_handle_swd_sequence(const uint8_t *req, uint16_t req_avail,
-                                 uint8_t *resp, uint16_t resp_cap,
-                                 uint16_t *resp_used)
-{
-    if (req_avail < 2u || resp_cap < 2u) {
-        *resp_used = 0;
-        return 0;
-    }
-    uint8_t seq_count = req[1];
-    uint16_t req_idx = 2u;
-    uint16_t resp_idx = 2u;
-
-    for (uint8_t i = 0; i < seq_count; i++) {
-        if (req_idx >= req_avail) {
-            *resp_used = 0;
-            return 0;
+    /* End of batch: if there's a posted AP read pending, flush via
+     * DP.RDBUFF to capture its value. */
+    if (post_read && last_ack == DAP_TRANSFER_OK) {
+        uint32_t prev_data = 0;
+        uint8_t ack = DAP_TRANSFER_OK;
+        uint16_t retries = s_wait_retry;
+        do {
+            ack = probe_swd_transfer(DP_READ_RDBUFF_REQ, 0, &prev_data);
+        } while (ack == DAP_TRANSFER_WAIT && retries-- > 0);
+        LX_PUTS(" Fend"); LX_HEX(&ack, 1);
+        if (ack == DAP_TRANSFER_OK && out_pos + 4u <= resp_cap) {
+            resp[out_pos++] = (uint8_t)(prev_data      );
+            resp[out_pos++] = (uint8_t)(prev_data >>  8);
+            resp[out_pos++] = (uint8_t)(prev_data >> 16);
+            resp[out_pos++] = (uint8_t)(prev_data >> 24);
+            ++executed;
+        } else if (ack != DAP_TRANSFER_OK) {
+            last_ack = ack;
         }
-        uint8_t info = req[req_idx++];
-        uint32_t bits = info & 0x3Fu;
-        if (bits == 0u) { bits = 64u; }
-        bool is_input = (info & 0x80u) != 0;
-        uint32_t bytes = (bits + 7u) / 8u;
+    }
 
-        if (is_input) {
-            if ((uint16_t)(resp_idx + bytes) > resp_cap) {
-                *resp_used = 0;
-                return 0;
-            }
-            uint32_t remaining = bits;
-            uint32_t out_offset = 0;
-            while (remaining > 0u) {
-                uint32_t chunk = remaining > 32u ? 32u : remaining;
-                uint32_t v = probe_read_bits(chunk);
-                /* Pack v back into resp bytes LSB-first. */
-                uint32_t chunk_bytes = (chunk + 7u) / 8u;
-                for (uint32_t b = 0; b < chunk_bytes; b++) {
-                    resp[resp_idx + out_offset + b] = (uint8_t)(v >> (8u * b));
+    resp[0] = executed;
+    resp[1] = last_ack;
+    LX_PUTC(']');
+    LX_PUTC('\n');
+    return out_pos;
+}
+
+/* DAP_TransferBlock (0x06) — bulk read/write to same register.
+ *
+ * Request:
+ *   req[0]    DAP index (ignored)
+ *   req[1..2] transfer count (u16)
+ *   req[3]    transfer request (same as Transfer, but applies to all)
+ *   req[4..]  for writes: count × u32 data
+ *
+ * Response:
+ *   resp[0..1] transfers actually executed (u16)
+ *   resp[2]    last ACK + status
+ *   resp[3..]  read data (only for reads)
+ */
+uint16_t dap_handle_xfer_block(const uint8_t *req, uint16_t req_len,
+                               uint8_t *resp, uint16_t resp_cap)
+{
+    if (req_len < 4 || resp_cap < 3) return 0;
+    /* req[0] ignored */
+    uint16_t count = (uint16_t)(req[1] | (req[2] << 8));
+    uint8_t  xact  = req[3];
+    bool is_read = (xact & DAP_TRANSFER_RnW) != 0;
+    bool is_ap   = (xact & DAP_TRANSFER_APnDP) != 0;
+
+    LX_PUTS("BLK ");
+    LX_HEX(&xact, 1);
+    LX_PUTC('x');
+    {
+        uint8_t cc[2] = { (uint8_t)count, (uint8_t)(count >> 8) };
+        LX_HEX(cc, 2);
+    }
+
+    uint16_t in_pos  = 4;
+    uint16_t out_pos = 3;
+    uint16_t done    = 0;
+    uint8_t  last_ack = DAP_TRANSFER_OK;
+    uint8_t  ack = DAP_TRANSFER_OK;
+    uint32_t data_out = 0;
+    uint16_t retries;
+
+    if (is_read && is_ap) {
+        /* CMSIS-DAP posted-AP-read flow for bulk reads:
+         *   - Issue first AP read (post, ignore data)
+         *   - For N-1 more iterations: issue AP read, capture pipelined value
+         *   - Final DP.RDBUFF read to capture the last value
+         * Total wire ops = count + 1, total captured values = count. */
+        retries = s_wait_retry;
+        do {
+            ack = probe_swd_transfer((uint8_t)(xact & 0x0Fu), 0, NULL);
+        } while (ack == DAP_TRANSFER_WAIT && retries-- > 0);
+        last_ack = ack;
+        if (ack != DAP_TRANSFER_OK) goto out;
+
+        /* Middle N-1 reads: each returns the previous AP read's value. */
+        for (uint16_t i = 1; i < count; ++i) {
+            retries = s_wait_retry;
+            do {
+                ack = probe_swd_transfer((uint8_t)(xact & 0x0Fu), 0, &data_out);
+            } while (ack == DAP_TRANSFER_WAIT && retries-- > 0);
+            last_ack = ack;
+            if (ack != DAP_TRANSFER_OK) goto out;
+            if (out_pos + 4u > resp_cap) goto out;
+            resp[out_pos++] = (uint8_t)(data_out      );
+            resp[out_pos++] = (uint8_t)(data_out >>  8);
+            resp[out_pos++] = (uint8_t)(data_out >> 16);
+            resp[out_pos++] = (uint8_t)(data_out >> 24);
+            ++done;
+        }
+
+        /* Final DP.RDBUFF read flushes the last AP read's value. */
+        retries = s_wait_retry;
+        do {
+            ack = probe_swd_transfer(DP_READ_RDBUFF_REQ, 0, &data_out);
+        } while (ack == DAP_TRANSFER_WAIT && retries-- > 0);
+        last_ack = ack;
+        if (ack != DAP_TRANSFER_OK) goto out;
+        if (out_pos + 4u > resp_cap) goto out;
+        resp[out_pos++] = (uint8_t)(data_out      );
+        resp[out_pos++] = (uint8_t)(data_out >>  8);
+        resp[out_pos++] = (uint8_t)(data_out >> 16);
+        resp[out_pos++] = (uint8_t)(data_out >> 24);
+        ++done;
+    } else {
+        /* DP read or any write — straightforward loop, no posted-read magic. */
+        for (uint16_t i = 0; i < count; ++i) {
+            uint32_t data_in = 0;
+            if (!is_read) {
+                if (in_pos + 4u > req_len) {
+                    last_ack = DAP_TRANSFER_ERROR; goto out;
                 }
-                out_offset += chunk_bytes;
-                remaining  -= chunk;
+                data_in = (uint32_t)req[in_pos]
+                        | ((uint32_t)req[in_pos+1] <<  8)
+                        | ((uint32_t)req[in_pos+2] << 16)
+                        | ((uint32_t)req[in_pos+3] << 24);
+                in_pos += 4;
             }
-            resp_idx = (uint16_t)(resp_idx + bytes);
-        } else {
-            if ((uint16_t)(req_idx + bytes) > req_avail) {
-                *resp_used = 0;
-                return 0;
+            retries = s_wait_retry;
+            do {
+                ack = probe_swd_transfer((uint8_t)(xact & 0x0Fu),
+                                         data_in, &data_out);
+            } while (ack == DAP_TRANSFER_WAIT && retries-- > 0);
+            last_ack = ack;
+            if (ack != DAP_TRANSFER_OK) goto out;
+
+            if (is_read) {
+                if (out_pos + 4u > resp_cap) goto out;
+                resp[out_pos++] = (uint8_t)(data_out      );
+                resp[out_pos++] = (uint8_t)(data_out >>  8);
+                resp[out_pos++] = (uint8_t)(data_out >> 16);
+                resp[out_pos++] = (uint8_t)(data_out >> 24);
             }
-            uint32_t remaining = bits;
-            uint32_t in_offset = 0;
-            while (remaining > 0u) {
-                uint32_t chunk = remaining > 32u ? 32u : remaining;
-                uint32_t chunk_bytes = (chunk + 7u) / 8u;
-                uint32_t word = 0;
-                for (uint32_t b = 0; b < chunk_bytes; b++) {
-                    word |= ((uint32_t)req[req_idx + in_offset + b]) << (8u * b);
-                }
-                probe_write_bits(chunk, word);
-                in_offset += chunk_bytes;
-                remaining -= chunk;
-            }
-            req_idx = (uint16_t)(req_idx + bytes);
+            ++done;
         }
     }
 
-    resp[1] = 0;
-    *resp_used = resp_idx;
-    return req_idx;
+out:
+    LX_PUTC('=');
+    {
+        uint8_t dd[2] = { (uint8_t)done, (uint8_t)(done >> 8) };
+        LX_HEX(dd, 2);
+    }
+    LX_PUTC(':');
+    LX_HEX(&last_ack, 1);
+    LX_PUTC('\n');
+
+    resp[0] = (uint8_t)(done       & 0xFFu);
+    resp[1] = (uint8_t)((done >> 8) & 0xFFu);
+    resp[2] = last_ack;
+    return out_pos;
 }

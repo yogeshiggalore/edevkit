@@ -1,10 +1,5 @@
 /*
- * usb_descriptors.h — VID/PID/EP/string constants shared between the
- * descriptor blob and the class driver.
- *
- * The values that have a "must be X because Y" constraint live here so
- * there's one source of truth. Anything that's purely internal stays
- * static in usb_descriptors.c.
+ * usb_descriptors.h — accessors for the static descriptor blobs.
  */
 
 #ifndef EDEV_DAPV2_USB_DESCRIPTORS_H
@@ -12,54 +7,21 @@
 
 #include <stdint.h>
 
-/* ----- Identity ------------------------------------------------------ */
+/* Endpoint numbers (in/out direction encoded in the high bit). */
+#define EDEV_DAP_EP_OUT          0x01u    /* host → probe: DAP requests   */
+#define EDEV_DAP_EP_IN           0x81u    /* probe → host: DAP responses  */
 
-/* Raspberry Pi Trading "Debug Probe" identity. Every CMSIS-DAP host
- * whitelists this pair; piggy-backing means zero host-side config. */
-#define EDEV_USB_VID              0x2E8Au
-#define EDEV_USB_PID              0x000Cu
+#define EDEV_CDC_EP_NOTIF        0x82u    /* CDC interrupt notification    */
+#define EDEV_CDC_EP_OUT          0x03u    /* host → probe: CDC bulk        */
+#define EDEV_CDC_EP_IN           0x83u    /* probe → host: CDC bulk        */
 
-/* bcdDevice ≥ 0x0220 clears probe-rs 0.31+'s "DAP firmware version
- * gate" — see project memory `reference_probe_rs_bcd_device_gate`. The
- * value is interpreted as the host's idea of our DAP version. */
-#define EDEV_USB_BCD_DEVICE       0x0220u
+/* Interface numbers. Order MATTERS — TinyUSB matches drivers by class
+ * descriptor in this order. */
+#define EDEV_DAP_ITF_NUM         0u
+#define EDEV_CDC_ITF_NUM         1u       /* CDC Control                   */
+#define EDEV_CDC_DATA_ITF_NUM    2u       /* CDC Data                      */
 
-#define EDEV_USB_MANUFACTURER     "Edevkit"
-#define EDEV_USB_PRODUCT          "edev_dapv2 CMSIS-DAP"
-/* iInterface MUST contain the literal "CMSIS-DAP" — host-side
- * auto-detection (pyocd, openocd, probe-rs) scans for that substring as
- * a fallback when VID/PID isn't on a whitelist. */
-#define EDEV_USB_DAP_INTERFACE    "edev_dapv2 CMSIS-DAP v2 Interface"
-
-/* ----- Endpoints ----------------------------------------------------- */
-
-#define EDEV_DAP_OUT_EP_ADDR      0x01u   /* host → device, DAP commands */
-#define EDEV_DAP_IN_EP_ADDR       0x81u   /* device → host, DAP responses */
-#define EDEV_SWO_IN_EP_ADDR       0x82u   /* device → host, SWO stream */
-
-#define EDEV_DAP_EP_MAX_PACKET    64u     /* USB FS bulk wire-level max */
-#define EDEV_SWO_EP_MAX_PACKET    64u
-
-/* ----- DAP packet logical sizing -------------------------------------
- *
- * The wire-level USB FS bulk maximum is 64 bytes per packet (set by
- * EDEV_DAP_EP_MAX_PACKET above), but a logical DAP packet can be larger
- * — the host spans it across multiple bulk transfers. Advertising 512
- * via DAP_Info(0xFF) unlocks bulk pipelining on every host we tested.
- *
- * EDEV_DAP_PACKET_COUNT is how many in-flight packets the host may
- * pipeline at us; we keep one ring slot per pending packet, so picking
- * a power of two avoids modulo arithmetic in the ring index.
- */
-#define EDEV_DAP_PACKET_SIZE      512u
-#define EDEV_DAP_PACKET_COUNT     4u
-
-/* ----- TinyUSB callback prototypes ----------------------------------- */
-
-/* Provided by usb_descriptors.c, invoked by TinyUSB. */
-const uint8_t  *tud_descriptor_device_cb       (void);
-const uint8_t  *tud_descriptor_configuration_cb(uint8_t index);
-const uint16_t *tud_descriptor_string_cb       (uint8_t index, uint16_t langid);
-const uint8_t  *tud_descriptor_bos_cb          (void);
+/* Total length of the MS OS 2.0 descriptor set the BOS chain references. */
+extern const uint16_t edev_ms_os_20_desc_len;
 
 #endif /* EDEV_DAPV2_USB_DESCRIPTORS_H */

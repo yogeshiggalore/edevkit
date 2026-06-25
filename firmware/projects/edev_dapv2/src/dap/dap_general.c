@@ -1,141 +1,95 @@
 /*
- * dap_general.c — the "small" CMSIS-DAP commands:
- *   0x01 DAP_HostStatus  — turn the connect/run LEDs on/off
- *   0x02 DAP_Connect     — SWD or JTAG (or "Default")
- *   0x03 DAP_Disconnect  — leave the bus alone
- *   0x09 DAP_Delay       — busy-wait N microseconds
- *   0x0A DAP_ResetTarget — pulse nRESET (or claim we did)
- *
- * These are all 1–6 bytes wire-side and have no PIO interaction.
+ * dap_general.c — HostStatus, Connect/Disconnect, Delay,
+ * ResetTarget, WriteABORT.
  */
 
-#include "dap_internal.h"
+#include "dap/dap_internal.h"
+#include "dap/dap_config.h"
+#include "hw/probe.h"
 
-#include "pico/time.h"
+#include "pico/stdlib.h"
 
-#include "hw/jtag.h"
-#include "util/led.h"
-
-/* Shared state owned by this module — read by dap_swd.c via the externs
- * in dap_internal.h. */
-uint8_t dap_active_port = EDEV_DAP_PORT_DISABLED;
-
-void dap_general_init(void)
+uint16_t dap_handle_host_status(const uint8_t *req, uint16_t req_len,
+                                uint8_t *resp, uint16_t resp_cap)
 {
-    dap_active_port = EDEV_DAP_PORT_DISABLED;
+    /* req[0] = type (0=Connect LED, 1=Running LED), req[1] = on/off.
+     * v0.1 has no host LED — accept and ignore. */
+    (void) req; (void) req_len;
+    if (resp_cap < 1) return 0;
+    resp[0] = DAP_OK;
+    return 1;
 }
 
-/* ----------------------------------------------------------------- */
-
-uint16_t dap_handle_host_status(const uint8_t *req, uint16_t req_avail,
-                                uint8_t *resp, uint16_t resp_cap,
-                                uint16_t *resp_used)
+uint16_t dap_handle_connect(const uint8_t *req, uint16_t req_len,
+                            uint8_t *resp, uint16_t resp_cap)
 {
-    if (req_avail < 3u || resp_cap < 2u) {
-        *resp_used = 0;
-        return 0;
+    if (req_len < 1 || resp_cap < 1) return 0;
+    uint8_t req_port = req[0];
+
+    /* Default → pick SWD (the host doesn't care; we pick). */
+    if (req_port == DAP_PORT_DEFAULT) req_port = DAP_PORT_SWD;
+
+    if (req_port == DAP_PORT_SWD) {
+        probe_connect_swd();
+        dap_connected_port = DAP_PORT_SWD;
+        resp[0] = DAP_PORT_SWD;
+        return 1;
     }
-    uint8_t type   = req[1];   /* 0 = connect LED, 1 = running LED */
-    uint8_t status = req[2];   /* 0 = off,         1 = on          */
+    if (req_port == DAP_PORT_JTAG) {
+        /* JTAG not implemented in v0.1. Refuse the connect rather than
+         * pretending — host falls back gracefully. */
+        dap_connected_port = DAP_PORT_OFF;
+        resp[0] = DAP_PORT_OFF;
+        return 1;
+    }
 
-    /* v0.1 has only one LED — let either LED type drive it. M5+ will
-     * split connect vs run if the user has a multi-LED board. */
-    (void)type;
-    led_set(status != 0);
-
-    resp[1] = 0;               /* status OK */
-    *resp_used = 2u;
-    return 3u;
+    dap_connected_port = DAP_PORT_OFF;
+    resp[0] = DAP_PORT_OFF;
+    return 1;
 }
 
-uint16_t dap_handle_connect(const uint8_t *req, uint16_t req_avail,
-                            uint8_t *resp, uint16_t resp_cap,
-                            uint16_t *resp_used)
+uint16_t dap_handle_disconnect(const uint8_t *req, uint16_t req_len,
+                               uint8_t *resp, uint16_t resp_cap)
 {
-    if (req_avail < 2u || resp_cap < 2u) {
-        *resp_used = 0;
-        return 0;
-    }
-
-    /* req[1] in {0 = Default, 1 = SWD, 2 = JTAG}. Default means "host
-     * doesn't care, pick one". We pick SWD because every modern
-     * Cortex-M target speaks it and JTAG users always pass an explicit
-     * 2. */
-    uint8_t requested = req[1];
-    if (requested == 0u || requested == EDEV_DAP_PORT_SWD) {
-        if (dap_active_port == EDEV_DAP_PORT_JTAG) {
-            jtag_detach();
-        }
-        dap_active_port = EDEV_DAP_PORT_SWD;
-        resp[1] = EDEV_DAP_PORT_SWD;
-    } else if (requested == EDEV_DAP_PORT_JTAG) {
-        if (dap_active_port != EDEV_DAP_PORT_JTAG) {
-            jtag_attach();
-        }
-        dap_active_port = EDEV_DAP_PORT_JTAG;
-        resp[1] = EDEV_DAP_PORT_JTAG;
-    } else {
-        if (dap_active_port == EDEV_DAP_PORT_JTAG) {
-            jtag_detach();
-        }
-        dap_active_port = EDEV_DAP_PORT_DISABLED;
-        resp[1] = EDEV_DAP_PORT_DISABLED;
-    }
-
-    *resp_used = 2u;
-    return 2u;
+    (void) req; (void) req_len;
+    probe_disconnect();
+    dap_connected_port = DAP_PORT_OFF;
+    if (resp_cap < 1) return 0;
+    resp[0] = DAP_OK;
+    return 1;
 }
 
-uint16_t dap_handle_disconnect(const uint8_t *req, uint16_t req_avail,
-                               uint8_t *resp, uint16_t resp_cap,
-                               uint16_t *resp_used)
+uint16_t dap_handle_delay(const uint8_t *req, uint16_t req_len,
+                          uint8_t *resp, uint16_t resp_cap)
 {
-    (void)req;
-    if (req_avail < 1u || resp_cap < 2u) {
-        *resp_used = 0;
-        return 0;
-    }
-    if (dap_active_port == EDEV_DAP_PORT_JTAG) {
-        jtag_detach();
-    }
-    dap_active_port = EDEV_DAP_PORT_DISABLED;
-    resp[1] = 0;               /* status OK */
-    *resp_used = 2u;
-    return 1u;
+    if (req_len < 2 || resp_cap < 1) return 0;
+    uint16_t us = (uint16_t)(req[0] | (req[1] << 8));
+    sleep_us(us);
+    resp[0] = DAP_OK;
+    return 1;
 }
 
-uint16_t dap_handle_delay(const uint8_t *req, uint16_t req_avail,
-                          uint8_t *resp, uint16_t resp_cap,
-                          uint16_t *resp_used)
+uint16_t dap_handle_reset_tgt(const uint8_t *req, uint16_t req_len,
+                              uint8_t *resp, uint16_t resp_cap)
 {
-    if (req_avail < 3u || resp_cap < 2u) {
-        *resp_used = 0;
-        return 0;
-    }
-    uint16_t delay_us = (uint16_t)((uint16_t)req[1] | ((uint16_t)req[2] << 8));
-    if (delay_us > 0u) {
-        busy_wait_us(delay_us);
-    }
-    resp[1] = 0;
-    *resp_used = 2u;
-    return 3u;
+    (void) req; (void) req_len;
+    if (resp_cap < 2) return 0;
+    probe_reset_target();
+    resp[0] = DAP_OK;
+    resp[1] = 0;     /* execute = 0: no device-specific reset sequence */
+    return 2;
 }
 
-uint16_t dap_handle_reset_target(const uint8_t *req, uint16_t req_avail,
-                                 uint8_t *resp, uint16_t resp_cap,
-                                 uint16_t *resp_used)
+uint16_t dap_handle_write_abort(const uint8_t *req, uint16_t req_len,
+                                uint8_t *resp, uint16_t resp_cap)
 {
-    (void)req;
-    if (req_avail < 1u || resp_cap < 3u) {
-        *resp_used = 0;
-        return 0;
-    }
-    /* Spec says: bExecute = 0 means "no device-specific reset
-     * sequence implemented" — the host uses DAP_SWJ_Pins to drive
-     * nRESET itself. We don't implement a target-specific sequence,
-     * so report bExecute=0. */
-    resp[1] = 0;               /* status OK */
-    resp[2] = 0;               /* bExecute = no special sequence */
-    *resp_used = 3u;
-    return 1u;
+    if (req_len < 5 || resp_cap < 1) return 0;
+    /* req[0] = DAP index (ignored in SWD), req[1..4] = ABORT value. */
+    uint32_t value = (uint32_t)req[1]
+                   | ((uint32_t)req[2] <<  8)
+                   | ((uint32_t)req[3] << 16)
+                   | ((uint32_t)req[4] << 24);
+    bool ok = probe_swd_write_abort(value);
+    resp[0] = ok ? DAP_OK : DAP_ERROR;
+    return 1;
 }

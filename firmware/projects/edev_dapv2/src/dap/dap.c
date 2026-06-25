@@ -1,177 +1,112 @@
 /*
  * dap.c — CMSIS-DAP v2 command dispatcher.
  *
- * Walks bytes of the request packet, routes each command byte to the
- * matching handler in dap_*.c, accumulates the response. Variable
- * length commands (Transfer, TransferBlock, *_Sequence) are sized by
- * the handler itself — see the `_length` siblings of each handler.
+ * Layout of every DAP request packet:
+ *     byte 0    command ID
+ *     byte 1+   payload (variable per command)
  *
- * This file is the spine; the handlers are flesh.
+ * Response shape:
+ *     byte 0    echo of command ID
+ *     byte 1+   payload
+ *
+ * We dispatch on byte 0 to a per-command handler. Handlers see the
+ * request *after* the command byte, and write the response *after* the
+ * echoed command byte. The dispatcher does the echo.
+ *
+ * Variable-length commands (Transfer, TransferBlock, SWJ_Sequence,
+ * SWD_Sequence, JTAG_Sequence, ExecuteCommands) parse their own count
+ * fields. We do not pre-compute lengths from a static table — the
+ * handler knows.
  */
 
-#include "dap.h"
+#include "dap/dap.h"
+#include "dap/dap_internal.h"
+#include "util/log.h"
 
-#include <stdint.h>
-#include <string.h>
+#include <stddef.h>
 
-#include "dap_config.h"
-#include "dap_internal.h"
+uint8_t dap_connected_port = DAP_PORT_OFF;
+
+static uint16_t dap_handle_invalid(const uint8_t *req, uint16_t req_len,
+                                   uint8_t *resp, uint16_t resp_cap)
+{
+    (void) req; (void) req_len;
+    if (resp_cap < 1) return 0;
+    resp[0] = DAP_ERROR;
+    return 1;
+}
+
+static const dap_handler_fn s_handlers[256] = {
+    [ID_DAP_Info]              = dap_handle_info,
+    [ID_DAP_HostStatus]        = dap_handle_host_status,
+    [ID_DAP_Connect]           = dap_handle_connect,
+    [ID_DAP_Disconnect]        = dap_handle_disconnect,
+    [ID_DAP_TransferConfigure] = dap_handle_xfer_config,
+    [ID_DAP_Transfer]          = dap_handle_transfer,
+    [ID_DAP_TransferBlock]     = dap_handle_xfer_block,
+    [ID_DAP_WriteABORT]        = dap_handle_write_abort,
+    [ID_DAP_Delay]             = dap_handle_delay,
+    [ID_DAP_ResetTarget]       = dap_handle_reset_tgt,
+
+    [ID_DAP_SWJ_Pins]          = dap_handle_swj_pins,
+    [ID_DAP_SWJ_Clock]         = dap_handle_swj_clock,
+    [ID_DAP_SWJ_Sequence]      = dap_handle_swj_seq,
+
+    [ID_DAP_SWD_Configure]     = dap_handle_swd_config,
+    [ID_DAP_SWD_Sequence]      = dap_handle_swd_seq,
+
+    [ID_DAP_JTAG_Sequence]     = dap_handle_jtag_seq,
+    [ID_DAP_JTAG_Configure]    = dap_handle_jtag_cfg,
+    [ID_DAP_JTAG_IDCODE]       = dap_handle_jtag_idcode,
+
+    [ID_DAP_SWO_Transport]     = dap_handle_swo_xport,
+    [ID_DAP_SWO_Mode]          = dap_handle_swo_mode,
+    [ID_DAP_SWO_Baudrate]      = dap_handle_swo_baud,
+    [ID_DAP_SWO_Control]       = dap_handle_swo_ctrl,
+    [ID_DAP_SWO_Status]        = dap_handle_swo_status,
+    [ID_DAP_SWO_Data]          = dap_handle_swo_data,
+    [ID_DAP_SWO_ExtendedStatus]= dap_handle_swo_estat,
+
+    [ID_DAP_ExecuteCommands]   = dap_handle_execute,
+};
 
 void dap_init(void)
 {
-    dap_info_init();
-    dap_general_init();
-    dap_swj_init();
-    dap_swd_init();
-    dap_jtag_init();
-    dap_swo_init();
-}
-
-/* Single-command dispatch — runs one command starting at req[0].
- * Returns the number of *request* bytes consumed (so the caller can
- * advance through an atomic bundle), or 0 on parse failure. The number
- * of response bytes written is returned via *resp_used. */
-static uint16_t dispatch_one(const uint8_t *req, uint16_t req_avail,
-                             uint8_t *resp, uint16_t resp_cap,
-                             uint16_t *resp_used)
-{
-    if (req_avail < 1u || resp_cap < 1u) {
-        *resp_used = 0;
-        return 0;
-    }
-
-    const uint8_t cmd = req[0];
-
-    /* Default response if the handler doesn't recognise the command:
-     * DAP_Invalid is a single byte 0xFF (per spec, used as the cmd ID
-     * echo for "I don't know what you're asking"). */
-    resp[0] = cmd;
-
-    switch (cmd) {
-        case DAP_CMD_INFO:
-            return dap_handle_info(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_HOST_STATUS:
-            return dap_handle_host_status(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_CONNECT:
-            return dap_handle_connect(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_DISCONNECT:
-            return dap_handle_disconnect(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_TRANSFER_CONFIGURE:
-            return dap_handle_transfer_configure(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_TRANSFER:
-            return dap_handle_transfer(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_TRANSFER_BLOCK:
-            return dap_handle_transfer_block(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_TRANSFER_ABORT:
-            return dap_handle_transfer_abort(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_WRITE_ABORT:
-            return dap_handle_write_abort(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_DELAY:
-            return dap_handle_delay(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_RESET_TARGET:
-            return dap_handle_reset_target(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_SWJ_PINS:
-            return dap_handle_swj_pins(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_SWJ_CLOCK:
-            return dap_handle_swj_clock(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_SWJ_SEQUENCE:
-            return dap_handle_swj_sequence(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_SWD_CONFIGURE:
-            return dap_handle_swd_configure(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_SWD_SEQUENCE:
-            return dap_handle_swd_sequence(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_JTAG_SEQUENCE:
-            return dap_handle_jtag_sequence(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_JTAG_CONFIGURE:
-            return dap_handle_jtag_configure(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_JTAG_IDCODE:
-            return dap_handle_jtag_idcode(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_SWO_TRANSPORT:
-        case DAP_CMD_SWO_MODE:
-        case DAP_CMD_SWO_BAUDRATE:
-        case DAP_CMD_SWO_CONTROL:
-        case DAP_CMD_SWO_STATUS:
-        case DAP_CMD_SWO_DATA:
-        case DAP_CMD_SWO_EXTENDED_STATUS:
-            return dap_handle_swo(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_EXECUTE_COMMANDS:
-            return dap_handle_execute_commands(req, req_avail, resp, resp_cap, resp_used);
-
-        case DAP_CMD_EDEV_NRF_SYS_RESET:
-        case DAP_CMD_EDEV_MEM_READ:
-        case DAP_CMD_EDEV_MEM_WRITE:
-        case DAP_CMD_EDEV_AP_READ:
-        case DAP_CMD_EDEV_AP_WRITE:
-        case DAP_CMD_EDEV_CORTEX_M_DUMP:
-            return dap_handle_vendor(req, req_avail, resp, resp_cap, resp_used);
-
-        default:
-            /* DAP_Invalid — single byte response carrying 0xFF as the cmd
-             * echo. We've already written resp[0] = cmd above; switch it
-             * to 0xFF and return 1. The host treats 0xFF as the "I don't
-             * support that" sentinel. */
-            resp[0] = 0xFFu;
-            *resp_used = 1u;
-            return 1u;
-    }
+    dap_connected_port = DAP_PORT_OFF;
 }
 
 uint16_t dap_dispatch(const uint8_t *req, uint16_t req_len,
                       uint8_t *resp, uint16_t resp_cap)
 {
-    uint16_t req_used = 0;
-    uint16_t resp_total = 0;
+    if (req_len < 1 || resp_cap < 2) return 0;
 
-    /* The dispatcher is invoked per USB OUT packet. Inside one packet
-     * the host MAY have stuffed multiple back-to-back DAP commands
-     * (CMSIS-DAP v2 spec allows this). We walk the buffer until either
-     * (a) we've consumed it or (b) a handler refuses to advance, which
-     * indicates malformed input — in that case we emit DAP_Invalid and
-     * stop, mirroring ARM's reference behaviour. */
-    while (req_used < req_len && resp_total < resp_cap) {
-        uint16_t resp_used = 0;
-        uint16_t consumed = dispatch_one(req + req_used, (uint16_t)(req_len - req_used),
-                                         resp + resp_total,
-                                         (uint16_t)(resp_cap - resp_total),
-                                         &resp_used);
-        if (consumed == 0 || resp_used == 0) {
-            /* Either malformed or zero-progress handler — append a
-             * DAP_Invalid byte and bail. */
-            if (resp_total < resp_cap) {
-                resp[resp_total++] = 0xFFu;
-            }
-            break;
-        }
-        req_used   = (uint16_t)(req_used + consumed);
-        resp_total = (uint16_t)(resp_total + resp_used);
+    const uint8_t cmd = req[0];
+    dap_handler_fn h = s_handlers[cmd];
+    if (h == NULL) h = dap_handle_invalid;
+
+    /* Log ONLY SWD_Sequence (0x1D) and Connect/Disconnect/Reset
+     * transitions. Everything else (SWJ_Sequence already logged
+     * separately, Info, Transfer, etc.) is silent to keep volume low
+     * — high-frequency logging from xfer_cb-adjacent code crashes the
+     * firmware. */
+    if (cmd == ID_DAP_SWD_Sequence) {
+        log_puts("SWD_SEQ data=");
+        uint16_t dump = req_len > 24 ? 24 : req_len;
+        log_hex(req, dump);
+        log_putc('\n');
+    } else if (cmd == ID_DAP_Connect) {
+        log_puts("CONNECT\n");
+    } else if (cmd == ID_DAP_Disconnect) {
+        log_puts("DISCONN\n");
+    } else if (cmd == ID_DAP_ResetTarget) {
+        log_puts("RESET\n");
     }
 
-    if (resp_total == 0u && resp_cap >= 1u) {
-        /* Defensive: never return a zero-length response — the USB IN
-         * endpoint needs at least one byte to schedule. */
-        resp[0] = 0xFFu;
-        resp_total = 1u;
-    }
+    /* Echo the command byte. */
+    resp[0] = cmd;
 
-    return resp_total;
+    uint16_t payload_len = h(req + 1, (uint16_t)(req_len - 1),
+                             resp + 1, (uint16_t)(resp_cap - 1));
+
+    return (uint16_t) (payload_len + 1u);
 }

@@ -1,59 +1,28 @@
 /*
- * chip_id.c — format the 64-bit RP2350 unique ID into "E464-XXXX-XXXX-XXXX".
+ * chip_id.c — RP2350 unique ID → "EDV-XXXX-XXXX-XXXX-XXXX" string.
  */
 
-#include "chip_id.h"
-
-#include <stdint.h>
-#include <stdbool.h>
+#include "hw/chip_id.h"
 
 #include "pico/unique_id.h"
 
-static char s_serial[EDEV_DAPV2_SERIAL_LEN];
-static bool s_inited;
+#include <stdio.h>
 
-static char hex_nibble(uint8_t v)
-{
-    return v < 10 ? (char)('0' + v) : (char)('A' + (v - 10));
-}
+static char s_chip_id[CHIP_ID_STR_LEN];
 
 void chip_id_init(void)
 {
-    if (s_inited) {
-        return;
-    }
+    pico_unique_board_id_t id;
+    pico_get_unique_board_id(&id);
 
-    pico_unique_board_id_t bid;
-    pico_get_unique_board_id(&bid);
-
-    /* Layout: "E464-AAAA-BBBB-CCCC" where AAAA = bytes [0..1] of the
-     * board id (uppercase hex), BBBB = [2..3] then [4..5], CCCC = [6..7].
-     * pico_unique_board_id_t holds 8 bytes — typically the QSPI flash
-     * unique ID; on RP2350 boards with non-volatile OTP we use that
-     * instead, but pico_get_unique_board_id() abstracts that away. */
-    char *p = s_serial;
-    *p++ = 'E';
-    *p++ = '4';
-    *p++ = '6';
-    *p++ = '4';
-
-    for (uint8_t group = 0; group < 3; group++) {
-        *p++ = '-';
-        for (uint8_t byte = 0; byte < 2; byte++) {
-            uint8_t b = bid.id[group * 2 + byte];
-            *p++ = hex_nibble(b >> 4);
-            *p++ = hex_nibble(b & 0x0f);
-        }
-    }
-    *p = '\0';
-
-    s_inited = true;
+    /* RP2350 returns 8 bytes; format as 4 groups of 4 hex chars. */
+    snprintf(s_chip_id, sizeof(s_chip_id),
+             "EDV-%02X%02X-%02X%02X-%02X%02X-%02X%02X",
+             id.id[0], id.id[1], id.id[2], id.id[3],
+             id.id[4], id.id[5], id.id[6], id.id[7]);
 }
 
-const char *chip_id_serial(void)
+const char *chip_id_string(void)
 {
-    if (!s_inited) {
-        chip_id_init();
-    }
-    return s_serial;
+    return s_chip_id;
 }
