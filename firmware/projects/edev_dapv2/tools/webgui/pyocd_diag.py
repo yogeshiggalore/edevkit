@@ -172,3 +172,62 @@ async def run_diag(*, serial: Optional[str], target: str,
     return await loop.run_in_executor(
         None, _run_diag_sync, serial, target, frequency_hz
     )
+
+
+# ── Focused DP.TARGETID read for identify-panel fallback ──────────────
+
+def _read_dp_targetid_sync(serial, frequency_hz):
+    """Open the DP, read DPIDR; if DPv2+ then also read TARGETID.
+    Returns (dpidr, targetid) or (None, None) on any failure."""
+    from pyocd.core.helpers import ConnectHelper
+
+    try:
+        sess = ConnectHelper.session_with_chosen_probe(
+            unique_id=serial,
+            target_override="cortex_m",
+            connect_mode="attach",
+            options={
+                "frequency": frequency_hz,
+                "dap_protocol": "swd",
+                "auto_unlock": False,
+            },
+        )
+    except Exception:
+        return None, None
+    if not sess:
+        return None, None
+
+    dpidr = targetid = None
+    try:
+        sess.open(init_board=False)
+        dp = sess.board.target.dp
+        try:
+            dp.connect()
+        except Exception:
+            pass
+        try:
+            dpidr = dp.read_dp(0x0)
+        except Exception:
+            return None, None
+        # DPIDR bits 15:12 are DP version — TARGETID exists from DPv2.
+        if ((dpidr >> 12) & 0xF) >= 2:
+            try:
+                dp.write_dp(0x8, 0x00000002)   # DPBANKSEL = 2
+                targetid = dp.read_dp(0x4)
+                dp.write_dp(0x8, 0x00000000)   # restore bank 0
+            except Exception:
+                targetid = None
+    finally:
+        try:
+            sess.close()
+        except Exception:
+            pass
+    return dpidr, targetid
+
+
+async def read_dp_targetid(*, serial, frequency_hz):
+    """Async wrapper returning (dpidr, targetid). Either may be None."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, _read_dp_targetid_sync, serial, frequency_hz
+    )

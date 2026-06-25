@@ -130,6 +130,10 @@
       <span id="dumpStatus" class="text-xs text-slate-500"></span>
     </div>
     <div class="flex flex-wrap items-end gap-3">
+      <div id="dumpCoreContainer" class="hidden">
+        <label class="block text-xs text-slate-500 mb-1">Core</label>
+        <select id="dumpCoreSel" class="border border-slate-300 rounded px-2 py-1.5 text-sm"></select>
+      </div>
       <div>
         <label class="block text-xs text-slate-500 mb-1">Address</label>
         <input id="dumpAddr" type="text" value="0x00000000"
@@ -217,9 +221,11 @@
 const state = {
   probes: [],
   lastDumpJobId: null,
-  lastDumpBytes: null,        // Uint8Array of the most recent dump payload
+  lastDumpBytes: null,        // Uint8Array of the most recent dump payload (active core)
   lastDumpBaseAddr: 0,        // address the dump started at
   logSource: null,
+  cores: [],                  // multi-core layout from identify (empty → single core)
+  dumpsByCore: {},            // {coreName: {bytes, md5, jobId, addr, size}}
 };
 
 // ─── DOM helpers ────────────────────────────────────────────────────
@@ -268,16 +274,37 @@ async function applySession() {
 
 // ─── Info ───────────────────────────────────────────────────────────
 async function fetchInfo() {
+  const btn = $("infoBtn");
+  const startedAt = performance.now();
   setStatus("idle", "querying probe…");
-  const r = await fetch("/api/info");
-  const j = await r.json();
-  $("info-dp").textContent   = j.debug_port || "—";
-  $("info-des").textContent  = j.designer   || "—";
-  $("info-part").textContent = j.part       || "—";
-  $("info-rev").textContent  = j.revision   || "—";
-  $("info-aps").textContent  = (j.aps_found || []).join(", ") || "—";
-  $("infoRaw").textContent   = j.raw || "";
-  setStatus("ok", "info ready");
+  btn.disabled = true;
+  btn.textContent = "querying…";
+  // Show working state immediately — probe-rs info walks every AP and
+  // takes 10-15 s on multi-core nRF chips (Net core debug entry times out).
+  $("infoRaw").textContent =
+    "Probing target via probe-rs info — walks the full CoreSight ROM tree.\n" +
+    "  · ~1-3 s on single-core chips (nRF52, STM32F4, …)\n" +
+    "  · ~10-15 s on multi-core chips (nRF5340, STM32H7 dual) due to AP-walk timeouts\n";
+  ["info-dp","info-des","info-part","info-rev","info-aps"].forEach((k) => $(k).textContent = "…");
+  const ticker = setInterval(() => {
+    const s = ((performance.now() - startedAt) / 1000).toFixed(1);
+    btn.textContent = `querying… ${s}s`;
+  }, 100);
+  try {
+    const r = await fetch("/api/info");
+    const j = await r.json();
+    $("info-dp").textContent   = j.debug_port || "—";
+    $("info-des").textContent  = j.designer   || "—";
+    $("info-part").textContent = j.part       || "—";
+    $("info-rev").textContent  = j.revision   || "—";
+    $("info-aps").textContent  = (j.aps_found || []).join(", ") || "—";
+    $("infoRaw").textContent   = j.raw || "";
+    setStatus("ok", `info ready (${((performance.now() - startedAt) / 1000).toFixed(1)}s)`);
+  } finally {
+    clearInterval(ticker);
+    btn.disabled = false;
+    btn.textContent = "probe-rs info";
+  }
 }
 
 // ─── Memory read ────────────────────────────────────────────────────
@@ -340,61 +367,151 @@ function downloadRead() {
 }
 
 // ─── Flash dump (SSE) ───────────────────────────────────────────────
-async function doDump() {
-  const addr = parseInt($("dumpAddr").value, 16) || 0;
-  const size = parseInt($("dumpSize").value, 10);
-  $("dumpStatus").textContent = "starting…";
-  $("dumpDownloadBtn").disabled = true;
-  $("dumpDetail").textContent = "starting…";
-  $("dumpBar").style.width = "0%";
 
-  const r = await fetch("/api/dump", {
-    method: "POST", headers: {"content-type": "application/json"},
-    body: JSON.stringify({ address: addr, byte_count: size }),
-  });
-  const j = await r.json();
-  state.lastDumpJobId = j.job_id;
+// Runs ONE dump (one core's flash), resolving with {jobId, bytes, md5, addr}.
+// Updates the dump progress UI; |label| is shown in the detail line.
+function runSingleDump({ addr, size, label }) {
+  return new Promise(async (resolve, reject) => {
+    $("dumpStatus").textContent = label ? `${label} …` : "starting…";
+    $("dumpDetail").textContent = label ? `${label}: starting…` : "starting…";
+    $("dumpBar").style.width = "0%";
 
-  const es = new EventSource(`/api/dump/${j.job_id}/progress`);
-  const startTime = performance.now();
-  es.addEventListener("progress", (ev) => {
-    const d = JSON.parse(ev.data);
-    const pct = (d.bytes / d.total * 100).toFixed(1);
-    const kbs = (d.bytes / 1024 / ((performance.now() - startTime) / 1000)).toFixed(0);
-    $("dumpBar").style.width = pct + "%";
-    $("dumpDetail").textContent = `${d.bytes.toLocaleString()} / ${d.total.toLocaleString()} B (${pct}%) — ${kbs} KB/s`;
-  });
-  es.addEventListener("done", async (ev) => {
-    const d = JSON.parse(ev.data);
-    $("dumpBar").style.width = "100%";
-    $("dumpDetail").textContent = `done — ${d.bytes.toLocaleString()} B in ${d.elapsed_s}s — md5 ${d.md5}`;
-    $("dumpStatus").textContent = `md5 ${d.md5}`;
-    $("dumpDownloadBtn").disabled = false;
-    setStatus("ok", "dump complete");
-    es.close();
-    // Fetch the data into memory for the hex viewer.
+    let job;
     try {
-      const r = await fetch(`/api/dump/${state.lastDumpJobId}/data`);
-      const buf = await r.arrayBuffer();
-      state.lastDumpBytes = new Uint8Array(buf);
-      state.lastDumpBaseAddr = addr;
-      $("dumpViewBtn").disabled = false;
-    } catch (e) {
-      console.warn("hex view: fetch failed", e);
-    }
-  });
-  es.addEventListener("error", (ev) => {
-    let msg = "stream error";
-    try { msg = JSON.parse(ev.data).message; } catch {}
-    $("dumpDetail").textContent = `error: ${msg}`;
-    setStatus("err", "dump failed");
-    es.close();
+      const r = await fetch("/api/dump", {
+        method: "POST", headers: {"content-type": "application/json"},
+        body: JSON.stringify({ address: addr, byte_count: size }),
+      });
+      job = await r.json();
+    } catch (e) { reject(e); return; }
+
+    const startTime = performance.now();
+    const es = new EventSource(`/api/dump/${job.job_id}/progress`);
+    es.addEventListener("progress", (ev) => {
+      const d = JSON.parse(ev.data);
+      const pct = (d.bytes / d.total * 100).toFixed(1);
+      const kbs = (d.bytes / 1024 / ((performance.now() - startTime) / 1000)).toFixed(0);
+      $("dumpBar").style.width = pct + "%";
+      $("dumpDetail").textContent =
+        `${label ? label + ": " : ""}${d.bytes.toLocaleString()} / ${d.total.toLocaleString()} B (${pct}%) — ${kbs} KB/s`;
+    });
+    es.addEventListener("done", async (ev) => {
+      const d = JSON.parse(ev.data);
+      $("dumpBar").style.width = "100%";
+      es.close();
+      try {
+        const r = await fetch(`/api/dump/${job.job_id}/data`);
+        const buf = await r.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        resolve({ jobId: job.job_id, bytes, md5: d.md5, addr, size, elapsed_s: d.elapsed_s });
+      } catch (e) { reject(e); }
+    });
+    es.addEventListener("error", (ev) => {
+      let msg = "stream error";
+      try { msg = JSON.parse(ev.data).message; } catch {}
+      es.close();
+      reject(new Error(msg));
+    });
   });
 }
 
+async function doDump() {
+  $("dumpDownloadBtn").disabled = true;
+  $("dumpViewBtn").disabled = true;
+  state.dumpsByCore = {};
+  setStatus("idle", "dumping…");
+
+  // Figure out the plan.
+  let plan;
+  const sel = $("dumpCoreSel");
+  const multi = state.cores.length >= 2 && sel && sel.value === "all";
+  if (multi) {
+    plan = state.cores.map((c) => ({
+      label: c.name,
+      chip: c.chip,
+      core_index: c.core_index,
+      addr: parseInt(c.flash_base_hex, 16),
+      size: c.flash_kb * 1024,
+    }));
+  } else if (state.cores.length >= 2) {
+    const c = state.cores[parseInt(sel.value, 10)];
+    plan = [{
+      label: c.name,
+      chip: c.chip,
+      core_index: c.core_index,
+      addr: parseInt($("dumpAddr").value, 16) || 0,
+      size: parseInt($("dumpSize").value, 10),
+    }];
+  } else {
+    plan = [{
+      label: "",
+      chip: null,
+      core_index: null,
+      addr: parseInt($("dumpAddr").value, 16) || 0,
+      size: parseInt($("dumpSize").value, 10),
+    }];
+  }
+
+  let lastResult = null;
+  for (const step of plan) {
+    if (step.chip) {
+      // Make sure probe-rs uses the right chip + --core for this step.
+      await fetch("/api/connect", {
+        method: "POST", headers: {"content-type": "application/json"},
+        body: JSON.stringify({ chip: step.chip, core_index: step.core_index }),
+      });
+    }
+    try {
+      const res = await runSingleDump(step);
+      state.dumpsByCore[step.label || "Main"] = res;
+      lastResult = res;
+      $("dumpDetail").textContent =
+        `${step.label || "dump"} done — ${res.bytes.length.toLocaleString()} B in ${res.elapsed_s}s — md5 ${res.md5}`;
+    } catch (e) {
+      $("dumpDetail").textContent = `${step.label || "dump"} failed: ${e.message || e}`;
+      setStatus("err", `${step.label || "dump"} failed`);
+      // Don't abort the whole plan — try remaining cores.
+    }
+  }
+
+  if (!lastResult) return;
+
+  // Wire the hex viewer / download / compare to the last successful dump.
+  state.lastDumpJobId      = lastResult.jobId;
+  state.lastDumpBytes      = lastResult.bytes;
+  state.lastDumpBaseAddr   = lastResult.addr;
+
+  const allLabels = Object.keys(state.dumpsByCore);
+  const summary = allLabels.map((k) => {
+    const d = state.dumpsByCore[k];
+    return `${k}: ${d.bytes.length.toLocaleString()} B md5 ${d.md5}`;
+  }).join("  ·  ");
+  $("dumpStatus").textContent = summary;
+  $("dumpDownloadBtn").disabled = false;
+  $("dumpViewBtn").disabled = false;
+  setStatus("ok", `dump complete (${allLabels.length} core${allLabels.length>1?"s":""})`);
+}
+
 function downloadDump() {
-  if (!state.lastDumpJobId) return;
-  window.location.href = `/api/dump/${state.lastDumpJobId}/data`;
+  const labels = Object.keys(state.dumpsByCore);
+  if (labels.length === 0) {
+    if (!state.lastDumpJobId) return;
+    window.location.href = `/api/dump/${state.lastDumpJobId}/data`;
+    return;
+  }
+  // One file per core; browsers throttle rapid downloads, so space them out.
+  labels.forEach((k, i) => {
+    setTimeout(() => {
+      const d = state.dumpsByCore[k];
+      const blob = new Blob([d.bytes], {type: "application/octet-stream"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `dump_${k.replace(/\s+/g,"_")}_0x${d.addr.toString(16).padStart(8,"0")}_${d.bytes.length}.bin`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }, i * 250);
+  });
 }
 
 // ─── Identify chip ──────────────────────────────────────────────────
@@ -404,7 +521,65 @@ async function doIdentify() {
   const r = await fetch("/api/identify", { method: "POST" });
   const j = await r.json();
   $("identifyOut").innerHTML = renderIdentify(j);
+  state.cores = j.cores || [];
+  updateCoreSelector();
   setStatus(j.success ? "ok" : "err", j.success ? "identified" : "identify failed");
+}
+
+function updateCoreSelector() {
+  const container = $("dumpCoreContainer");
+  const sel = $("dumpCoreSel");
+  if (state.cores.length < 2) {
+    container.classList.add("hidden");
+    return;
+  }
+  container.classList.remove("hidden");
+  sel.innerHTML = "";
+  state.cores.forEach((c, i) => {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = `${c.name} (${c.flash_kb} KB @ ${c.flash_base_hex})`;
+    sel.appendChild(opt);
+  });
+  const both = document.createElement("option");
+  both.value = "all";
+  both.textContent = `All ${state.cores.length} cores (sequential)`;
+  sel.appendChild(both);
+  applyCoreSelection();
+}
+
+async function applyCoreSelection() {
+  const sel = $("dumpCoreSel");
+  if (sel.value === "all") {
+    // Inputs reflect first core; "Both" mode overrides at dump time.
+    const c = state.cores[0];
+    $("dumpAddr").value = c.flash_base_hex;
+    setDumpSizeBytes(c.flash_kb * 1024);
+    return;
+  }
+  const idx = parseInt(sel.value, 10);
+  const c = state.cores[idx];
+  $("dumpAddr").value = c.flash_base_hex;
+  setDumpSizeBytes(c.flash_kb * 1024);
+  // Switch probe-rs --core for this core (same chip name for nRF5340).
+  await fetch("/api/connect", {
+    method: "POST", headers: {"content-type": "application/json"},
+    body: JSON.stringify({ chip: c.chip, core_index: c.core_index }),
+  });
+  setStatus("ok", `core → ${c.name}`);
+}
+
+function setDumpSizeBytes(bytes) {
+  const sel = $("dumpSize");
+  // Pick the matching preset if any; else append a custom option.
+  for (const opt of sel.options) {
+    if (parseInt(opt.value, 10) === bytes) { sel.value = opt.value; return; }
+  }
+  const custom = document.createElement("option");
+  custom.value = String(bytes);
+  custom.textContent = `${(bytes/1024).toLocaleString()} KB (custom)`;
+  sel.appendChild(custom);
+  sel.value = String(bytes);
 }
 
 function renderIdentify(j) {
@@ -525,9 +700,26 @@ function parseAddrInput(s) {
 }
 
 function showHexViewer() {
+  // If multiple cores were dumped, view whichever the dropdown currently
+  // points at; if "All" is selected, default to the first core (App).
+  const labels = Object.keys(state.dumpsByCore);
+  let chosen = null;
+  if (labels.length >= 2) {
+    const sel = $("dumpCoreSel");
+    if (sel && sel.value !== "all") {
+      const idx = parseInt(sel.value, 10);
+      const cname = state.cores[idx] && state.cores[idx].name;
+      if (cname && state.dumpsByCore[cname]) chosen = state.dumpsByCore[cname];
+    }
+    if (!chosen) chosen = state.dumpsByCore[labels[0]];
+    state.lastDumpBytes    = chosen.bytes;
+    state.lastDumpBaseAddr = chosen.addr;
+  }
   if (!state.lastDumpBytes) return;
   $("hexViewerCard").classList.remove("hidden");
-  $("hexViewerSource").textContent = `dump @ 0x${state.lastDumpBaseAddr.toString(16).padStart(8,'0')} · ${state.lastDumpBytes.length.toLocaleString()} B`;
+  const label = chosen ? `${labels.find((k) => state.dumpsByCore[k] === chosen)} · ` : "";
+  $("hexViewerSource").textContent =
+    `${label}dump @ 0x${state.lastDumpBaseAddr.toString(16).padStart(8,'0')} · ${state.lastDumpBytes.length.toLocaleString()} B`;
   $("hexOffset").value = `0x${state.lastDumpBaseAddr.toString(16).padStart(8,'0')}`;
   renderHexPage();
   $("hexViewerCard").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -654,6 +846,7 @@ $("readDownloadBtn").onclick   = downloadRead;
 $("dumpBtn").onclick           = doDump;
 $("dumpDownloadBtn").onclick   = downloadDump;
 $("dumpViewBtn").onclick       = showHexViewer;
+$("dumpCoreSel").onchange      = applyCoreSelection;
 $("hexPrevBtn").onclick        = () => hexStep(-1);
 $("hexNextBtn").onclick        = () => hexStep(+1);
 $("hexGotoBtn").onclick        = renderHexPage;

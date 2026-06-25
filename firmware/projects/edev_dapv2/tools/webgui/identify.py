@@ -14,11 +14,24 @@ vendor-agnostic generic target. This works regardless of the user's session
 
 from __future__ import annotations
 
+import asyncio
 import struct
 from dataclasses import dataclass, field
 from typing import Optional
 
 import probers
+import pyocd_diag
+
+
+# Nordic DP.TARGETID TPARTNO codes (DPv2+ chips).
+NORDIC_TPARTNO = {
+    0x0070: "nRF5340 (Application Core)",
+    0x0071: "nRF5340 (Network Core)",
+    0x0090: "nRF9160",
+    0x0091: "nRF9161",
+    0x0092: "nRF9131",
+    0x00DE: "nRF54L15 (Application Core)",
+}
 
 
 # ── ARM CPUID part codes ──────────────────────────────────────────────
@@ -70,6 +83,20 @@ class RomEntry:
 
 
 @dataclass
+class CoreInfo:
+    """One programmable core within a chip — App / Net / etc.
+       For multi-core chips like nRF5340, probe-rs treats it as one chip
+       (same `chip` name) and selects between cores via `--core N`.
+       Filled from the part name once identification completes; used by
+       the UI's Flash Dump panel to expose a core selector."""
+    name: str          # human label, e.g. "Application Core"
+    chip: str          # probe-rs target chip name (same for sibling cores)
+    core_index: int    # passed to probe-rs as `--core N` (0 = primary)
+    flash_base: int    # absolute address of the core's flash
+    flash_kb: int      # flash size in KB
+
+
+@dataclass
 class IdentifyResult:
     success: bool
     error: str = ""
@@ -87,8 +114,21 @@ class IdentifyResult:
     flash_kb: Optional[int] = None
     ram_kb: Optional[int] = None
     package: str = ""
+    cores: list = field(default_factory=list)
     raw_regs: dict = field(default_factory=dict)
     notes: list = field(default_factory=list)
+
+
+def _cores_for_part(part_name):
+    """Derive the multi-core layout from the identified part. Returns an
+    empty list for single-core chips — UI falls back to its normal
+    Address+Size inputs."""
+    if "nRF5340" in part_name:
+        return [
+            CoreInfo("Application Core", "nRF5340_xxAA", 0, 0x00000000, 1024),
+            CoreInfo("Network Core",     "nRF5340_xxAA", 1, 0x01000000, 256),
+        ]
+    return []
 
 
 # ── Low-level helpers ─────────────────────────────────────────────────
@@ -160,39 +200,69 @@ def _parse_pidr_cidr(words):
 # ── Vendor-specific probes ────────────────────────────────────────────
 
 async def _nordic_probe(probe_args, res):
-    """nRF52/53 FICR.INFO at 0x10000100 (5 words)."""
-    words = await _read_words(probe_args, 0x10000100, 5)
-    if not words:
-        res.notes.append("Nordic FICR.INFO read failed")
-        return
-    part_id, variant_raw, package, ram, flash = words
-    variant = "".join(
-        chr(b) if 32 <= b < 127 else "?"
-        for b in variant_raw.to_bytes(4, "big")
-    )
+    """Nordic FICR.INFO. Different families put it at different addresses:
+       nRF52: PART @ 0x10000100      (INFO sub-block starts at +0x000)
+       nRF53: PART @ 0x00FF010C      (INFO sub-block starts at +0x100)
+       nRF54L: PART @ 0x00FFC30C    (newer rearrangement)
+    Walks them in order; first one with a sensible PART value wins.
+    Sensible = 0x52xxx (nRF52), 0x5340 (nRF53), 0x54xxx (nRF54).
+    """
+    res.vendor = "nordic"
 
-    # Known Nordic PACKAGE codes (FICR.INFO.PACKAGE).
+    # Known Nordic PACKAGE codes.
     PACKAGES = {
         0x2000: "QFAA", 0x2001: "CHAA", 0x2002: "CIAA",
         0x2003: "QIAA", 0x2004: "CKAA", 0x2005: "CLAA",
     }
 
-    res.vendor = "nordic"
-    res.part_number = f"0x{part_id:X}"
-    res.part_name = (
-        f"nRF{part_id:X}" if 0x50000 <= part_id < 0x60000 else f"0x{part_id:X}"
-    )
-    res.part_variant = variant
-    res.flash_kb = flash if flash != 0xFFFFFFFF else None
-    res.ram_kb = ram if ram != 0xFFFFFFFF else None
-    res.package = PACKAGES.get(package, f"0x{package:08X}")
-    res.raw_regs.update({
-        "FICR.PART    (0x10000100)": f"0x{part_id:08X}",
-        "FICR.VARIANT (0x10000104)": f'0x{variant_raw:08X}  →  "{variant}"',
-        "FICR.PACKAGE (0x10000108)": f"0x{package:08X}",
-        "FICR.RAM_KB  (0x1000010C)": str(ram)   if ram   != 0xFFFFFFFF else "0xFFFFFFFF",
-        "FICR.FLASH_KB(0x10000110)": str(flash) if flash != 0xFFFFFFFF else "0xFFFFFFFF",
-    })
+    def _is_nordic_part(p):
+        return p != 0xFFFFFFFF and (
+            0x50000 <= p < 0x60000 or p in (0x5340,)
+        )
+
+    # (label, PART addr, VARIANT addr, PACKAGE addr, RAM addr, FLASH addr)
+    LAYOUTS = [
+        ("nRF52",  0x10000100, 0x10000104, 0x10000108, 0x1000010C, 0x10000110),
+        ("nRF53",  0x00FF010C, 0x00FF0110, 0x00FF0114, 0x00FF0118, 0x00FF011C),
+        ("nRF54L", 0x00FFC30C, 0x00FFC310, 0x00FFC314, 0x00FFC318, 0x00FFC31C),
+    ]
+
+    matched = False
+    for label, a_part, a_var, a_pkg, a_ram, a_flash in LAYOUTS:
+        w = await _read_words(probe_args, a_part, 5)
+        if not w:
+            res.notes.append(f"Nordic {label} FICR read failed at 0x{a_part:08X}")
+            continue
+        part_id, variant_raw, package, ram, flash = w
+        if not _is_nordic_part(part_id):
+            res.raw_regs[f"FICR.PART ({label} @ 0x{a_part:08X})"] = f"0x{part_id:08X}  (skip)"
+            continue
+        matched = True
+        variant = "".join(
+            chr(b) if 32 <= b < 127 else "?"
+            for b in variant_raw.to_bytes(4, "big")
+        )
+        res.part_number = f"0x{part_id:X}"
+        res.part_name = f"nRF{part_id:X}" if part_id != 0x5340 else "nRF5340"
+        res.part_variant = variant
+        res.flash_kb = flash if flash != 0xFFFFFFFF else None
+        res.ram_kb = ram if ram != 0xFFFFFFFF else None
+        res.package = PACKAGES.get(package, f"0x{package:08X}")
+        res.raw_regs.update({
+            f"FICR.PART    ({label} @ 0x{a_part:08X})": f"0x{part_id:08X}",
+            f"FICR.VARIANT ({label} @ 0x{a_var:08X})":  f'0x{variant_raw:08X}  →  "{variant}"',
+            f"FICR.PACKAGE ({label} @ 0x{a_pkg:08X})":  f"0x{package:08X}",
+            f"FICR.RAM_KB  ({label} @ 0x{a_ram:08X})":  str(ram)   if ram   != 0xFFFFFFFF else "0xFFFFFFFF",
+            f"FICR.FLASH_KB({label} @ 0x{a_flash:08X})":str(flash) if flash != 0xFFFFFFFF else "0xFFFFFFFF",
+        })
+        break
+
+    if not matched:
+        res.notes.append(
+            "Nordic detected via ROM table designer (0x144), but no FICR.INFO "
+            "address returned a recognizable PART value. Likely APPROTECT-restricted "
+            "or customer-erased FICR — try CTRL-AP path."
+        )
 
 
 async def _stm32_probe(probe_args, res):
@@ -480,8 +550,14 @@ async def identify(*, serial, vid_pid, speed_khz):
         "chip": None,   # filled in on first successful read
     }
 
-    # 1. CPUID
+    # 1. CPUID — first probe-rs connect after another tool used the DP
+    #    occasionally fails (DP left in odd state). Retry once after a
+    #    brief settle to mask that without hiding real failures.
     words = await _read_words(probe_args, 0xE000ED00, 1)
+    if not words:
+        await asyncio.sleep(0.3)
+        probe_args["chip"] = None   # force fallback-chain retry
+        words = await _read_words(probe_args, 0xE000ED00, 1)
     if not words:
         res.error = (
             "CPUID read failed — check probe wiring, target power, or APPROTECT lock"
@@ -491,11 +567,28 @@ async def identify(*, serial, vid_pid, speed_khz):
     res.cpuid = cpuid
     res.core, res.core_revision, res.implementer = _parse_cpuid(cpuid)
 
-    # 2. ROM table walk
-    await _walk_rom_table(probe_args, 0xE00FF000, res)
+    # 2. ROM table walk — try both standard locations. On classic Cortex-M
+    #    chips (M0/M3/M4/M7) the top-level ROM is at 0xE00FF000 and is
+    #    designed by the silicon vendor. On Cortex-M33 chips the top ROM
+    #    at 0xE00FF000 is ARM-standardized; the vendor ROM lives at
+    #    0xE00FE000. We walk both and prefer the non-ARM designer.
+    for base in (0xE00FF000, 0xE00FE000):
+        await _walk_rom_table(probe_args, base, res)
 
-    # 3. Vendor-specific probe based on top-level ROM table designer
-    probe_fn = VENDOR_PROBES.get(res.rom_designer_jep106)
+    # If multiple top-level ROM tables exist, the vendor is the
+    # non-ARM one (class==1, designer != ARM).
+    vendor_designer = None
+    for c in res.rom_components:
+        if c.component_class == 1 and c.designer != 0x23B:
+            vendor_designer = c.designer
+            res.rom_designer_jep106 = c.designer
+            res.rom_designer_name = c.designer_name
+            break
+    if vendor_designer is None:
+        vendor_designer = res.rom_designer_jep106
+
+    # 3. Vendor-specific probe based on the chip vendor designer
+    probe_fn = VENDOR_PROBES.get(vendor_designer)
     if probe_fn:
         await probe_fn(probe_args, res)
     elif res.rom_designer_jep106 is not None:
@@ -503,6 +596,40 @@ async def identify(*, serial, vid_pid, speed_khz):
             f"No vendor probe wired for designer 0x{res.rom_designer_jep106:03X}"
             f" ({res.rom_designer_name}) — extend identify.VENDOR_PROBES"
         )
+
+    # 4. Fallback: if vendor probe didn't yield a part name (typical on
+    #    locked nRF5340 where FICR.INFO is restricted), try DP.TARGETID.
+    #    Only useful on DPv2+ chips — pyocd helper bails on DPv1.
+    if not res.part_name:
+        dpidr, targetid = await pyocd_diag.read_dp_targetid(
+            serial=serial, frequency_hz=speed_khz * 1000,
+        )
+        if targetid:
+            tpartno   = (targetid >> 12) & 0xFFFF
+            tdesigner = (targetid >> 1)  & 0x7FF
+            trevision = (targetid >> 28) & 0xF
+            res.raw_regs["DP.TARGETID"] = (
+                f"0x{targetid:08X}  (TDESIGNER=0x{tdesigner:03X}  "
+                f"TPARTNO=0x{tpartno:04X}  TREVISION=0x{trevision:X})"
+            )
+            # If the DP designer also confirms vendor, prefer it.
+            if tdesigner and not res.rom_designer_jep106:
+                res.rom_designer_jep106 = tdesigner
+                res.rom_designer_name = JEP106.get(
+                    tdesigner, f"unknown (0x{tdesigner:03X})"
+                )
+            if tdesigner == 0x144 and tpartno in NORDIC_TPARTNO:
+                res.part_name = NORDIC_TPARTNO[tpartno]
+                res.part_number = f"0x{tpartno:04X}"
+            elif tdesigner == 0x144:
+                res.part_name = f"Nordic (TPARTNO=0x{tpartno:04X})"
+                res.part_number = f"0x{tpartno:04X}"
+            else:
+                res.part_name = f"DP TPARTNO=0x{tpartno:04X}"
+                res.part_number = f"0x{tpartno:04X}"
+
+    # 5. Multi-core layout (drives the UI's Flash Dump core selector)
+    res.cores = _cores_for_part(res.part_name)
 
     res.success = True
     return res

@@ -149,18 +149,22 @@ async def read_words(*, chip: str, speed_khz: int,
                      address: int, word_count: int,
                      serial: Optional[str] = None,
                      vid_pid: Optional[str] = None,
+                     core_index: int = 0,
                      timeout: float = 600.0) -> tuple[int, bytes, str]:
     """`probe-rs read b32 ADDR N` → bytes (little-endian).
 
     Returns (exit_code, data_bytes, stderr). data_bytes is empty on
-    failure.
+    failure. `core_index` is passed as `--core N` when non-zero (for
+    multi-core chips like nRF5340: 0=App, 1=Net).
     """
     cmd = [_probe_rs_path(), "read"] + _probe_arg(serial, vid_pid) + [
         "--protocol", "swd",
         "--chip", chip,
         "--speed", str(speed_khz),
-        "b32", f"0x{address:08x}", str(word_count),
     ]
+    if core_index:
+        cmd += ["--core", str(core_index)]
+    cmd += ["b32", f"0x{address:08x}", str(word_count)]
     code, out, err = await _run(cmd, timeout=timeout)
     if code != 0:
         return code, b"", err.strip()
@@ -181,7 +185,8 @@ async def stream_dump(*, chip: str, speed_khz: int,
                       address: int, byte_count: int,
                       chunk_bytes: int = 4096,
                       serial: Optional[str] = None,
-                      vid_pid: Optional[str] = None
+                      vid_pid: Optional[str] = None,
+                      core_index: int = 0,
                       ) -> AsyncIterator[tuple[str, int, bytes]]:
     """Dump `byte_count` bytes starting at `address`, yielding progress.
 
@@ -201,6 +206,7 @@ async def stream_dump(*, chip: str, speed_khz: int,
             chip=chip, speed_khz=speed_khz,
             address=address + cursor, word_count=words,
             serial=serial, vid_pid=vid_pid,
+            core_index=core_index,
         )
         if code != 0 or len(data) != words * 4:
             yield "error", cursor, err.encode("utf-8", "replace")

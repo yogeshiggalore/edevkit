@@ -45,6 +45,7 @@ class Session:
     speed_khz: int = 8000
     serial: Optional[str] = None
     vid_pid: str = "2e8a:000c"   # the edev_dapv2 USB IDs
+    core_index: int = 0           # multi-core chips: 0 = primary, 1 = secondary
 
 
 session = Session()
@@ -92,6 +93,8 @@ async def api_connect(body: dict = Body(...)):
     session.speed_khz = int(body.get("speed_khz", session.speed_khz))
     session.serial = body.get("serial") or None
     session.vid_pid = body.get("vid_pid") or session.vid_pid
+    if "core_index" in body:
+        session.core_index = int(body["core_index"])
     return {"ok": True, "session": asdict(session)}
 
 
@@ -102,15 +105,89 @@ async def api_session():
 
 # ── Info ──────────────────────────────────────────────────────────────
 
+# JEP106 designer codes (subset, same as identify module). Inlined here to
+# keep this module self-contained without importing identify just for a dict.
+_JEP106_INFO = {
+    0x23B: "ARM Ltd",
+    0x144: "Nordic Semiconductor",
+    0x020: "STMicroelectronics",
+    0x017: "Texas Instruments",
+    0x01F: "Microchip / Atmel",
+    0x015: "NXP",
+    0x00E: "Freescale / NXP",
+    0x493: "Raspberry Pi Ltd",
+    0x0AE: "Espressif Systems",
+    0x21C: "Silicon Labs",
+}
+
+
 @app.get("/api/info")
 async def api_info():
-    result = await probers.info(
-        chip=session.chip,
-        speed_khz=session.speed_khz,
-        serial=session.serial,
-        vid_pid=session.vid_pid,
+    """Fast DP/AP snapshot via pyocd (~60 ms) — replaces the original
+    probe-rs-backed implementation that took 10+ s on multi-core nRF chips
+    because probe-rs walks every AP including the unresponsive Net-core MEM-AP.
+    Same fields the UI panel expects; raw tree synthesized."""
+    diag = await pyocd_diag.run_diag(
+        serial=await _resolve_serial(),
+        target="cortex_m",
+        frequency_hz=session.speed_khz * 1000,
     )
-    return asdict(result)
+    if not diag.success or diag.dpidr is None:
+        return {
+            "raw": diag.error or "info: pyocd returned no DPIDR",
+            "debug_port": None,
+            "designer": None,
+            "part": None,
+            "revision": None,
+            "aps_found": [],
+            "warnings": diag.notes,
+        }
+
+    dpidr        = diag.dpidr
+    dp_version   = (dpidr >> 12) & 0xF
+    dp_designer  = (dpidr >> 1)  & 0x7FF
+    dp_partno    = (dpidr >> 20) & 0xFF
+    dp_revision  = (dpidr >> 28) & 0xF
+    designer_str = _JEP106_INFO.get(dp_designer, f"0x{dp_designer:03X}")
+
+    aps_found = [
+        f"AP#{ap.index}: {ap.kind} (IDR=0x{ap.idr:08X})"
+        for ap in diag.aps if ap.idr
+    ]
+
+    raw_lines = [
+        "Probing target (pyocd, fast path)",
+        "---------------------------------",
+        "",
+        f"Debug Port: DPv{dp_version}, Designer: {designer_str}, "
+        f"Part: 0x{dp_partno:02X}, Revision: 0x{dp_revision:X}",
+        f"  DPIDR    = 0x{dpidr:08X}",
+    ]
+    if diag.dlpidr is not None:
+        raw_lines.append(f"  DLPIDR   = 0x{diag.dlpidr:08X}")
+    if diag.targetid is not None:
+        tpartno   = (diag.targetid >> 12) & 0xFFFF
+        tdesigner = (diag.targetid >> 1)  & 0x7FF
+        raw_lines.append(
+            f"  TARGETID = 0x{diag.targetid:08X}  "
+            f"(designer 0x{tdesigner:03X}, partno 0x{tpartno:04X})"
+        )
+    if diag.ctrl_stat is not None:
+        raw_lines.append(f"  CTRL/STAT= 0x{diag.ctrl_stat:08X}")
+    raw_lines += ["", "Access Ports:"]
+    for ap in diag.aps:
+        if ap.idr:
+            raw_lines.append(f"  AP#{ap.index}: IDR=0x{ap.idr:08X}  {ap.kind}")
+
+    return {
+        "raw": "\n".join(raw_lines),
+        "debug_port": f"DPv{dp_version}",
+        "designer":   designer_str,
+        "part":       f"0x{dp_partno:02X}",
+        "revision":   f"0x{dp_revision:X}",
+        "aps_found":  aps_found,
+        "warnings":   diag.notes,
+    }
 
 
 # ── Memory read ───────────────────────────────────────────────────────
@@ -126,6 +203,7 @@ async def api_read(body: dict = Body(...)):
         word_count=count,
         serial=session.serial,
         vid_pid=session.vid_pid,
+        core_index=session.core_index,
     )
     if code != 0 or not data:
         raise HTTPException(status_code=502, detail=err or "read failed")
@@ -170,6 +248,7 @@ async def api_dump_start(body: dict = Body(...)):
                 chunk_bytes=chunk,
                 serial=session.serial,
                 vid_pid=session.vid_pid,
+                core_index=session.core_index,
             ):
                 if kind == "chunk":
                     job["data"].extend(payload)
@@ -384,6 +463,8 @@ async def api_identify():
         c["designer"] = f"0x{c['designer']:03x}"
         c["part"] = f"0x{c['part']:03x}"
         c["component_class"] = f"0x{c['component_class']:x}"
+    for core in d.get("cores", []):
+        core["flash_base_hex"] = f"0x{core['flash_base']:08X}"
     return d
 
 
