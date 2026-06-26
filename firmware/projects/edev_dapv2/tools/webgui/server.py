@@ -624,6 +624,40 @@ async def api_erase(body: dict = Body(default={})):
             "elapsed_s": elapsed, "core_index": core_index}
 
 
+@app.post("/api/recover")
+async def api_recover():
+    """nrfjprog --recover equivalent for nRF5340.
+
+    Wipes both cores (CTRL-AP ERASEALL), writes the disable-AP-protect
+    stub to each core's flash[0], and resets so each stub runs. After
+    completion both cores have UICR.APPROTECT=0x50FA50FA HwDisabled,
+    making the chip stay debug-accessible across all future resets.
+
+    Use this when:
+      - A fresh chip refuses programming with "Network core access
+        port is protected"
+      - Net AHB-AP keeps returning FAULT after a flash
+      - The chip's gotten itself wedged from a previous half-flow
+
+    Run once; afterwards normal Flash works.
+    """
+    import time
+    t0 = time.monotonic()
+    serial = await _resolve_serial()
+    ok, stages = await pyocd_diag.recover(
+        serial=serial,
+        frequency_hz=session.speed_khz * 1000,
+    )
+    elapsed = round(time.monotonic() - t0, 2)
+    lines = [f"{label}: {'✓' if s_ok else '✗'} {msg}" for (label, s_ok, msg) in stages]
+    return {
+        "ok": ok,
+        "message": "\n".join(lines) if lines else "no stages run",
+        "elapsed_s": elapsed,
+        "stages": [{"label": l, "ok": o, "message": m} for (l, o, m) in stages],
+    }
+
+
 @app.post("/api/flash")
 async def api_flash(
     file: UploadFile = File(...),

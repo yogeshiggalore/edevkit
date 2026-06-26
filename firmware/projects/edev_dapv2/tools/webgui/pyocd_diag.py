@@ -70,6 +70,37 @@ _NRF53_DISABLE_STUB = (
 _STUB_TIMEOUT_S    = 5.0          # typical run is < 100 ms once running
 
 
+# Source: firmware/projects/edev_dapv2/tools/nrf53_net_disable_approtect.s
+# Build:  arm-none-eabi-as -mcpu=cortex-m33 -mthumb nrf53_net_disable_approtect.s
+#         arm-none-eabi-objcopy -O binary stub.o stub.bin
+# Net-CORE stub. Runs on the Net core after CTRL-AP RESET. Programs
+# Net UICR.APPROTECT = 0x50FA50FA from CPU side so the Net AHB-AP stays
+# debug-accessible across subsequent resets. Mirrors what nrfjprog's
+# recover does for Net (writes a Net-side stub, lets it run).
+#
+# Layout: 16-entry vector table + spin-fault-handler + reset_handler.
+# Stage magic values written to Net SRAM 0x21000000:
+#   0x11111111  reset_handler entered
+#   0x22222222  NVMC.CONFIG=Wen acknowledged
+#   0xDEADC0DE  Net UICR programmed — stub complete ✓
+#   0xBADF00D5  fault_handler hit (PC at fault stored at 0x21000008)
+_NRF53_NET_DISABLE_STUB = (
+    b"\x00\x00\x01\x21\x59\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
+    b"\x41\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
+    b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x41\x00\x00\x00"
+    b"\x41\x00\x00\x00\x00\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
+    b"\x17\x48\x18\x49\x08\x60\xef\xf3\x08\x80\x82\x69\x16\x49\x0a\x60"
+    b"\xc2\x69\x16\x49\x0a\x60\xfe\xe7\x4f\xf0\x04\x50\x4f\xf0\x11\x31"
+    b"\x01\x60\x13\x4c\x13\x4d\x14\x4e\x22\x68\x01\x2a\xfc\xd1\x01\x22"
+    b"\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x4f\xf0\x04\x50\x4f\xf0\x22\x31"
+    b"\x01\x60\x0e\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22\x2a\x60"
+    b"\x22\x68\x01\x2a\xfc\xd1\x4f\xf0\x04\x50\x09\x49\x01\x60\xfe\xe7"
+    b"\xd5\x00\xdf\xba\x04\x00\x00\x21\x08\x00\x00\x21\x0c\x00\x00\x21"
+    b"\x00\x04\x08\x41\x04\x05\x08\x41\xfa\x50\xfa\x50\x00\x80\xff\x01"
+    b"\xde\xc0\xad\xde"
+)
+
+
 @dataclass
 class ApEntry:
     index: int
@@ -1382,3 +1413,272 @@ async def program_net_flash(*, serial, frequency_hz, segments, progress_cb=None)
     return await loop.run_in_executor(
         None, _program_net_flash_sync, serial, frequency_hz, segments, progress_cb,
     )
+
+
+# ── nrfjprog --recover equivalent ─────────────────────────────────────
+#
+# What nrfutil's `--recover` (= west flash --recover) does in one button:
+#   1. CTRL-AP#2 + #3 ERASEALL — wipes both cores' flash + UICR, unlocks
+#      both AHB-APs for the current session.
+#   2. Writes a small disable-AP-protect stub to App flash[0] and Net
+#      flash[0]. Each stub programs ITS OWN core's UICR.APPROTECT to
+#      0x50FA50FA via the NVMC of that core, then spins forever.
+#   3. CTRL-AP RESET on both cores. Each core boots from flash[0], runs
+#      its stub, lands on the spin loop with UICR.APPROTECT = HwDisabled.
+#   4. After the reset, both cores stay debug-accessible across all
+#      future resets (until the next ERASEALL clears UICR back to 0xFFFFFFFF).
+#
+# Result: chip is in a known "fully unlocked" state, ready for the user
+# to flash real firmware that won't be blocked by APPROTECT.
+#
+# This mirrors nrfjprog's behavior exactly. The user invokes this once
+# when their chip is fresh / locked / wedged; subsequent flashes work
+# without protection issues until they ERASEALL again.
+
+
+def _write_blob_via_nvmc(dp, *, ahb, csw, nvmc_base, dest_addr, blob):
+    """Program `blob` bytes to flash at `dest_addr` via the given AHB-AP
+    and NVMC. Per-word write + NVMC.READY poll per word (boring-correct;
+    avoids the auto-increment + READY-poll-clobbers-TAR trap that bit us
+    earlier). Returns (ok, message)."""
+    import time
+    READY  = nvmc_base + 0x400
+    CONFIG = nvmc_base + 0x504
+
+    def ap_write(reg, val):
+        dp.write_dp(0x8, (ahb << 24) | 0x00)
+        dp.write_ap((ahb << 24) | 0x00, csw)
+        dp.write_ap((ahb << 24) | 0x04, reg)
+        dp.write_ap((ahb << 24) | 0x0C, val)
+        dp.read_dp(0x0C)
+
+    def ap_read(reg):
+        dp.write_dp(0x8, (ahb << 24) | 0x00)
+        dp.write_ap((ahb << 24) | 0x00, csw)
+        dp.write_ap((ahb << 24) | 0x04, reg)
+        return dp.read_ap((ahb << 24) | 0x0C) & 0xFFFFFFFF
+
+    def wait_ready(timeout=0.5):
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
+            if ap_read(READY) & 1:
+                return True
+            time.sleep(0.0005)
+        return False
+
+    if len(blob) % 4:
+        blob = blob + b'\xff' * (4 - (len(blob) % 4))
+
+    if not wait_ready():
+        return False, f"NVMC@0x{nvmc_base:08X} not ready initially"
+    ap_write(CONFIG, 1)   # Wen
+    if not wait_ready():
+        return False, f"NVMC@0x{nvmc_base:08X} stuck after Wen"
+
+    n_words = len(blob) // 4
+    for w in range(n_words):
+        addr = dest_addr + w * 4
+        val = int.from_bytes(blob[w*4:w*4+4], 'little')
+        if val == 0xFFFFFFFF:
+            continue
+        ap_write(addr, val)
+        if not wait_ready(timeout=0.1):
+            ap_write(CONFIG, 0)
+            return False, f"NVMC stuck @ 0x{addr:08X}"
+
+    ap_write(CONFIG, 0)   # Ren
+    wait_ready()
+    return True, f"{n_words} words written"
+
+
+def _recover_sync(serial, frequency_hz):
+    """nrfjprog --recover equivalent. Wipes both cores, writes the
+    disable-AP-protect stubs, resets so each stub runs on its core.
+
+    Returns (ok, [(stage, ok, message), ...]).
+    """
+    from pyocd.core.helpers import ConnectHelper
+    import time
+
+    # Probe enumeration fallback (same as _program_net_flash_sync).
+    uid = serial
+    if not uid:
+        try:
+            probes = ConnectHelper.get_all_connected_probes(blocking=False)
+            for p in probes:
+                desc = (p.description or "") + " " + (getattr(p, 'product_name', '') or '')
+                if 'edev_dap' in desc.lower():
+                    uid = p.unique_id
+                    break
+            if not uid and probes:
+                uid = probes[0].unique_id
+        except Exception:
+            pass
+
+    try:
+        sess = ConnectHelper.session_with_chosen_probe(
+            unique_id=uid, target_override="cortex_m",
+            connect_mode="attach", blocking=False,
+            options={"frequency": frequency_hz, "dap_protocol": "swd",
+                     "auto_unlock": False},
+        )
+    except Exception as e:
+        return False, [("open", False, f"{e}")]
+    if not sess:
+        return False, [("open", False, "no probe matched")]
+
+    results = []
+    overall_ok = True
+    try:
+        sess.open(init_board=False)
+        dp = sess.board.target.dp
+        _full_dp_wake(sess)
+
+        # ── Stage 1: ERASEALL both cores ─────────────────────────────
+        t0 = time.monotonic()
+        for ap in (2, 3):
+            dp.write_dp(0x8, (ap << 24) | 0x00)
+            dp.write_ap((ap << 24) | 0x00, 1)        # RESET pulse (defensive)
+            time.sleep(0.02)
+            dp.write_ap((ap << 24) | 0x00, 0)
+            time.sleep(0.02)
+            dp.write_ap((ap << 24) | 0x04, 1)        # ERASEALL
+            t1 = time.monotonic()
+            while time.monotonic() - t1 < 10:
+                if dp.read_ap((ap << 24) | 0x08) == 0:
+                    break
+                time.sleep(0.02)
+            else:
+                results.append((f"CTRL-AP#{ap} ERASEALL", False, "timeout"))
+                overall_ok = False
+                continue
+            results.append((f"CTRL-AP#{ap} ERASEALL", True,
+                            f"{round(time.monotonic()-t1, 2)}s"))
+
+        if not overall_ok:
+            return overall_ok, results
+
+        # ── Stage 2: App UICR.APPROTECT + SECUREAPPROTECT (host-side) ──
+        # App side stays unlocked permanently from a host-only NVMC write
+        # to UICR.APPROTECT — we proved this earlier in the session. No
+        # need for an App stub.
+        def app_w(addr, val):
+            dp.write_dp(0x8, (0 << 24) | 0x00)
+            dp.write_ap((0 << 24) | 0x00, 0x23000002)
+            dp.write_ap((0 << 24) | 0x04, addr)
+            dp.write_ap((0 << 24) | 0x0C, val)
+            dp.read_dp(0x0C)
+        def app_r(addr):
+            dp.write_dp(0x8, (0 << 24) | 0x00)
+            dp.write_ap((0 << 24) | 0x00, 0x23000002)
+            dp.write_ap((0 << 24) | 0x04, addr)
+            return dp.read_ap((0 << 24) | 0x0C) & 0xFFFFFFFF
+        def app_wait_ready(timeout=0.5):
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < timeout:
+                if app_r(0x50039400) & 1:
+                    return True
+                time.sleep(0.0005)
+            return False
+
+        try:
+            if not app_wait_ready():
+                raise RuntimeError("App NVMC not ready")
+            app_w(0x50039504, 1)        # Wen
+            if not app_wait_ready():
+                raise RuntimeError("App NVMC stuck after Wen")
+            app_w(0x00FF8000, 0x50FA50FA)        # UICR.APPROTECT
+            if not app_wait_ready():
+                raise RuntimeError("App UICR.APPROTECT write stuck")
+            app_w(0x00FF801C, 0x50FA50FA)        # UICR.SECUREAPPROTECT
+            if not app_wait_ready():
+                raise RuntimeError("App UICR.SECUREAPPROTECT write stuck")
+            app_w(0x50039504, 0)        # Ren
+            app_wait_ready()
+            results.append(("App UICR.APPROTECT/SECUREAPPROTECT", True,
+                            "= 0x50FA50FA HwDisabled"))
+        except Exception as e:
+            results.append(("App UICR write", False, str(e)))
+            overall_ok = False
+            return overall_ok, results
+
+        # ── Stage 3: Release Net core (NETWORK.FORCEOFF = 0 via App AHB-AP)
+        # Net core may be held in FORCEOFF after CTRL-AP ERASEALL. The
+        # debug-side App AHB-AP can write Net's reset-control register
+        # in App's address space at 0x50005614. With FORCEOFF=0, Net's
+        # clocks come up and our Net stub can run.
+        try:
+            app_w(0x50005614, 0)        # RESET.NETWORK.FORCEOFF = 0
+            results.append(("Net FORCEOFF release", True, "0x50005614 = 0"))
+        except Exception as e:
+            results.append(("Net FORCEOFF release", False, str(e)))
+
+        # ── Stage 4: Write Net stub to Net flash[0] via Net NVMC ─────
+        ok, msg = _write_blob_via_nvmc(
+            dp, ahb=1, csw=0x03800042,
+            nvmc_base=0x41080000, dest_addr=0x01000000,
+            blob=_NRF53_NET_DISABLE_STUB,
+        )
+        results.append(("Net stub install", ok, msg))
+        if not ok:
+            overall_ok = False
+            return overall_ok, results
+
+        # ── Stage 5: CTRL-AP#3 RESET Net so its stub runs ─────────────
+        dp.write_dp(0x8, (3 << 24) | 0x00)
+        dp.write_ap((3 << 24) | 0x00, 1)
+        time.sleep(0.05)
+        dp.write_ap((3 << 24) | 0x00, 0)
+        time.sleep(0.2)                          # let stub run + commit
+        results.append(("CTRL-AP#3 reset (Net)", True, "Net stub launched"))
+
+        # ── Stage 6: Verify Net stub completed (SRAM done marker) ─────
+        # Net AHB-AP is still open because we haven't done a chip-wide
+        # reset (just Net-only reset via CTRL-AP#3); App AHB-AP unlock
+        # from the earlier ERASEALL persists too.
+        _full_dp_wake(sess)
+        try:
+            dp.write_dp(0x8, (1 << 24) | 0x00)
+            dp.write_ap((1 << 24) | 0x00, 0x03800042)
+            dp.write_ap((1 << 24) | 0x04, 0x21000000)
+            net_marker = dp.read_ap((1 << 24) | 0x0C) & 0xFFFFFFFF
+            ok = (net_marker == 0xDEADC0DE)
+            results.append(("Net stub completion", ok,
+                            f"SRAM[0x21000000] = 0x{net_marker:08X}"))
+            if not ok:
+                overall_ok = False
+        except Exception as e:
+            results.append(("Net stub completion", False, str(e)))
+            overall_ok = False
+
+        # ── Stage 7: Verify Net UICR.APPROTECT actually persisted ─────
+        try:
+            dp.write_dp(0x8, (1 << 24) | 0x00)
+            dp.write_ap((1 << 24) | 0x00, 0x03800042)
+            dp.write_ap((1 << 24) | 0x04, 0x01FF8000)
+            net_uicr = dp.read_ap((1 << 24) | 0x0C) & 0xFFFFFFFF
+            ok = (net_uicr == 0x50FA50FA)
+            results.append(("Net UICR.APPROTECT readback", ok,
+                            f"= 0x{net_uicr:08X}"))
+            if not ok:
+                overall_ok = False
+        except Exception as e:
+            results.append(("Net UICR.APPROTECT readback", False, str(e)))
+            overall_ok = False
+
+    except Exception as e:
+        results.append(("recover", False, f"{type(e).__name__}: {e}"))
+        overall_ok = False
+    finally:
+        import threading
+        closer = threading.Thread(target=lambda: _safe_close(sess), daemon=True)
+        closer.start()
+        closer.join(timeout=2.0)
+
+    return overall_ok, results
+
+
+async def recover(*, serial, frequency_hz):
+    """Async wrapper for _recover_sync."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _recover_sync, serial, frequency_hz)

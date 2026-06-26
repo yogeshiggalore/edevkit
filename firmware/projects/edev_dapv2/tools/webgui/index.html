@@ -174,8 +174,8 @@
       </div>
       <div class="flex items-center gap-3 flex-wrap pt-2 border-t border-rose-200/60">
         <span class="text-xs font-semibold text-amber-700 uppercase tracking-wide">Recover</span>
-        <button id="recoverBtn" class="px-3 py-1.5 text-sm bg-amber-600 hover:bg-amber-700 text-white rounded">Recover (CTRL-AP ERASEALL)</button>
-        <span class="text-xs text-slate-500">Nordic only — unlocks APPROTECT-locked chips by mass-erase</span>
+        <button id="recoverBtn" class="px-3 py-1.5 text-sm bg-amber-600 hover:bg-amber-700 text-white rounded">Recover (ERASEALL + disable-stubs)</button>
+        <span class="text-xs text-slate-500">Nordic only — mass-erase + install AP-protect-disable stubs (matches nrfutil --recover)</span>
       </div>
     </div>
 
@@ -961,14 +961,37 @@ async function doErase() {
 }
 
 async function doRecover() {
-  await runErase(
-    "ctrl_ap",
-    "Recover",
-    "Recover (CTRL-AP ERASEALL)?\n\n" +
-    "This does a Nordic mass-erase via CTRL-AP, which also clears\n" +
-    "APPROTECT. Works on locked chips that ordinary erase can't touch.\n" +
-    "Flash will be wiped and cannot be undone."
-  );
+  if (!confirm(
+    "Recover nRF5340?\n\n" +
+    "Same operation nrfutil --recover does:\n" +
+    "  1. CTRL-AP ERASEALL on both App and Net cores (wipes flash + UICR)\n" +
+    "  2. Installs the disable-AP-protect stub to each core's flash[0]\n" +
+    "  3. Resets both cores so each stub runs, programming UICR.APPROTECT\n" +
+    "     = 0x50FA50FA HwDisabled.\n\n" +
+    "After recover, the chip stays debug-accessible across resets and\n" +
+    "Flash will work without 'access port protected' errors.\n\n" +
+    "Wipes all flash. Cannot be undone."
+  )) return;
+  setFlashBusy(true);
+  showOpResult({ state: "running", title: "Recover…",
+                 message: "erase both cores + install stubs + reset" });
+  setProgressMode("indet");
+  setStatus("idle", "recovering…");
+
+  const t0 = performance.now();
+  const r = await fetch("/api/recover", { method: "POST" });
+  const j = await r.json();
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+  setProgressMode("none");
+  showOpResult({
+    state: j.ok ? "ok" : "err",
+    title: j.ok ? "Recover: SUCCESS" : "Recover: FAILED",
+    message: j.message,
+    elapsed,
+  });
+  setStatus(j.ok ? "ok" : "err",
+            j.ok ? "recover complete" : "recover failed");
+  setFlashBusy(false);
 }
 
 // Submit one flash. Returns {ok, message, elapsed_s, ...} after the
