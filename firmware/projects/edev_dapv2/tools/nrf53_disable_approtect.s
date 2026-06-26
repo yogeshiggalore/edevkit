@@ -1,26 +1,25 @@
 /* nrf53_disable_approtect.s — Thumb stub that programs UICR.APPROTECT and
  * UICR.SECUREAPPROTECT on both nRF5340 cores.
  *
- * KEY: installs a full exception vector table with spin-handlers for every
- * fault. Without this, any fault while the stub is running causes the CPU
- * to dispatch to vector slots that point to 0xFFFFFFFE (erased flash) →
- * double fault → lockup. That was the bug in earlier iterations — the
- * test chip's PC=0xEFFFFFFE after the stub timed out was lockup-after-
- * peripheral-fault, not the stub itself faulting.
- *
- * nrfjprog's 3748-byte recover image installs the same fault-handler
- * vectors (verified by reading App flash[0x00..0x40] post-recover). The
- * actual UICR work in nrfjprog is at offset 0x448; our stub puts it
- * inline right after the vectors.
+ * Key design points (learned by disassembling nrfjprog + iterating):
+ *   - Full vector table with spin-handlers for every fault slot. Without
+ *     these, any fault → vector at 0xFFFFFFFE → lockup.
+ *   - NO BKPT instructions anywhere. After CTRL-AP RESET launches the
+ *     stub, C_DEBUGEN is clear; BKPT then escalates to HardFault and
+ *     a HardFault that double-faults causes lockup.
+ *   - Magic-value-to-SRAM at end of stub. Host reads 0x20000000 in a
+ *     fresh debug session to confirm the stub ran to completion.
  *
  * Build:
  *   arm-none-eabi-as -mcpu=cortex-m33 -mthumb nrf53_disable_approtect.s \
  *                    -o nrf53_disable_approtect.o
  *   arm-none-eabi-objcopy -O binary nrf53_disable_approtect.o stub.bin
  *
- * Loader (host side): write stub.bin to App flash @ 0x00000000 via App
- * NVMC, then SYSRESETREQ. CPU loads SP+PC from the vector table at the
- * start of our binary, runs reset_handler, programs UICRs, BKPTs.
+ * Loader (host side): write stub.bin verbatim to App flash @ 0x00000000
+ * via App NVMC, then CTRL-AP#2 RESET pulse. CPU boots from our vectors,
+ * runs reset_handler, programs both UICRs, writes 0xDEADC0DE to SRAM,
+ * spins. Host opens fresh pyocd session, reads 0x20000000 (expect
+ * 0xDEADC0DE), reads UICR.APPROTECT cells (expect 0x50FA50FA).
  */
 
     .syntax unified
@@ -40,20 +39,30 @@ _vectors:
     .word   fault_handler + 1           /* 0x14: BusFault                    */
     .word   fault_handler + 1           /* 0x18: UsageFault                  */
     .word   fault_handler + 1           /* 0x1C: SecureFault                 */
-    .word   0                           /* 0x20: reserved                    */
-    .word   0                           /* 0x24: reserved                    */
-    .word   0                           /* 0x28: reserved                    */
+    .word   0
+    .word   0
+    .word   0
     .word   fault_handler + 1           /* 0x2C: SVCall                      */
     .word   fault_handler + 1           /* 0x30: DebugMonitor                */
-    .word   0                           /* 0x34: reserved                    */
+    .word   0
     .word   fault_handler + 1           /* 0x38: PendSV                      */
     .word   fault_handler + 1           /* 0x3C: SysTick                     */
-    /* (External interrupts left as 0; we never enable any.)                 */
 
-/* ─── Fault handler: BKPT so host sees we faulted, then spin ────────── */
+/* ─── Fault handler: stamp fault PC into SRAM, then spin ───────────── */
+/* Layout @ 0x20000000+:
+ *   0x20000000  done_magic  (0xDEADC0DE if stub completed)
+ *   0x20000004  fault_lr    (LR at time of fault — points near offender)
+ */
 fault_handler:
-    bkpt    #1                          /* #1 = "we faulted" (vs main #0)    */
-1:  b       1b
+    /* r4 must be preserved between exception calls. Use scratch r0-r3. */
+    ldr  r0, =0x20000004        /* fault_lr slot                              */
+    mov  r1, lr
+    str  r1, [r0]               /* record LR (return PC into faulting code)   */
+    /* Record fault as a special magic (not 0xDEADC0DE).                       */
+    ldr  r0, =0x20000000
+    ldr  r1, =0xBADF00D5
+    str  r1, [r0]
+1:  b    1b
 
 /* ─── Reset handler / main work ────────────────────────────────────── */
 .equ VMC_RAMBLOCK_PSET,  0x50081604
@@ -67,10 +76,18 @@ fault_handler:
 .equ NET_NVMC_CONFIG,    0x41080504
 .equ NET_UICR_APPROT,    0x01FF8000
 .equ UNLOCK_MAGIC,       0x50FA50FA
+.equ DONE_MAGIC,         0xDEADC0DE
+.equ STATE_SRAM,         0x20000000
 .equ FFFF,               0xFFFFFFFF
 
 reset_handler:
-    /* Power-on all 8 App VMC RAM blocks (POWERSET = 0xFFFFFFFF). */
+    /* Initialize the state slot to a sentinel so the host can tell
+       the stub started.  */
+    ldr  r0, =STATE_SRAM
+    ldr  r1, =0x11111111
+    str  r1, [r0]
+
+    /* Power on all 8 App VMC RAM blocks (POWERSET = 0xFFFFFFFF). */
     ldr  r0, =VMC_RAMBLOCK_PSET
     ldr  r1, =FFFF
     str  r1, [r0, #0x00]
@@ -82,8 +99,14 @@ reset_handler:
     str  r1, [r0, #0x60]
     str  r1, [r0, #0x70]
 
+    /* State: "VMC done". */
+    ldr  r0, =STATE_SRAM
+    ldr  r1, =0x22222222
+    str  r1, [r0]
+
     /* Cosmetic: clear RESETREAS. */
     ldr  r0, =RESET_RESETREAS
+    ldr  r1, =FFFF
     str  r1, [r0]
 
     /* App UICR.APPROTECT + UICR.SECUREAPPROTECT ← 0x50FA50FA via App NVMC. */
@@ -95,7 +118,7 @@ reset_handler:
     cmp  r2, #1
     bne  1b
     movs r2, #1
-    str  r2, [r5]                       /* CONFIG = Wen                       */
+    str  r2, [r5]
 2:  ldr  r2, [r4]
     cmp  r2, #1
     bne  2b
@@ -113,22 +136,32 @@ reset_handler:
     bne  4b
 
     movs r2, #0
-    str  r2, [r5]                       /* CONFIG = Ren                       */
+    str  r2, [r5]
 5:  ldr  r2, [r4]
     cmp  r2, #1
     bne  5b
+
+    /* State: "App UICR done". */
+    ldr  r0, =STATE_SRAM
+    ldr  r1, =0x33333333
+    str  r1, [r0]
 
     /* Release Net core. */
     ldr  r0, =NETWORK_FORCEOFF
     movs r2, #0
     str  r2, [r0]
 
-    /* Spin a few thousand cycles for Net's clocks. */
+    /* Spin a few thousand cycles for Net's clocks to settle. */
     movs r2, #0
-    ldr  r3, =0x4000
+    ldr  r3, =0x8000
 6:  adds r2, #1
     cmp  r2, r3
     blo  6b
+
+    /* State: "Net release done". */
+    ldr  r0, =STATE_SRAM
+    ldr  r1, =0x44444444
+    str  r1, [r0]
 
     /* Net UICR.APPROTECT ← 0x50FA50FA via Net NVMC. */
     ldr  r4, =NET_NVMC_READY
@@ -155,11 +188,16 @@ reset_handler:
     cmp  r2, #1
     bne  10b
 
-    /* Halt for the debug host (BKPT #0 = success). */
-    bkpt #0
+    /* State: "DONE". Host reads this to confirm full execution. */
+    ldr  r0, =STATE_SRAM
+    ldr  r1, =DONE_MAGIC
+    str  r1, [r0]
+
+    /* Spin forever — NO BKPT. Without C_DEBUGEN, BKPT escalates to
+       HardFault and double-faults into lockup. A plain branch loop
+       is harmless. */
 11: b   11b
 
     .pool
 
-/* ─── Stack at top of App SRAM ──────────────────────────────────────── */
     .equ    _stack_top, 0x20010000

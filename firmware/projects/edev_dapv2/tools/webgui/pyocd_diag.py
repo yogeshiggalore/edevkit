@@ -37,23 +37,35 @@ from typing import Optional
 # SYSRESETREQ boots the CPU into our vector table — VTOR resets to 0,
 # so flash[0] is the only place that survives.
 _NRF53_DISABLE_STUB = (
-    b"\x00\x00\x01\x20\x45\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
+    b"\x00\x00\x01\x20\x51\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
     b"\x41\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
     b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x41\x00\x00\x00"
     b"\x41\x00\x00\x00\x00\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
-    b"\x01\xbe\xfe\xe7\x22\x48\x4f\xf0\xff\x31\x01\x60\x01\x61\x01\x62"
-    b"\x01\x63\x01\x64\x01\x65\x01\x66\x01\x67\x1e\x48\x01\x60\x1e\x4c"
-    b"\x1e\x4d\x1f\x4e\x22\x68\x01\x2a\xfc\xd1\x01\x22\x2a\x60\x22\x68"
-    b"\x01\x2a\xfc\xd1\x1b\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x1a\x48"
-    b"\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22\x2a\x60\x22\x68\x01\x2a"
-    b"\xfc\xd1\x16\x48\x00\x22\x02\x60\x00\x22\x4f\xf4\x80\x43\x01\x32"
-    b"\x9a\x42\xfc\xd3\x12\x4c\x13\x4d\x22\x68\x01\x2a\xfc\xd1\x01\x22"
-    b"\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x0f\x48\x06\x60\x22\x68\x01\x2a"
-    b"\xfc\xd1\x00\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x00\xbe\xfe\xe7"
-    b"\x04\x16\x08\x50\x00\x54\x00\x50\x00\x94\x03\x50\x04\x95\x03\x50"
-    b"\xfa\x50\xfa\x50\x00\x80\xff\x00\x1c\x80\xff\x00\x14\x56\x00\x50"
-    b"\x00\x04\x08\x41\x04\x05\x08\x41\x00\x80\xff\x01"
+    b"\x33\x48\x71\x46\x01\x60\x4f\xf0\x00\x50\x32\x49\x01\x60\xfe\xe7"
+    b"\x4f\xf0\x00\x50\x4f\xf0\x11\x31\x01\x60\x2f\x48\x4f\xf0\xff\x31"
+    b"\x01\x60\x01\x61\x01\x62\x01\x63\x01\x64\x01\x65\x01\x66\x01\x67"
+    b"\x4f\xf0\x00\x50\x4f\xf0\x22\x31\x01\x60\x28\x48\x4f\xf0\xff\x31"
+    b"\x01\x60\x27\x4c\x27\x4d\x28\x4e\x22\x68\x01\x2a\xfc\xd1\x01\x22"
+    b"\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x24\x48\x06\x60\x22\x68\x01\x2a"
+    b"\xfc\xd1\x23\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22\x2a\x60"
+    b"\x22\x68\x01\x2a\xfc\xd1\x4f\xf0\x00\x50\x4f\xf0\x33\x31\x01\x60"
+    b"\x1c\x48\x00\x22\x02\x60\x00\x22\x4f\xf4\x00\x43\x01\x32\x9a\x42"
+    b"\xfc\xd3\x4f\xf0\x00\x50\x4f\xf0\x44\x31\x01\x60\x16\x4c\x17\x4d"
+    b"\x22\x68\x01\x2a\xfc\xd1\x01\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1"
+    b"\x13\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22\x2a\x60\x22\x68"
+    b"\x01\x2a\xfc\xd1\x4f\xf0\x00\x50\x0e\x49\x01\x60\xfe\xe7\x00\x00"
+    b"\x04\x00\x00\x20\xd5\x00\xdf\xba\x04\x16\x08\x50\x00\x54\x00\x50"
+    b"\x00\x94\x03\x50\x04\x95\x03\x50\xfa\x50\xfa\x50\x00\x80\xff\x00"
+    b"\x1c\x80\xff\x00\x14\x56\x00\x50\x00\x04\x08\x41\x04\x05\x08\x41"
+    b"\x00\x80\xff\x01\xde\xc0\xad\xde"
 )
+# Stage magic values written to SRAM 0x20000000 by the stub:
+#   0x11111111  reset_handler entered
+#   0x22222222  VMC RAM power-on done
+#   0x33333333  App UICR programmed
+#   0x44444444  NETWORK.FORCEOFF=0 + delay done
+#   0xDEADC0DE  Net UICR programmed — stub complete ✓
+#   0xBADF00D5  fault_handler hit (LR recorded at 0x20000004)
 _STUB_TIMEOUT_S    = 5.0          # typical run is < 100 ms once running
 
 
@@ -801,11 +813,9 @@ def _run_disable_stub(dp, *, session=None, serial=None, frequency_hz=None,
         outer_phase = "VC_CORERESET set"
         ap_write(DEMCR, 0x00000001)
         outer_phase = "CTRL-AP#2 RESET pulse"
-        # CTRL-AP#2 = App core control AP on nRF5340. The reset pulse
-        # causes a FAULT ACK on the in-flight SWD transaction; just
-        # swallow it. Stub will run independently on the chip; the
-        # caller does a probe-rs-based UICR verify in a fresh session
-        # afterward (probe-rs reconnects cleanly post-reset).
+        # CTRL-AP#2 = App core control AP on nRF5340. Reset pulse causes
+        # a FAULT ACK on the in-flight SWD transaction (chip resets mid-
+        # transfer); swallow it. Stub will run independently.
         app_ctrl_ap = 2
         try:
             dp.write_dp(0x8, (app_ctrl_ap << 24) | 0x00)
@@ -814,71 +824,86 @@ def _run_disable_stub(dp, *, session=None, serial=None, frequency_hz=None,
             dp.write_ap((app_ctrl_ap << 24) | 0x00, 0x00000000)
         except Exception:
             pass
-        time.sleep(0.2)   # let stub run
-        # Skip in-session verify — pyocd's DP state is unrecoverable here.
-        # Return now, caller will probe-rs read UICR to verify.
-        return True, "stub loaded to flash + CTRL-AP RESET pulsed; verify via probe-rs"
+        time.sleep(0.5)   # generous: stub completes in < 50 ms
 
-        t0 = time.monotonic()
-        while time.monotonic() - t0 < 1.0:
-            try:
-                dhcsr = ap_read(DHCSR)
-            except Exception:
-                dhcsr = 0
-            if (dhcsr & S_HALT) and not (dhcsr & (1 << 19)):   # S_HALT && !S_LOCKUP
-                break
-            time.sleep(0.005)
-        else:
-            try:
-                ap_write(DCRSR, 15 & 0x7F); time.sleep(0.005)
-                pc = ap_read(DCRDR)
-            except Exception:
-                pc = 0
-            return False, f"reset didn't land cleanly (PC=0x{pc:08X})"
-
-        # 4. Clear VC_CORERESET, run stub to BKPT.
-        ap_write(DEMCR, 0x00000000)
-        ap_write(DHCSR, DBGKEY | C_DEBUGEN)
-
-        # 7. Wait for the stub's BKPT.
-        t0 = time.monotonic()
-        while time.monotonic() - t0 < _STUB_TIMEOUT_S:
-            if ap_read(DHCSR) & S_HALT:
-                break
-            time.sleep(0.005)
-        else:
-            # Diagnostic: halt and read PC + xPSR + DHCSR to see where stuck.
-            ap_write(DHCSR, DBGKEY | C_DEBUGEN | C_HALT)
-            time.sleep(0.05)
-            ap_write(DCRSR, 15 & 0x7F)                # read PC
-            time.sleep(0.005)
-            pc = ap_read(DCRDR)
-            ap_write(DCRSR, 16 & 0x7F)                # read xPSR
-            time.sleep(0.005)
-            xpsr = ap_read(DCRDR)
-            dhcsr = ap_read(DHCSR)
-            return False, (f"stub did not halt within {_STUB_TIMEOUT_S}s "
-                           f"(PC=0x{pc:08X} xPSR=0x{xpsr:08X} DHCSR=0x{dhcsr:08X})")
-        elapsed_ms = int((time.monotonic() - t0) * 1000)
-
-        # 8. Verify both UICRs read back the unlock magic.
-        app_approt    = ap_read(0x00FF8000)
-        app_secapprot = ap_read(0x00FF801C)
-        net_approt    = ap_read(0x01FF8000)
-
-        verify = []
-        verify.append(f"App.APPROTECT=0x{app_approt:08X}")
-        verify.append(f"App.SECUREAPPROTECT=0x{app_secapprot:08X}")
-        verify.append(f"Net.APPROTECT=0x{net_approt:08X}")
-
-        all_unlocked = (app_approt == 0x50FA50FA and
-                        app_secapprot == 0x50FA50FA and
-                        net_approt == 0x50FA50FA)
-        if all_unlocked:
-            return True, f"stub ran in {elapsed_ms}ms; " + ", ".join(verify)
-        return False, "UICR mismatch: " + ", ".join(verify)
+        # Close this session so we can open a fresh one — pyocd's DP
+        # state is unrecoverable after a reset-induced FAULT ACK.
+        if session is not None:
+            try: session.close()
+            except Exception: pass
+        time.sleep(0.1)
+        return _verify_stub_run(serial=serial, frequency_hz=frequency_hz)
     except Exception as e:
         return False, f"fault in phase '{outer_phase}': {type(e).__name__}: {e}"
+
+
+def _verify_stub_run(*, serial, frequency_hz) -> tuple[bool, str]:
+    """Verify the stub ran by reading the stub's stage-magic + UICR cells
+    via probe-rs subprocess. We use probe-rs (not pyocd) because the
+    parent pyocd session just closed but USB takes a moment to release,
+    and probe-rs auto-retries USB-claim more gracefully.
+
+    Stub writes a magic value to SRAM 0x20000000 at each stage:
+      0x11111111 reset entered, 0x22222222 VMC done, 0x33333333 App UICR done,
+      0x44444444 Net release done, 0xDEADC0DE all done, 0xBADF00D5 faulted.
+    """
+    import subprocess
+    import shutil
+    import re
+    probe_rs = shutil.which("probe-rs")
+    if not probe_rs:
+        return False, "probe-rs not on PATH for verify"
+
+    def _probe_rs_read(addr, count, core=0):
+        cmd = [probe_rs, "read", "--probe", f"2e8a:000c:{serial}",
+               "--protocol", "swd", "--chip", "nRF5340_xxAA",
+               "--speed", str(int(frequency_hz / 1000)),
+               "--core", str(core), "b32", f"0x{addr:08x}", str(count)]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        except subprocess.TimeoutExpired:
+            return None, "timeout"
+        words = []
+        for line in r.stdout.splitlines():
+            if "WARN" in line: continue
+            for tok in line.strip().split():
+                if re.fullmatch(r"[0-9a-fA-F]{8}", tok):
+                    words.append(int(tok, 16))
+        if r.returncode != 0 and not words:
+            return None, r.stderr.strip().splitlines()[-1] if r.stderr else "exit nonzero"
+        return words, None
+
+    # Read SRAM stage magic (App-core view).
+    words, err = _probe_rs_read(0x20000000, 2, core=0)
+    if words is None:
+        return False, f"verify read failed: {err}"
+    stage = words[0]
+    fault_lr = words[1] if len(words) > 1 else 0
+
+    STAGE_NAMES = {
+        0x11111111: "reset entered",
+        0x22222222: "VMC done",
+        0x33333333: "App UICR done",
+        0x44444444: "Net release done",
+        0xDEADC0DE: "✓ FULLY DONE",
+        0xBADF00D5: f"✗ FAULTED (LR=0x{fault_lr:08X})",
+    }
+    stage_desc = STAGE_NAMES.get(stage, f"unknown 0x{stage:08X}")
+
+    # Read UICR cells.
+    uicr, _ = _probe_rs_read(0x00FF8000, 8, core=0)
+    app_approt = uicr[0] if uicr else 0
+    app_secapprot = uicr[7] if uicr and len(uicr) > 7 else 0
+    net_uicr, _ = _probe_rs_read(0x01FF8000, 1, core=0)
+    net_approt = net_uicr[0] if net_uicr else 0
+
+    ok = (stage == 0xDEADC0DE
+          and app_approt == 0x50FA50FA
+          and app_secapprot == 0x50FA50FA
+          and net_approt == 0x50FA50FA)
+    return ok, (f"stage: {stage_desc}; "
+                f"App.AP=0x{app_approt:08X}, App.SECAP=0x{app_secapprot:08X}, "
+                f"Net.AP=0x{net_approt:08X}")
 
 
 async def erase_ctrl_ap_all(*, serial, frequency_hz):
