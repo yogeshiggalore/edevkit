@@ -704,15 +704,31 @@ async def api_flash(
     }
     FLASH_JOBS[job_id] = job
 
+    # Bug 2 workaround: probe-rs CMSIS-DAP flash silently fails on nRF5340
+    # (loader runs, never sends a single flash transaction). Route nRF5340
+    # HEX through pyocd + sector_size patch instead — App-side flash works.
+    is_nrf5340 = "nrf5340" in (use_chip or "").lower()
+    use_pyocd_path = is_nrf5340 and binfmt == "hex"
+
     async def runner():
         try:
-            async for kind, payload in probers.flash_file_streaming(
-                chip=use_chip, speed_khz=session.speed_khz,
-                file_path=tmp_path, binary_format=binfmt,
-                serial=session.serial, vid_pid=session.vid_pid,
-                core_index=core_index, base_address=base,
-                verify=bool(int(verify)),
-            ):
+            if use_pyocd_path:
+                import pyocd_flash
+                stream = pyocd_flash.flash_file_streaming_pyocd(
+                    chip="nrf5340_xxaa",
+                    frequency_hz=session.speed_khz * 1000,
+                    hex_path=tmp_path,
+                    serial=session.serial,
+                )
+            else:
+                stream = probers.flash_file_streaming(
+                    chip=use_chip, speed_khz=session.speed_khz,
+                    file_path=tmp_path, binary_format=binfmt,
+                    serial=session.serial, vid_pid=session.vid_pid,
+                    core_index=core_index, base_address=base,
+                    verify=bool(int(verify)),
+                )
+            async for kind, payload in stream:
                 if kind == "progress":
                     await job["queue"].put({"type": "progress", **payload})
                 elif kind == "done":
