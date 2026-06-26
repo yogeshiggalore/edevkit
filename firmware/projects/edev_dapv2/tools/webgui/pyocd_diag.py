@@ -309,6 +309,94 @@ def _recover_dp(dp):
         pass
 
 
+# Pre-computed SWD wake-up sequences for DAP_SWJ_Sequence.
+# These mirror what J-Link's CORESIGHT_Configure() does internally and what
+# nrfjprog needs to unstick an nRF5340 with sticky DP state or pending
+# (never-completing) NVMC operations.
+
+# 1. SWD line reset: 50+ clocks with SWDIO=high. We send 56 bits of 1.
+_SWD_LINE_RESET_BITS = 56
+_SWD_LINE_RESET = (1 << _SWD_LINE_RESET_BITS) - 1   # 0xFFFFFFFFFFFFFFFF (56 bits)
+
+# 2. JTAG-to-SWD switch sequence: 16-bit 0xE79E (LSB-first transmission;
+#    pyocd's swj_sequence sends LSB-first per bit, so the integer is the
+#    transmitted bit pattern).
+_JTAG_TO_SWD = 0xE79E
+_JTAG_TO_SWD_BITS = 16
+
+# 3. Dormant-state → SWD selection alert sequence (ADIv5 §B5.4.3).
+#    Required when the DP came up in dormant state (some nRF53 lockups
+#    transition the DP to dormant on protected access). The pattern is
+#    transmitted LSB-first per bit:
+#      8 bits of 1, then 128-bit alert, then 4 bits of 0, then 8-bit SWD activation.
+_SWD_ALERT_BYTES = bytes([
+    0xFF,                                            # 8 ones (alert preamble)
+    0x92, 0xF3, 0x09, 0x62, 0x95, 0x2D, 0x85, 0x86,  # 128-bit selection alert,
+    0xE9, 0xAF, 0xDD, 0xE3, 0xA2, 0x0E, 0xBC, 0x19,  # LSB-first byte-by-byte
+    0x00,                                            # 4 zeros + 4 unused
+    0x1A,                                            # 8-bit SWD activation
+])
+_SWD_ALERT_BITS = 8 + 128 + 4 + 8
+
+
+def _full_dp_wake(session):
+    """Full DP wake-up + line reset + DPIDR re-read.
+
+    Issues a sequence equivalent to what J-Link's CORESIGHT_Configure()
+    does at connect time. Unsticks the chip from:
+      - sticky CTRL/STAT errors (STKERR, WDATAERR, etc.)
+      - dormant DP state (some nRF53 lockups put the DP here)
+      - a never-completing NVMC operation that was holding ERASEALLSTATUS
+        at busy
+      - any half-issued AP transaction left from a previous host crash
+
+    The protocol comes from ARM ADIv5 spec section B5 + DAP-Lite/J-Link
+    practice. Order matters:
+      1. 50-clock line reset (SWDIO=1)
+      2. JTAG-to-SWD switch (16-bit 0xE79E)
+      3. SWD selection alert sequence (dormant wake — harmless if not dormant)
+      4. 50-clock line reset again
+      5. DPIDR read (mandatory first transaction after any line reset per
+         ADIv5 §B4.2.2 — also clears DP state machine)
+      6. ABORT.*CLR writes to drop sticky errors
+      7. CTRL/STAT power-up
+    """
+    probe = session.probe
+    if not hasattr(probe, '_link'):
+        return False  # not a CMSIS-DAP probe
+
+    link = probe._link
+
+    try:
+        link.swj_sequence(_SWD_LINE_RESET_BITS, _SWD_LINE_RESET)
+        link.swj_sequence(_JTAG_TO_SWD_BITS, _JTAG_TO_SWD)
+        # Selection alert: 148 bits, send the bytes verbatim. swj_sequence
+        # takes an int — concatenate the bytes LSB-byte first.
+        alert_int = int.from_bytes(_SWD_ALERT_BYTES, 'little')
+        link.swj_sequence(_SWD_ALERT_BITS, alert_int)
+        link.swj_sequence(_SWD_LINE_RESET_BITS, _SWD_LINE_RESET)
+    except Exception:
+        # SWJ_Sequence support is mandatory in CMSIS-DAP v1/v2 but be
+        # defensive — if the probe truncates or refuses, we still want
+        # the standard dp.connect() fallback to run below.
+        return False
+
+    dp = session.board.target.dp
+    try:
+        dp.connect()                       # forces DPIDR read after line reset
+    except Exception:
+        pass
+    try:
+        dp.write_dp(0x0, 0x0000001E)       # ABORT: clear sticky errors
+    except Exception:
+        pass
+    try:
+        dp.power_up_debug()                # CTRL/STAT.CSYSPWRUPREQ + CDBGPWRUPREQ
+    except Exception:
+        pass
+    return True
+
+
 def _reset_sync(serial, frequency_hz, kind):
     """kind ∈ {"system", "halt", "ctrl_ap"}. Returns (ok, message)."""
     from pyocd.core.helpers import ConnectHelper
@@ -487,10 +575,14 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
     try:
         sess.open(init_board=False)
         dp = sess.board.target.dp
-        try: dp.connect()
-        except Exception: pass
-        try: dp.power_up_debug()
-        except Exception: pass
+
+        # Full DP wake (J-Link CORESIGHT_Configure equivalent). Required
+        # to unstick chips that came up with a stale NVMC operation, a
+        # dormant DP, or sticky CTRL/STAT errors — otherwise CTRL-AP
+        # ERASEALL writes silently no-op and ERASEALLSTATUS sticks at
+        # busy. Without this, a previously-aborted erase makes the chip
+        # appear bricked from the host's perspective.
+        _full_dp_wake(sess)
 
         # Find every Nordic CTRL-AP. Remember the IDR for later family ID.
         ctrl_aps = []          # list of AP indices
@@ -1028,15 +1120,17 @@ def _program_net_flash_sync(serial, frequency_hz, segments,
     try:
         sess.open(init_board=False)
         dp = sess.board.target.dp
-        try: dp.connect()
-        except Exception: pass
-        try: dp.power_up_debug()
-        except Exception: pass
 
-        # Defensive CTRL-AP#3 RESET pulse first — clears any stuck-erase
-        # state from a previous aborted operation. Without this, a stale
-        # ERASEALLSTATUS=1 (busy) blocks the new ERASEALL we're about
-        # to issue.
+        # Full DP wake — equivalent to J-Link's CORESIGHT_Configure().
+        # Sends a line reset + dormant-wake + JTAG-to-SWD + ABORT clear.
+        # This is what makes CTRL-AP ERASEALL succeed on a chip that was
+        # left with a stuck NVMC operation from a previous aborted run.
+        _full_dp_wake(sess)
+
+        # Defensive CTRL-AP#3 RESET pulse — belt-and-braces. If a previous
+        # ERASEALL never completed, ERASEALLSTATUS sticks at busy; the
+        # full DP wake above usually fixes that, but a fresh RESET pulse
+        # gives the controller an extra chance.
         dp.write_dp(0x8, (3 << 24) | 0x00)
         dp.write_ap((3 << 24) | 0x00, 1)
         time.sleep(0.02)
