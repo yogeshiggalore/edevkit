@@ -220,17 +220,38 @@ async def api_info():
 async def api_read(body: dict = Body(...)):
     addr = int(body["address"], 0) if isinstance(body["address"], str) else int(body["address"])
     count = int(body["word_count"])
-    code, data, err = await probers.read_words(
-        chip=session.chip,
-        speed_khz=session.speed_khz,
-        address=addr,
-        word_count=count,
-        serial=session.serial,
-        vid_pid=session.vid_pid,
-        core_index=session.core_index,
-    )
-    if code != 0 or not data:
-        raise HTTPException(status_code=502, detail=err or "read failed")
+    core_index = int(body.get("core_index", session.core_index))
+
+    # nRF5340 Net core (core_index=1): probe-rs's CMSIS-DAP backend has
+    # multiple stacking issues on Net access (multidrop SWD on locked
+    # cores + post-lockup FAULT during session teardown). Use pyocd's
+    # direct AHB-AP read instead — bypasses all of probe-rs's vendor
+    # cleanup. Net AHB-AP is index 1; CSW=0x03800042 is Nordic-required.
+    if "nrf5340" in (session.chip or "").lower() and core_index == 1:
+        serial = await _resolve_serial()
+        ok, data, msg = await pyocd_diag.read_memory(
+            serial=serial,
+            frequency_hz=session.speed_khz * 1000,
+            ahb=1, address=addr, word_count=count,
+            csw=0x03800042,
+        )
+        if not ok or len(data) < count * 4:
+            raise HTTPException(status_code=502,
+                                detail=f"net read failed: {msg}")
+        err = ""
+        code = 0
+    else:
+        code, data, err = await probers.read_words(
+            chip=session.chip,
+            speed_khz=session.speed_khz,
+            address=addr,
+            word_count=count,
+            serial=session.serial,
+            vid_pid=session.vid_pid,
+            core_index=core_index,
+        )
+        if code != 0 or not data:
+            raise HTTPException(status_code=502, detail=err or "read failed")
     # Return both raw hex words (for display) and base64 of bytes (for download)
     import base64
     words = struct.unpack(f"<{count}I", data)

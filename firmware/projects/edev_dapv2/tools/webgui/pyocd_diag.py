@@ -903,3 +903,61 @@ async def erase_ctrl_ap_all(*, serial, frequency_hz):
     return await loop.run_in_executor(
         None, _erase_ctrl_ap_sync, serial, frequency_hz
     )
+
+
+def _read_memory_sync(serial, frequency_hz, ahb, address, word_count, csw):
+    """Read N 32-bit words from `address` via AHB-AP `ahb` (0=App, 1=Net
+    on nRF5340). Bypasses probe-rs's vendor sequence — works on locked
+    chips and on cores in post-erase lockup state.
+
+    Returns (ok, bytes_le, message). bytes_le is little-endian raw bytes.
+    """
+    from pyocd.core.helpers import ConnectHelper
+    try:
+        sess = ConnectHelper.session_with_chosen_probe(
+            unique_id=serial, target_override="cortex_m",
+            connect_mode="attach",
+            options={"frequency": frequency_hz, "dap_protocol": "swd",
+                     "auto_unlock": False},
+        )
+    except Exception as e:
+        return False, b"", f"open session: {e}"
+    if not sess:
+        return False, b"", "no probe matched"
+
+    out = bytearray()
+    try:
+        sess.open(init_board=False)
+        dp = sess.board.target.dp
+        try: dp.connect()
+        except Exception: pass
+        try: dp.power_up_debug()
+        except Exception: pass
+
+        # Auto-increment AHB-AP transfers across a 1 KB TAR boundary.
+        for i in range(word_count):
+            addr = address + i * 4
+            dp.write_dp(0x8, (ahb << 24) | 0x00)            # SELECT bank 0
+            dp.write_ap((ahb << 24) | 0x00, csw)            # CSW
+            dp.write_ap((ahb << 24) | 0x04, addr)           # TAR
+            _ = dp.read_ap((ahb << 24) | 0x0C)              # posted DRW
+            val = dp.read_dp(0x0C) & 0xFFFFFFFF             # RDBUFF
+            out += val.to_bytes(4, 'little')
+    except Exception as e:
+        return False, bytes(out), f"{type(e).__name__}: {e}"
+    finally:
+        import threading
+        closer = threading.Thread(target=lambda: _safe_close(sess), daemon=True)
+        closer.start()
+        closer.join(timeout=2.0)
+    return True, bytes(out), "ok"
+
+
+async def read_memory(*, serial, frequency_hz, ahb, address, word_count, csw=0x23000002):
+    """Async wrapper. csw default 0x23000002 (App AHB-AP, secure, 32-bit).
+    For nRF5340 Net (AHB-AP#1), pass csw=0x03800042 (Nordic-required value).
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, _read_memory_sync, serial, frequency_hz, ahb, address, word_count, csw,
+    )
