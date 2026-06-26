@@ -18,6 +18,27 @@ from typing import Optional
 # starts fast even if pyocd has install issues.
 
 
+# ─── nRF5340 APPROTECT-disable Thumb stub ─────────────────────────────
+# Source: edevkit/firmware/projects/edev_dapv2/tools/nrf53_disable_approtect.s
+# Build:  arm-none-eabi-as -mcpu=cortex-m33 -mthumb nrf53_disable_approtect.s
+# Loads to App SRAM @ 0x20000000, runs on App CPU, programs
+# UICR.APPROTECT/SECUREAPPROTECT for both cores via NVMC, BKPTs.
+_NRF53_DISABLE_STUB = (
+    b"\x18\x48\x00\x21\x01\x60\x18\x4c\x18\x4d\x19\x4e\x22\x68\x01\x2a"
+    b"\xfc\xd1\x01\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x15\x48\x06\x60"
+    b"\x22\x68\x01\x2a\xfc\xd1\x14\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1"
+    b"\x00\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x10\x4c\x10\x4d\x22\x68"
+    b"\x01\x2a\xfc\xd1\x01\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x0d\x48"
+    b"\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22\x2a\x60\x22\x68\x01\x2a"
+    b"\xfc\xd1\x00\xbe\x14\x56\x00\x50\x00\x94\x03\x50\x04\x95\x03\x50"
+    b"\xfa\x50\xfa\x50\x00\x80\xff\x00\x1c\x80\xff\x00\x00\x04\x08\x41"
+    b"\x04\x05\x08\x41\x00\x80\xff\x01"
+)
+_STUB_LOAD_ADDR    = 0x20000000   # top of App SRAM (1 MB available; stub is 136 B)
+_STUB_INITIAL_MSP  = 0x20010000   # 64 KB above the load addr, plenty of headroom
+_STUB_TIMEOUT_S    = 5.0          # generous — typical run is < 100 ms
+
+
 @dataclass
 class ApEntry:
     index: int
@@ -562,77 +583,31 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
         # (on nRF52, UICR=0xFFFFFFFF IS the unlocked default).
         is_nrf53 = any(idr == 0x12880000 for idr in ctrl_ap_idrs.values())
         if is_nrf53 and overall_ok:
-            # Per-core UICR programming. nRF5340 layout:
-            #   App AHB-AP (AP#0) ─ NVMC @ 0x50039000 ─ App UICR @ 0x00FF8000
-            #   Net AHB-AP (AP#1) ─ NVMC @ 0x41080000 ─ Net UICR @ 0x00FF8000 (Net's own space)
-            #
-            # Both AHB-APs need CSW=0x03800042 (Nordic-specific MasterType=CPU
-            # value), confirmed against nrfjprog J-Link trace. Net peripherals
-            # are NOT accessible from App AHB-AP — go through Net AHB-AP.
-            # NETWORK.FORCEOFF gets set by CTRL-AP#3 ERASEALL; releasing it
-            # turns out to be unnecessary because Net AHB-AP debug access
-            # works independently of Net core power.
-            # _recover_dp clears any sticky-fault bits left by the ERASEALL
-            # transactions so the AHB-AP path starts clean.
+            # App UICR.APPROTECT/SECUREAPPROTECT ← 0x50FA50FA via the host's
+            # App AHB-AP + App NVMC. This works reliably and is the part that
+            # actually unblocks probe-rs (its "Core 0 is locked" check looks
+            # at App-side state). Net UICR write turned out to be much
+            # harder — see [[nrf5340-net-uicr-write-attempts-2026-06-26]]
+            # for the dead ends (host-side Net AHB-AP writes FAULT mid-flow;
+            # on-target stub HardFaults because nRF5340 peripherals need SPU
+            # configuration which would balloon the stub to nrfjprog's
+            # 3748-byte size). The current state leaves Net session-unlocked
+            # only — the user's freshly-flashed firmware (e.g. Ring Pro 351)
+            # writes APPROTECT.DISABLE at boot to handle Net unlock on
+            # subsequent resets.
             _recover_dp(dp)
-
-            disable_msgs = []
             ok_app, msg_app = _disable_approtect_via_nvmc(
                 ahb=0, csw=0x23000002, nvmc_base=0x50039000,
                 uicr_writes=[
-                    (0x00FF8000, 0x50FA50FA),   # App UICR.APPROTECT
-                    (0x00FF801C, 0x50FA50FA),   # App UICR.SECUREAPPROTECT
+                    (0x00FF8000, 0x50FA50FA),
+                    (0x00FF801C, 0x50FA50FA),
                 ],
             )
-            disable_msgs.append(f"App: {'✓' if ok_app else '✗'} {msg_app}")
+            msg = f"App: {'✓' if ok_app else '✗'} {msg_app}; Net: SESSION-only (flash firmware that handles APPROTECT.DISABLE, or use J-Link + nrfjprog --recover --coprocessor CP_NETWORK for permanent unlock)"
+            results.append(("UICR-disable", ok_app, msg))
             if not ok_app:
                 overall_ok = False
-                _recover_dp(dp)   # heal before trying Net
-
-            # Net AHB-AP gets gated after CTRL-AP#3 ERASEALL — direct accesses
-            # FAULT. A CTRL-AP#3 RESET pulse + APPROTECTSTATUS readback wakes
-            # Net AHB-AP without re-arming APPROTECT (empirically confirmed
-            # 2026-06-26 — APPROTECTSTATUS stays at 1 post-pulse).
-            _recover_dp(dp)
-            net_ctrl_ap = max(
-                (ap for ap, idr in ctrl_ap_idrs.items() if idr == 0x12880000),
-                default=3,
-            )
-            try:
-                dp.write_dp(0x8, (net_ctrl_ap << 24) | 0x00)
-                dp.write_ap((net_ctrl_ap << 24) | 0x00, 0x00000001)   # RESET = 1
-                time.sleep(0.05)
-                dp.write_ap((net_ctrl_ap << 24) | 0x00, 0x00000000)   # RESET = 0
-                time.sleep(0.05)
-                # APPROTECTSTATUS readback — appears to be the trigger that
-                # actually unblocks Net AHB-AP transactions.
-                _ = dp.read_ap((net_ctrl_ap << 24) | 0x0C)
-                dp.read_dp(0x0C)
-            except Exception:
                 _recover_dp(dp)
-
-            ok_net, msg_net = _disable_approtect_via_nvmc(
-                ahb=1, csw=0x03800042, nvmc_base=0x41080000,
-                uicr_writes=[
-                    (0x00FF8000, 0x50FA50FA),   # Net UICR.APPROTECT (Net's own space)
-                ],
-            )
-            disable_msgs.append(f"Net: {'✓' if ok_net else '✗'} {msg_net}")
-            # Net UICR write is BEST-EFFORT. Net AHB-AP access immediately
-            # after the multi-step erase flow is flaky on this probe (works
-            # standalone, FAULTs inside the webgui sequence — likely DP
-            # state accumulation across the App-UICR + Net-pulse path).
-            # App UICR alone keeps the chip unlocked for App-side ops, which
-            # is enough for the common case (Net core typically gets
-            # re-flashed with firmware that disables APPROTECT on boot).
-            # For a chip that truly requires permanent Net unlock without
-            # firmware help, recover via J-Link + nrfjprog.
-            if not ok_net:
-                disable_msgs.append("(Net write is best-effort — App-side unlocked, "
-                                    "use J-Link + nrfjprog if Net needs permanent unlock)")
-                _recover_dp(dp)   # clear DP sticky bits before reset
-
-            results.append(("UICR-disable", ok_app, "; ".join(disable_msgs)))
 
         _recover_dp(dp)
     except Exception as e:
@@ -643,6 +618,202 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
         except Exception: pass
 
     return overall_ok, results
+
+
+def _run_disable_stub(dp, *, app_ahb: int = 0) -> tuple[bool, str]:
+    import time
+    """Load + run the nRF5340 APPROTECT-disable Thumb stub on the App CPU.
+
+    Sequence:
+      1. Halt App via DHCSR  (0xE000EDF0 ← 0xA05F0003)
+      2. Load _NRF53_DISABLE_STUB to App SRAM @ _STUB_LOAD_ADDR via App AHB-AP
+         with autoincrement (CSW=0x23000012).
+      3. Set MSP (R13) = _STUB_INITIAL_MSP via DCRSR/DCRDR.
+      4. Set PC (R15)  = _STUB_LOAD_ADDR | 1 (Thumb bit).
+      5. Set xPSR.T = 1 (ensure Thumb state).
+      6. Run via DHCSR ← 0xA05F0001 (C_DEBUGEN, release C_HALT).
+      7. Poll DHCSR.S_HALT until set (stub ends at BKPT) or timeout.
+      8. Verify UICR readback on App side.
+
+    Returns (ok, message). Uses CSW=0x23000002 for single-word ops and
+    CSW=0x23000012 (AddrInc=1) for the streaming stub load.
+    """
+    ahb = app_ahb
+    CSW_SINGLE     = 0x23000002   # 32-bit, no autoincrement
+    CSW_AUTOINC    = 0x23000012   # 32-bit, single-word autoincrement
+    DHCSR          = 0xE000EDF0   # Debug Halt Control/Status
+    DCRSR          = 0xE000EDF4   # Debug Core Register Selector
+    DCRDR          = 0xE000EDF8   # Debug Core Register Data
+    DEMCR          = 0xE000EDFC
+    DBGKEY         = 0xA05F0000
+    C_DEBUGEN      = 1 << 0
+    C_HALT         = 1 << 1
+    S_REGRDY       = 1 << 16
+    S_HALT         = 1 << 17
+
+    def write_ap_select():
+        dp.write_dp(0x8, (ahb << 24) | 0x00)
+
+    def ap_write(addr, value, csw=CSW_SINGLE):
+        write_ap_select()
+        dp.write_ap((ahb << 24) | 0x00, csw)
+        dp.write_ap((ahb << 24) | 0x04, addr)
+        dp.write_ap((ahb << 24) | 0x0C, value)
+        dp.read_dp(0x0C)
+
+    def ap_read(addr, csw=CSW_SINGLE):
+        write_ap_select()
+        dp.write_ap((ahb << 24) | 0x00, csw)
+        dp.write_ap((ahb << 24) | 0x04, addr)
+        _ = dp.read_ap((ahb << 24) | 0x0C)
+        return dp.read_dp(0x0C)
+
+    def wait_regrdy(timeout=0.5):
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
+            if ap_read(DHCSR) & S_REGRDY:
+                return True
+            time.sleep(0.001)
+        return False
+
+    def write_cpu_reg(reg_num, value):
+        """Write CPU register `reg_num` (13=MSP, 15=PC, 16=xPSR)."""
+        ap_write(DCRDR, value)
+        ap_write(DCRSR, (1 << 16) | (reg_num & 0x7F))   # REGWnR=1
+        if not wait_regrdy():
+            return False
+        return True
+
+    # On Cortex-M33 with TrustZone, SYSRESETREQ resets VTOR (Secure: to 0).
+    # So pre-setting VTOR in RAM doesn't survive — the CPU always fetches
+    # SP+PC from flash[0x00000000..7] after reset. With erased flash that
+    # gives 0xFFFFFFFF → instant lockup, and S_LOCKUP can't be cleared
+    # except by reset, creating an unbreakable cycle.
+    #
+    # Solution (mirrors nrfjprog's approach but with a 144-byte payload
+    # instead of 3748 bytes): write the stub INTO App flash starting at
+    # 0x00000000, so the post-reset vector fetch lands on valid values
+    # and the CPU runs our code instead of going to lockup. The stub
+    # programs UICR and halts at BKPT, where we read the result.
+
+    APP_NVMC_BASE = 0x50039000
+
+    def nvmc_wait_ready(timeout=2.0):
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
+            try:
+                if ap_read(APP_NVMC_BASE + 0x400) & 1:
+                    return True
+            except Exception:
+                pass
+            time.sleep(0.005)
+        return False
+
+    try:
+        # 1. Build the flash payload: 2-word vector table + stub code.
+        # DEBUG: prefix a "bkpt #0; bkpt #0" (4 bytes) before the real
+        # stub so the very first thing the CPU executes is a known
+        # halt. If we land here, vector-fetch + flash execution works,
+        # and the real stub's later faults are inside its own code.
+        stub = (b"\x00\xbe\x00\xbe"      # bkpt #0 ; bkpt #0
+                + _NRF53_DISABLE_STUB)
+        if len(stub) % 4:
+            stub = stub + b"\x00" * (4 - (len(stub) % 4))
+        STUB_CODE_OFFSET = 8
+        stub_pc = STUB_CODE_OFFSET | 1   # Thumb bit
+        vector_table = _STUB_INITIAL_MSP.to_bytes(4, "little") + \
+                       stub_pc.to_bytes(4, "little")
+        blob = vector_table + stub
+        # Convert to (addr, value) word writes starting at flash 0x00000000.
+        flash_writes = []
+        for off in range(0, len(blob), 4):
+            word = (blob[off] | (blob[off+1] << 8)
+                    | (blob[off+2] << 16) | (blob[off+3] << 24))
+            flash_writes.append((off, word))
+
+        # 2. NVMC write-enable, write all words, NVMC write-disable.
+        if not nvmc_wait_ready():
+            return False, "App NVMC not ready before stub flash"
+        ap_write(APP_NVMC_BASE + 0x504, 0x00000001)        # CONFIG = Wen
+        if not nvmc_wait_ready():
+            return False, "App NVMC didn't acknowledge Wen"
+        for addr, value in flash_writes:
+            ap_write(addr, value)
+            if not nvmc_wait_ready(timeout=5.0):
+                ap_write(APP_NVMC_BASE + 0x504, 0x00000000)
+                return False, f"App NVMC stalled at 0x{addr:08X}"
+        ap_write(APP_NVMC_BASE + 0x504, 0x00000000)        # CONFIG = Ren
+        if not nvmc_wait_ready():
+            return False, "App NVMC didn't acknowledge Ren"
+
+        # 3. Reset with halt-on-first-instruction, so we can verify the
+        #    CPU successfully fetched our vectors instead of going to
+        #    lockup again. VC_CORERESET halts on the first instruction
+        #    at the reset PC — exactly the start of our stub.
+        ap_write(DEMCR, 0x00000001)                    # VC_CORERESET = 1
+        ap_write(DHCSR, DBGKEY | C_DEBUGEN | C_HALT)
+        ap_write(0xE000ED0C, 0x05FA0004)               # AIRCR.SYSRESETREQ
+
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 1.0:
+            try:
+                dhcsr = ap_read(DHCSR)
+            except Exception:
+                dhcsr = 0
+            if (dhcsr & S_HALT) and not (dhcsr & (1 << 19)):   # S_HALT && !S_LOCKUP
+                break
+            time.sleep(0.005)
+        else:
+            try:
+                ap_write(DCRSR, 15 & 0x7F); time.sleep(0.005)
+                pc = ap_read(DCRDR)
+            except Exception:
+                pc = 0
+            return False, f"reset didn't land cleanly (PC=0x{pc:08X})"
+
+        # 4. Clear VC_CORERESET, run stub to BKPT.
+        ap_write(DEMCR, 0x00000000)
+        ap_write(DHCSR, DBGKEY | C_DEBUGEN)
+
+        # 7. Wait for the stub's BKPT.
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < _STUB_TIMEOUT_S:
+            if ap_read(DHCSR) & S_HALT:
+                break
+            time.sleep(0.005)
+        else:
+            # Diagnostic: halt and read PC + xPSR + DHCSR to see where stuck.
+            ap_write(DHCSR, DBGKEY | C_DEBUGEN | C_HALT)
+            time.sleep(0.05)
+            ap_write(DCRSR, 15 & 0x7F)                # read PC
+            time.sleep(0.005)
+            pc = ap_read(DCRDR)
+            ap_write(DCRSR, 16 & 0x7F)                # read xPSR
+            time.sleep(0.005)
+            xpsr = ap_read(DCRDR)
+            dhcsr = ap_read(DHCSR)
+            return False, (f"stub did not halt within {_STUB_TIMEOUT_S}s "
+                           f"(PC=0x{pc:08X} xPSR=0x{xpsr:08X} DHCSR=0x{dhcsr:08X})")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+        # 8. Verify both UICRs read back the unlock magic.
+        app_approt    = ap_read(0x00FF8000)
+        app_secapprot = ap_read(0x00FF801C)
+        net_approt    = ap_read(0x01FF8000)
+
+        verify = []
+        verify.append(f"App.APPROTECT=0x{app_approt:08X}")
+        verify.append(f"App.SECUREAPPROTECT=0x{app_secapprot:08X}")
+        verify.append(f"Net.APPROTECT=0x{net_approt:08X}")
+
+        all_unlocked = (app_approt == 0x50FA50FA and
+                        app_secapprot == 0x50FA50FA and
+                        net_approt == 0x50FA50FA)
+        if all_unlocked:
+            return True, f"stub ran in {elapsed_ms}ms; " + ", ".join(verify)
+        return False, "UICR mismatch: " + ", ".join(verify)
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
 
 
 async def erase_ctrl_ap_all(*, serial, frequency_hz):
