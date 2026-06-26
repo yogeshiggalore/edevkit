@@ -37,24 +37,25 @@ from typing import Optional
 # SYSRESETREQ boots the CPU into our vector table — VTOR resets to 0,
 # so flash[0] is the only place that survives.
 _NRF53_DISABLE_STUB = (
-    b"\x00\x00\x01\x20\x51\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
+    b"\x00\x00\x01\x20\x5f\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
     b"\x41\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
     b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x41\x00\x00\x00"
     b"\x41\x00\x00\x00\x00\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
-    b"\x33\x48\x71\x46\x01\x60\x4f\xf0\x00\x50\x32\x49\x01\x60\xfe\xe7"
-    b"\x4f\xf0\x00\x50\x4f\xf0\x11\x31\x01\x60\x2f\x48\x4f\xf0\xff\x31"
-    b"\x01\x60\x01\x61\x01\x62\x01\x63\x01\x64\x01\x65\x01\x66\x01\x67"
-    b"\x4f\xf0\x00\x50\x4f\xf0\x22\x31\x01\x60\x28\x48\x4f\xf0\xff\x31"
-    b"\x01\x60\x27\x4c\x27\x4d\x28\x4e\x22\x68\x01\x2a\xfc\xd1\x01\x22"
-    b"\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x24\x48\x06\x60\x22\x68\x01\x2a"
-    b"\xfc\xd1\x23\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22\x2a\x60"
-    b"\x22\x68\x01\x2a\xfc\xd1\x4f\xf0\x00\x50\x4f\xf0\x33\x31\x01\x60"
-    b"\x1c\x48\x00\x22\x02\x60\x00\x22\x4f\xf4\x00\x43\x01\x32\x9a\x42"
-    b"\xfc\xd3\x4f\xf0\x00\x50\x4f\xf0\x44\x31\x01\x60\x16\x4c\x17\x4d"
-    b"\x22\x68\x01\x2a\xfc\xd1\x01\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1"
-    b"\x13\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22\x2a\x60\x22\x68"
-    b"\x01\x2a\xfc\xd1\x4f\xf0\x00\x50\x0e\x49\x01\x60\xfe\xe7\x00\x00"
-    b"\x04\x00\x00\x20\xd5\x00\xdf\xba\x04\x16\x08\x50\x00\x54\x00\x50"
+    b"\xef\xf3\x08\x80\x81\x69\x35\x48\x01\x60\xef\xf3\x08\x80\xc1\x69"
+    b"\x33\x48\x01\x60\x4f\xf0\x00\x50\x32\x49\x01\x60\xfe\xe7\x4f\xf0"
+    b"\x00\x50\x4f\xf0\x11\x31\x01\x60\x2f\x48\x4f\xf0\xff\x31\x01\x60"
+    b"\x01\x61\x01\x62\x01\x63\x01\x64\x01\x65\x01\x66\x01\x67\x4f\xf0"
+    b"\x00\x50\x4f\xf0\x22\x31\x01\x60\x28\x48\x4f\xf0\xff\x31\x01\x60"
+    b"\x27\x4c\x28\x4d\x28\x4e\x22\x68\x01\x2a\xfc\xd1\x01\x22\x2a\x60"
+    b"\x22\x68\x01\x2a\xfc\xd1\x25\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1"
+    b"\x23\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22\x2a\x60\x22\x68"
+    b"\x01\x2a\xfc\xd1\x4f\xf0\x00\x50\x4f\xf0\x33\x31\x01\x60\x1d\x48"
+    b"\x00\x22\x02\x60\x00\x22\x4f\xf4\x00\x43\x01\x32\x9a\x42\xfc\xd3"
+    b"\x4f\xf0\x00\x50\x4f\xf0\x44\x31\x01\x60\x17\x4c\x17\x4d\x22\x68"
+    b"\x01\x2a\xfc\xd1\x01\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x14\x48"
+    b"\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22\x2a\x60\x22\x68\x01\x2a"
+    b"\xfc\xd1\x4f\xf0\x00\x50\x0f\x49\x01\x60\xfe\xe7\x04\x00\x00\x20"
+    b"\x08\x00\x00\x20\xd5\x00\xdf\xba\x04\x16\x08\x50\x00\x54\x00\x50"
     b"\x00\x94\x03\x50\x04\x95\x03\x50\xfa\x50\xfa\x50\x00\x80\xff\x00"
     b"\x1c\x80\xff\x00\x14\x56\x00\x50\x00\x04\x08\x41\x04\x05\x08\x41"
     b"\x00\x80\xff\x01\xde\xc0\xad\xde"
@@ -648,10 +649,22 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
         results.append((None, False, f"erase: {e}"))
         overall_ok = False
     finally:
-        try: sess.close()
-        except Exception: pass
+        # sess.close() can hang indefinitely after the CTRL-AP RESET pulse
+        # we issue inside _run_disable_stub — pyocd tries to query DP state
+        # to clean up, the DP is in a fault state, the query never returns.
+        # Run close() on a thread with a 2-second cap; if it doesn't return,
+        # leak the session and rely on python process exit to release USB.
+        import threading
+        closer = threading.Thread(target=lambda: _safe_close(sess), daemon=True)
+        closer.start()
+        closer.join(timeout=2.0)
 
     return overall_ok, results
+
+
+def _safe_close(sess):
+    try: sess.close()
+    except Exception: pass
 
 
 def _run_disable_stub(dp, *, session=None, serial=None, frequency_hz=None,
@@ -826,13 +839,12 @@ def _run_disable_stub(dp, *, session=None, serial=None, frequency_hz=None,
             pass
         time.sleep(0.5)   # generous: stub completes in < 50 ms
 
-        # Close this session so we can open a fresh one — pyocd's DP
-        # state is unrecoverable after a reset-induced FAULT ACK.
-        if session is not None:
-            try: session.close()
-            except Exception: pass
-        time.sleep(0.1)
-        return _verify_stub_run(serial=serial, frequency_hz=frequency_hz)
+        # Return now — the caller's `finally: sess.close()` will release USB
+        # before our caller does the verify step. (pyocd's session.close()
+        # can hang here right after a reset-induced FAULT, so we don't call
+        # it ourselves.) Stub-execution verify is done by the caller via
+        # probe-rs subprocess (fresh USB claim).
+        return True, "stub loaded + CTRL-AP RESET pulsed (verify follows)"
     except Exception as e:
         return False, f"fault in phase '{outer_phase}': {type(e).__name__}: {e}"
 
@@ -873,12 +885,13 @@ def _verify_stub_run(*, serial, frequency_hz) -> tuple[bool, str]:
             return None, r.stderr.strip().splitlines()[-1] if r.stderr else "exit nonzero"
         return words, None
 
-    # Read SRAM stage magic (App-core view).
-    words, err = _probe_rs_read(0x20000000, 2, core=0)
+    # Read SRAM stage magic + fault PC + xPSR (3 words).
+    words, err = _probe_rs_read(0x20000000, 3, core=0)
     if words is None:
         return False, f"verify read failed: {err}"
-    stage = words[0]
-    fault_lr = words[1] if len(words) > 1 else 0
+    stage = words[0] if len(words) > 0 else 0
+    fault_pc = words[1] if len(words) > 1 else 0
+    fault_xpsr = words[2] if len(words) > 2 else 0
 
     STAGE_NAMES = {
         0x11111111: "reset entered",
@@ -886,7 +899,7 @@ def _verify_stub_run(*, serial, frequency_hz) -> tuple[bool, str]:
         0x33333333: "App UICR done",
         0x44444444: "Net release done",
         0xDEADC0DE: "✓ FULLY DONE",
-        0xBADF00D5: f"✗ FAULTED (LR=0x{fault_lr:08X})",
+        0xBADF00D5: f"✗ FAULTED (PC=0x{fault_pc:08X} xPSR=0x{fault_xpsr:08X})",
     }
     stage_desc = STAGE_NAMES.get(stage, f"unknown 0x{stage:08X}")
 

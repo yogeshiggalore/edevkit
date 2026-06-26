@@ -563,6 +563,20 @@ async def api_erase(body: dict = Body(default={})):
             serial=serial,
             frequency_hz=session.speed_khz * 1000,
         )
+        # If the stub ran, verify via probe-rs subprocess (fresh USB claim).
+        # Only on Nordic chips and only if the per_ap list contains UICR-disable.
+        stub_loaded = any(isinstance(ap, str) and ap == "UICR-disable" and ok2
+                          for (ap, ok2, _) in per_ap)
+        if stub_loaded and "nrf5340" in chip.lower():
+            await asyncio.sleep(0.5)   # USB settle
+            loop = asyncio.get_running_loop()
+            ok_v, msg_v = await loop.run_in_executor(
+                None,
+                lambda: pyocd_diag._verify_stub_run(
+                    serial=serial, frequency_hz=session.speed_khz * 1000,
+                ),
+            )
+            per_ap.append(("stub-verify", ok_v, msg_v))
         lines = [
             (f"{ap}: {'✓' if ok2 else '✗'} {msg}" if isinstance(ap, str)
              else f"CTRL-AP#{ap}: {'✓' if ok2 else '✗'} {msg}")

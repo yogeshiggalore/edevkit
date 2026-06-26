@@ -54,11 +54,19 @@ _vectors:
  *   0x20000004  fault_lr    (LR at time of fault — points near offender)
  */
 fault_handler:
-    /* r4 must be preserved between exception calls. Use scratch r0-r3. */
-    ldr  r0, =0x20000004        /* fault_lr slot                              */
-    mov  r1, lr
-    str  r1, [r0]               /* record LR (return PC into faulting code)   */
-    /* Record fault as a special magic (not 0xDEADC0DE).                       */
+    /* Read the stacked PC from MSP+24 — that's the return-PC of the
+     * faulting instruction. (LR in the handler is EXC_RETURN, not the
+     * faulting PC; my earlier iteration captured the wrong value.) */
+    mrs  r0, msp                /* r0 = MSP at exception entry                */
+    ldr  r1, [r0, #24]          /* r1 = stacked PC (return PC)                */
+    ldr  r0, =0x20000004
+    str  r1, [r0]               /* record faulting PC                         */
+    /* Also record xPSR for fault decoding (offset 28 in stacked frame).    */
+    mrs  r0, msp
+    ldr  r1, [r0, #28]
+    ldr  r0, =0x20000008
+    str  r1, [r0]
+    /* Record fault magic.                                                   */
     ldr  r0, =0x20000000
     ldr  r1, =0xBADF00D5
     str  r1, [r0]
