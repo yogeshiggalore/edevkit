@@ -1104,9 +1104,25 @@ def _program_net_flash_sync(serial, frequency_hz, segments,
     CONFIG_REN = 0
     CONFIG_WEN = 1
 
+    # session.serial in webgui may be None (matched by VID:PID). Look up
+    # the first edev_dap probe to avoid pyocd's interactive prompt.
+    uid = serial
+    if not uid:
+        try:
+            probes = ConnectHelper.get_all_connected_probes(blocking=False)
+            for p in probes:
+                desc = (p.description or "") + " " + (getattr(p, 'product_name', '') or '')
+                if 'edev_dap' in desc.lower():
+                    uid = p.unique_id
+                    break
+            if not uid and probes:
+                uid = probes[0].unique_id
+        except Exception:
+            pass
+
     try:
         sess = ConnectHelper.session_with_chosen_probe(
-            unique_id=serial, target_override="cortex_m",
+            unique_id=uid, target_override="cortex_m",
             connect_mode="attach", blocking=False,
             options={"frequency": frequency_hz, "dap_protocol": "swd",
                      "auto_unlock": False},
