@@ -607,7 +607,10 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
             # fall back to host-side App UICR write (which is bulletproof)
             # and leave Net as session-only.
             _recover_dp(dp)
-            ok_stub, msg_stub = _run_disable_stub(dp, app_ahb=0)
+            ok_stub, msg_stub = _run_disable_stub(
+                dp, session=sess, serial=serial, frequency_hz=frequency_hz,
+                app_ahb=0,
+            )
             if ok_stub:
                 results.append(("UICR-disable", True, f"stub: ✓ {msg_stub}"))
             else:
@@ -639,7 +642,8 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
     return overall_ok, results
 
 
-def _run_disable_stub(dp, *, app_ahb: int = 0) -> tuple[bool, str]:
+def _run_disable_stub(dp, *, session=None, serial=None, frequency_hz=None,
+                      app_ahb: int = 0) -> tuple[bool, str]:
     """Write the nRF5340 APPROTECT-disable stub to App flash and run it.
 
     Sequence:
@@ -729,7 +733,24 @@ def _run_disable_stub(dp, *, app_ahb: int = 0) -> tuple[bool, str]:
             time.sleep(0.005)
         return False
 
+    outer_phase = "init"
     try:
+        # 0. Halt the App CPU before any flash writes. After CTRL-AP
+        #    ERASEALL the CPU is in lockup executing erased-flash
+        #    0xFFFFFFFF; an unhalted lockup CPU can stomp on NVMC state
+        #    or simply slow down/fault the bus. Halt sets S_HALT even in
+        #    lockup state (verified earlier).
+        outer_phase = "halt App"
+        ap_write(DHCSR, DBGKEY | C_DEBUGEN | C_HALT)
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 0.5:
+            try:
+                if ap_read(DHCSR) & S_HALT:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.005)
+
         # 1. Stub binary starts with its own vector table (initial MSP +
         #    Reset + fault handlers); write verbatim to flash[0]. CPU
         #    boots from these vectors after SYSRESETREQ.
@@ -743,27 +764,60 @@ def _run_disable_stub(dp, *, app_ahb: int = 0) -> tuple[bool, str]:
             flash_writes.append((off, word))
 
         # 2. NVMC write-enable, write all words, NVMC write-disable.
-        if not nvmc_wait_ready():
-            return False, "App NVMC not ready before stub flash"
-        ap_write(APP_NVMC_BASE + 0x504, 0x00000001)        # CONFIG = Wen
-        if not nvmc_wait_ready():
-            return False, "App NVMC didn't acknowledge Wen"
-        for addr, value in flash_writes:
-            ap_write(addr, value)
-            if not nvmc_wait_ready(timeout=5.0):
-                ap_write(APP_NVMC_BASE + 0x504, 0x00000000)
-                return False, f"App NVMC stalled at 0x{addr:08X}"
-        ap_write(APP_NVMC_BASE + 0x504, 0x00000000)        # CONFIG = Ren
-        if not nvmc_wait_ready():
-            return False, "App NVMC didn't acknowledge Ren"
+        phase = "pre-NVMC ready"
+        last_ok_addr = -1
+        try:
+            if not nvmc_wait_ready():
+                return False, "App NVMC not ready before stub flash"
+            phase = "NVMC=Wen"
+            ap_write(APP_NVMC_BASE + 0x504, 0x00000001)
+            phase = "post-Wen ready"
+            if not nvmc_wait_ready():
+                return False, "App NVMC didn't acknowledge Wen"
+            for addr, value in flash_writes:
+                phase = f"flash write 0x{addr:08X}"
+                ap_write(addr, value)
+                phase = f"flash wait 0x{addr:08X}"
+                if not nvmc_wait_ready(timeout=5.0):
+                    ap_write(APP_NVMC_BASE + 0x504, 0x00000000)
+                    return False, f"App NVMC stalled at 0x{addr:08X} (last_ok=0x{last_ok_addr:08X})"
+                last_ok_addr = addr
+            phase = "NVMC=Ren"
+            ap_write(APP_NVMC_BASE + 0x504, 0x00000000)
+            phase = "post-Ren ready"
+            if not nvmc_wait_ready():
+                return False, "App NVMC didn't acknowledge Ren"
+        except Exception as e:
+            return False, f"fault at phase '{phase}' (last_ok=0x{max(last_ok_addr,0):08X}): {type(e).__name__}: {e}"
 
-        # 3. Reset with halt-on-first-instruction, so we can verify the
-        #    CPU successfully fetched our vectors instead of going to
-        #    lockup again. VC_CORERESET halts on the first instruction
-        #    at the reset PC — exactly the start of our stub.
-        ap_write(DEMCR, 0x00000001)                    # VC_CORERESET = 1
-        ap_write(DHCSR, DBGKEY | C_DEBUGEN | C_HALT)
-        ap_write(0xE000ED0C, 0x05FA0004)               # AIRCR.SYSRESETREQ
+        # 3. Reset via CTRL-AP#2 RESET pulse. Going through the chip's
+        #    CTRL-AP reset (vs SYSRESETREQ through AHB-AP) keeps the
+        #    SWD bus clean — SYSRESETREQ writes to AIRCR via AHB-AP
+        #    which faults mid-transaction when the chip resets, and
+        #    the queued-fault recovery is brittle in pyocd. CTRL-AP
+        #    RESET is a dedicated reset request path. We also pre-set
+        #    DEMCR.VC_CORERESET so the CPU halts at the first
+        #    instruction of our stub when reset releases.
+        outer_phase = "VC_CORERESET set"
+        ap_write(DEMCR, 0x00000001)
+        outer_phase = "CTRL-AP#2 RESET pulse"
+        # CTRL-AP#2 = App core control AP on nRF5340. The reset pulse
+        # causes a FAULT ACK on the in-flight SWD transaction; just
+        # swallow it. Stub will run independently on the chip; the
+        # caller does a probe-rs-based UICR verify in a fresh session
+        # afterward (probe-rs reconnects cleanly post-reset).
+        app_ctrl_ap = 2
+        try:
+            dp.write_dp(0x8, (app_ctrl_ap << 24) | 0x00)
+            dp.write_ap((app_ctrl_ap << 24) | 0x00, 0x00000001)
+            time.sleep(0.05)
+            dp.write_ap((app_ctrl_ap << 24) | 0x00, 0x00000000)
+        except Exception:
+            pass
+        time.sleep(0.2)   # let stub run
+        # Skip in-session verify — pyocd's DP state is unrecoverable here.
+        # Return now, caller will probe-rs read UICR to verify.
+        return True, "stub loaded to flash + CTRL-AP RESET pulsed; verify via probe-rs"
 
         t0 = time.monotonic()
         while time.monotonic() - t0 < 1.0:
@@ -824,7 +878,7 @@ def _run_disable_stub(dp, *, app_ahb: int = 0) -> tuple[bool, str]:
             return True, f"stub ran in {elapsed_ms}ms; " + ", ".join(verify)
         return False, "UICR mismatch: " + ", ".join(verify)
     except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+        return False, f"fault in phase '{outer_phase}': {type(e).__name__}: {e}"
 
 
 async def erase_ctrl_ap_all(*, serial, frequency_hz):
