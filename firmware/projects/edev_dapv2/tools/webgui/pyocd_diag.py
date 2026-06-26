@@ -18,25 +18,30 @@ from typing import Optional
 # starts fast even if pyocd has install issues.
 
 
-# ─── nRF5340 APPROTECT-disable Thumb stub ─────────────────────────────
+# ─── nRF5340 APPROTECT-disable Thumb stub (with VMC bootstrap) ────────
 # Source: edevkit/firmware/projects/edev_dapv2/tools/nrf53_disable_approtect.s
 # Build:  arm-none-eabi-as -mcpu=cortex-m33 -mthumb nrf53_disable_approtect.s
-# Loads to App SRAM @ 0x20000000, runs on App CPU, programs
-# UICR.APPROTECT/SECUREAPPROTECT for both cores via NVMC, BKPTs.
+# Writes the stub directly into App flash @ 0x00000000 (with a 2-word
+# vector-table prefix) so SYSRESETREQ boots the CPU into our code
+# (VTOR resets to 0 on Cortex-M33 SYSRESETREQ — RAM-loaded VTOR
+# doesn't survive). Stub does VMC RAM power-on, then programs
+# UICR.APPROTECT + SECUREAPPROTECT for both cores via NVMC, BKPTs.
 _NRF53_DISABLE_STUB = (
-    b"\x18\x48\x00\x21\x01\x60\x18\x4c\x18\x4d\x19\x4e\x22\x68\x01\x2a"
-    b"\xfc\xd1\x01\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x15\x48\x06\x60"
-    b"\x22\x68\x01\x2a\xfc\xd1\x14\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1"
-    b"\x00\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x10\x4c\x10\x4d\x22\x68"
-    b"\x01\x2a\xfc\xd1\x01\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x0d\x48"
-    b"\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22\x2a\x60\x22\x68\x01\x2a"
-    b"\xfc\xd1\x00\xbe\x14\x56\x00\x50\x00\x94\x03\x50\x04\x95\x03\x50"
-    b"\xfa\x50\xfa\x50\x00\x80\xff\x00\x1c\x80\xff\x00\x00\x04\x08\x41"
+    b"\x22\x48\x4f\xf0\xff\x31\x01\x60\x01\x61\x01\x62\x01\x63\x01\x64"
+    b"\x01\x65\x01\x66\x01\x67\x1e\x48\x01\x60\x1e\x4c\x1e\x4d\x1f\x4e"
+    b"\x22\x68\x01\x2a\xfc\xd1\x01\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1"
+    b"\x1b\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x1a\x48\x06\x60\x22\x68"
+    b"\x01\x2a\xfc\xd1\x00\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x16\x48"
+    b"\x00\x22\x02\x60\x00\x22\x4f\xf4\x80\x43\x01\x32\x9a\x42\xfc\xd3"
+    b"\x12\x4c\x13\x4d\x22\x68\x01\x2a\xfc\xd1\x01\x22\x2a\x60\x22\x68"
+    b"\x01\x2a\xfc\xd1\x0f\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22"
+    b"\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x00\xbe\xfe\xe7\x04\x16\x08\x50"
+    b"\x00\x54\x00\x50\x00\x94\x03\x50\x04\x95\x03\x50\xfa\x50\xfa\x50"
+    b"\x00\x80\xff\x00\x1c\x80\xff\x00\x14\x56\x00\x50\x00\x04\x08\x41"
     b"\x04\x05\x08\x41\x00\x80\xff\x01"
 )
-_STUB_LOAD_ADDR    = 0x20000000   # top of App SRAM (1 MB available; stub is 136 B)
-_STUB_INITIAL_MSP  = 0x20010000   # 64 KB above the load addr, plenty of headroom
-_STUB_TIMEOUT_S    = 5.0          # generous — typical run is < 100 ms
+_STUB_INITIAL_MSP  = 0x20010000   # top of App SRAM after VMC power-on
+_STUB_TIMEOUT_S    = 5.0          # typical run is < 100 ms once running
 
 
 @dataclass
@@ -583,31 +588,32 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
         # (on nRF52, UICR=0xFFFFFFFF IS the unlocked default).
         is_nrf53 = any(idr == 0x12880000 for idr in ctrl_ap_idrs.values())
         if is_nrf53 and overall_ok:
-            # App UICR.APPROTECT/SECUREAPPROTECT ← 0x50FA50FA via the host's
-            # App AHB-AP + App NVMC. This works reliably and is the part that
-            # actually unblocks probe-rs (its "Core 0 is locked" check looks
-            # at App-side state). Net UICR write turned out to be much
-            # harder — see [[nrf5340-net-uicr-write-attempts-2026-06-26]]
-            # for the dead ends (host-side Net AHB-AP writes FAULT mid-flow;
-            # on-target stub HardFaults because nRF5340 peripherals need SPU
-            # configuration which would balloon the stub to nrfjprog's
-            # 3748-byte size). The current state leaves Net session-unlocked
-            # only — the user's freshly-flashed firmware (e.g. Ring Pro 351)
-            # writes APPROTECT.DISABLE at boot to handle Net unlock on
-            # subsequent resets.
+            # Try the on-target stub first (programs BOTH App + Net UICR
+            # via on-chip NVMC after VMC RAM power-on). If the stub fails
+            # for any reason — chip in unusual state, NVMC sticky, etc. —
+            # fall back to host-side App UICR write (which is bulletproof)
+            # and leave Net as session-only.
             _recover_dp(dp)
-            ok_app, msg_app = _disable_approtect_via_nvmc(
-                ahb=0, csw=0x23000002, nvmc_base=0x50039000,
-                uicr_writes=[
-                    (0x00FF8000, 0x50FA50FA),
-                    (0x00FF801C, 0x50FA50FA),
-                ],
-            )
-            msg = f"App: {'✓' if ok_app else '✗'} {msg_app}; Net: SESSION-only (flash firmware that handles APPROTECT.DISABLE, or use J-Link + nrfjprog --recover --coprocessor CP_NETWORK for permanent unlock)"
-            results.append(("UICR-disable", ok_app, msg))
-            if not ok_app:
-                overall_ok = False
+            ok_stub, msg_stub = _run_disable_stub(dp, app_ahb=0)
+            if ok_stub:
+                results.append(("UICR-disable", True, f"stub: ✓ {msg_stub}"))
+            else:
                 _recover_dp(dp)
+                ok_app, msg_app = _disable_approtect_via_nvmc(
+                    ahb=0, csw=0x23000002, nvmc_base=0x50039000,
+                    uicr_writes=[
+                        (0x00FF8000, 0x50FA50FA),
+                        (0x00FF801C, 0x50FA50FA),
+                    ],
+                )
+                fallback = (f"stub failed ({msg_stub}); "
+                            f"fallback App-only: {'✓' if ok_app else '✗'} {msg_app}; "
+                            f"Net: SESSION-only (flash firmware that writes APPROTECT.DISABLE, "
+                            f"or use J-Link + nrfjprog --recover --coprocessor CP_NETWORK)")
+                results.append(("UICR-disable", ok_app, fallback))
+                if not ok_app:
+                    overall_ok = False
+                    _recover_dp(dp)
 
         _recover_dp(dp)
     except Exception as e:
@@ -621,23 +627,24 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
 
 
 def _run_disable_stub(dp, *, app_ahb: int = 0) -> tuple[bool, str]:
-    import time
-    """Load + run the nRF5340 APPROTECT-disable Thumb stub on the App CPU.
+    """Write the nRF5340 APPROTECT-disable stub to App flash and run it.
 
     Sequence:
-      1. Halt App via DHCSR  (0xE000EDF0 ← 0xA05F0003)
-      2. Load _NRF53_DISABLE_STUB to App SRAM @ _STUB_LOAD_ADDR via App AHB-AP
-         with autoincrement (CSW=0x23000012).
-      3. Set MSP (R13) = _STUB_INITIAL_MSP via DCRSR/DCRDR.
-      4. Set PC (R15)  = _STUB_LOAD_ADDR | 1 (Thumb bit).
-      5. Set xPSR.T = 1 (ensure Thumb state).
-      6. Run via DHCSR ← 0xA05F0001 (C_DEBUGEN, release C_HALT).
-      7. Poll DHCSR.S_HALT until set (stub ends at BKPT) or timeout.
-      8. Verify UICR readback on App side.
+      1. Write 2-word vector table + stub bytes to App flash @ 0x00000000
+         via App NVMC. SYSRESETREQ resets VTOR, so the stub HAS to live
+         at flash[0] for the post-reset vector fetch to land on it.
+      2. Halt-on-reset (DEMCR.VC_CORERESET=1) + SYSRESETREQ.
+      3. CPU comes out of reset, loads SP+PC from our vectors in flash,
+         halts at the first stub instruction.
+      4. Clear VC_CORERESET, release halt — stub runs.
+      5. Stub does VMC RAM power-on (so stack/exception entry works),
+         then App+Net UICR programming via NVMC, then BKPT.
+      6. Poll DHCSR.S_HALT until set (BKPT fired) or timeout.
+      7. Verify UICR readbacks.
 
-    Returns (ok, message). Uses CSW=0x23000002 for single-word ops and
-    CSW=0x23000012 (AddrInc=1) for the streaming stub load.
+    Returns (ok, message). Stub is in _NRF53_DISABLE_STUB (184 B).
     """
+    import time
     ahb = app_ahb
     CSW_SINGLE     = 0x23000002   # 32-bit, no autoincrement
     CSW_AUTOINC    = 0x23000012   # 32-bit, single-word autoincrement
@@ -711,12 +718,8 @@ def _run_disable_stub(dp, *, app_ahb: int = 0) -> tuple[bool, str]:
 
     try:
         # 1. Build the flash payload: 2-word vector table + stub code.
-        # DEBUG: prefix a "bkpt #0; bkpt #0" (4 bytes) before the real
-        # stub so the very first thing the CPU executes is a known
-        # halt. If we land here, vector-fetch + flash execution works,
-        # and the real stub's later faults are inside its own code.
-        stub = (b"\x00\xbe\x00\xbe"      # bkpt #0 ; bkpt #0
-                + _NRF53_DISABLE_STUB)
+        #    Stub goes at flash[0x08] onwards; vectors point at it.
+        stub = _NRF53_DISABLE_STUB
         if len(stub) % 4:
             stub = stub + b"\x00" * (4 - (len(stub) % 4))
         STUB_CODE_OFFSET = 8
