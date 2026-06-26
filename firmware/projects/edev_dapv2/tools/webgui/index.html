@@ -42,7 +42,6 @@
         <option>nRF52840_xxAA</option>
         <option>nRF52833_xxAA</option>
         <option>nRF5340_xxAA</option>
-        <option>nRF5340_xxAA-NetCore</option>
         <option>STM32F411RETx</option>
         <option>STM32H743ZITx</option>
         <option>RP2040</option>
@@ -187,23 +186,11 @@
         <label class="text-xs text-slate-500"><input id="flashVerify" type="checkbox" checked /> verify after</label>
       </div>
 
-      <!-- App / single-core file row -->
       <div class="flex items-center gap-3 flex-wrap mb-2">
-        <label id="flashAppLabel" class="text-xs text-slate-500 w-32">App core file:</label>
+        <label class="text-xs text-slate-500 w-20">File:</label>
         <input id="flashAppFile" type="file" accept=".hex,.bin,.elf,.ihex,.ihx" class="text-sm" />
-        <button id="flashAppBtn" class="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded" disabled>Flash App</button>
-      </div>
-
-      <!-- Net file row (shown only for multi-core chips) -->
-      <div id="flashNetRow" class="hidden flex items-center gap-3 flex-wrap mb-2">
-        <label class="text-xs text-slate-500 w-32">Net core file:</label>
-        <input id="flashNetFile" type="file" accept=".hex,.bin,.elf,.ihex,.ihx" class="text-sm" />
-        <button id="flashNetBtn" class="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded" disabled>Flash Net</button>
-      </div>
-
-      <!-- "Flash both" button -->
-      <div id="flashBothRow" class="hidden mt-1">
-        <button id="flashBothBtn" class="px-3 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-800 text-white rounded" disabled>Flash both cores (App then Net)</button>
+        <button id="flashAppBtn" class="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded" disabled>Flash</button>
+        <span class="text-xs text-slate-500" id="flashHint">.hex / .bin / .elf — dual-core nRF5340 merged hex is auto-split by address</span>
       </div>
     </div>
 
@@ -861,45 +848,21 @@ async function doDiag() {
 
 // ─── Erase & flash ──────────────────────────────────────────────────
 function updateErasePanel() {
-  // Populate eraseCoreSel with options based on identified cores.
+  // Erase-core dropdown: kept for the dump panel + Net-only reads, but
+  // for erase itself probe-rs handles dual-core via the merged hex with
+  // a single --chip nRF5340_xxAA.
   const sel = $("eraseCoreSel");
   sel.innerHTML = "";
-  if (state.cores.length >= 2) {
-    state.cores.forEach((c, i) => {
-      const opt = document.createElement("option");
-      opt.value = String(i);
-      opt.textContent = `${c.name} only`;
-      sel.appendChild(opt);
-    });
-    const all = document.createElement("option");
-    all.value = "all";
-    all.textContent = `All ${state.cores.length} cores (sequential)`;
-    all.selected = true;
-    sel.appendChild(all);
-  } else {
-    const opt = document.createElement("option");
-    opt.value = "current";
-    opt.textContent = "Current core";
-    sel.appendChild(opt);
-  }
-
-  // Toggle Net row visibility based on whether identified chip is multi-core.
-  const isMulti = state.cores.length >= 2;
-  $("flashNetRow").className = isMulti
-    ? "flex items-center gap-3 flex-wrap mb-2"
-    : "hidden";
-  $("flashBothRow").className = isMulti ? "mt-1" : "hidden";
-  $("flashAppLabel").textContent = isMulti ? "App core file:" : "File:";
-  // Adapt flash-App button label when single-core
-  $("flashAppBtn").textContent = isMulti ? "Flash App" : "Flash";
+  const opt = document.createElement("option");
+  opt.value = "current";
+  opt.textContent = state.cores.length >= 2
+    ? "All cores (CTRL-AP ERASEALL on every CTRL-AP found)"
+    : "Current core";
+  sel.appendChild(opt);
 }
 
 function refreshFlashButtons() {
-  $("flashAppBtn").disabled  = !$("flashAppFile").files[0];
-  $("flashNetBtn").disabled  = !$("flashNetFile").files[0];
-  $("flashBothBtn").disabled = !(
-    $("flashAppFile").files[0] && $("flashNetFile").files[0]
-  );
+  $("flashAppBtn").disabled = !$("flashAppFile").files[0];
 }
 
 function showOpResult({ state: st, title, message, elapsed }) {
@@ -953,7 +916,7 @@ function updateFlashProgress(ev) {
 }
 
 // All erase/flash buttons share this in-progress lock.
-const FLASH_BTNS = ["eraseBtn", "recoverBtn", "flashAppBtn", "flashNetBtn", "flashBothBtn"];
+const FLASH_BTNS = ["eraseBtn", "recoverBtn", "flashAppBtn"];
 function setFlashBusy(busy) {
   FLASH_BTNS.forEach((b) => { $(b).disabled = busy; });
   if (!busy) refreshFlashButtons();   // restore proper disabled state
@@ -1008,25 +971,19 @@ async function doRecover() {
   );
 }
 
-// Flash a single core. Returns {ok, message, elapsed_s, ...} after the
-// SSE stream completes. Updates the determinate progress bar live.
-async function flashOneCore({ file, label, chip, core_index }) {
-  if (chip) {
-    await fetch("/api/connect", {
-      method: "POST", headers: {"content-type": "application/json"},
-      body: JSON.stringify({ chip, core_index }),
-    });
-  }
+// Submit one flash. Returns {ok, message, elapsed_s, ...} after the
+// SSE stream completes. Updates the two-phase progress bar live.
+// For dual-core nRF5340, pass the merged hex — probe-rs auto-splits
+// 0x00xxxxxx → App and 0x01xxxxxx → Net via the chip definition.
+async function flashFile(file) {
   const fd = new FormData();
   fd.append("file", file);
   const verify = $("flashVerify").checked ? "1" : "0";
-  const url = `/api/flash?core_index=${core_index}&verify=${verify}`;
-  const r = await fetch(url, { method: "POST", body: fd });
+  const r = await fetch(`/api/flash?verify=${verify}`, { method: "POST", body: fd });
   const startResp = await r.json();
   if (!startResp.job_id) {
     return { ok: false, message: `flash start failed: ${JSON.stringify(startResp)}` };
   }
-  // Reset bars for this core's flash; show determinate mode.
   setProgressMode("det");
 
   return new Promise((resolve) => {
@@ -1046,60 +1003,32 @@ async function flashOneCore({ file, label, chip, core_index }) {
   });
 }
 
-async function doFlash(which) {
-  // which ∈ "app" | "net" | "both"
-  const isMulti = state.cores.length >= 2;
-  let plan;
-  if (which === "app") {
-    const f = $("flashAppFile").files[0];
-    if (!f) return;
-    plan = [{ file: f,
-              label: isMulti ? state.cores[0].name : "chip",
-              chip:  isMulti ? state.cores[0].chip : null,
-              core_index: isMulti ? state.cores[0].core_index : 0 }];
-  } else if (which === "net") {
-    const f = $("flashNetFile").files[0];
-    if (!f) return;
-    plan = [{ file: f, label: state.cores[1].name,
-              chip: state.cores[1].chip, core_index: state.cores[1].core_index }];
-  } else {  // both
-    const fA = $("flashAppFile").files[0];
-    const fN = $("flashNetFile").files[0];
-    if (!fA || !fN) return;
-    plan = [
-      { file: fA, label: state.cores[0].name, chip: state.cores[0].chip, core_index: state.cores[0].core_index },
-      { file: fN, label: state.cores[1].name, chip: state.cores[1].chip, core_index: state.cores[1].core_index },
-    ];
-  }
-
-  const summary = plan.map((s) => `  ${s.label}  ←  ${s.file.name} (${s.file.size.toLocaleString()} B)`).join("\n");
-  if (!confirm(`Flash:\n${summary}\n\nVerify after: ${$("flashVerify").checked ? "yes" : "no"}\n\nProceed?`)) return;
+async function doFlash() {
+  const f = $("flashAppFile").files[0];
+  if (!f) return;
+  const summary = `${f.name} (${f.size.toLocaleString()} B)`;
+  if (!confirm(`Flash:\n  ${summary}\n\nVerify after: ${$("flashVerify").checked ? "yes" : "no"}\n\nProceed?`)) return;
 
   setFlashBusy(true);
   showOpResult({ state: "running", title: "Flashing…", message: summary });
   setStatus("idle", "flashing…");
 
   const t0 = performance.now();
-  const lines = [];
+  const lines = [`→ ${f.name}`];
   let allOk = true;
-  for (const step of plan) {
-    lines.push(`→ ${step.label}: ${step.file.name}`);
-    showOpResult({ state: "running", title: "Flashing…", message: lines.join("\n") });
-    let j;
-    try { j = await flashOneCore(step); }
-    catch (e) { j = { ok: false, message: `request failed: ${e.message || e}` }; }
-    if (j.ok) lines.push(`   ✓ ${j.message} (${j.elapsed_s}s, ${j.bytes_received?.toLocaleString?.() ?? "?"} B)`);
-    else {
-      lines.push(`   ✗ ${j.message}`);
-      allOk = false;
-    }
-    showOpResult({ state: "running", title: "Flashing…", message: lines.join("\n") });
+  let j;
+  try { j = await flashFile(f); }
+  catch (e) { j = { ok: false, message: `request failed: ${e.message || e}` }; }
+  if (j.ok) lines.push(`   ✓ ${j.message} (${j.elapsed_s}s, ${j.bytes_received?.toLocaleString?.() ?? "?"} B)`);
+  else {
+    lines.push(`   ✗ ${j.message}`);
+    allOk = false;
   }
   const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
   setProgressMode("none");
   showOpResult({
     state: allOk ? "ok" : "err",
-    title: allOk ? `Flash: SUCCESS (${plan.length} file${plan.length>1?"s":""})` : "Flash: FAILED",
+    title: allOk ? "Flash: SUCCESS" : "Flash: FAILED",
     message: lines.join("\n"),
     elapsed,
   });
@@ -1231,11 +1160,8 @@ $("resetHaltBtn").onclick      = () => doReset("halt",    "resetHaltBtn");
 $("resetCtrlApBtn").onclick    = () => doReset("ctrl_ap", "resetCtrlApBtn");
 $("eraseBtn").onclick          = doErase;
 $("recoverBtn").onclick        = doRecover;
-$("flashAppBtn").onclick       = () => doFlash("app");
-$("flashNetBtn").onclick       = () => doFlash("net");
-$("flashBothBtn").onclick      = () => doFlash("both");
+$("flashAppBtn").onclick       = doFlash;
 $("flashAppFile").onchange     = refreshFlashButtons;
-$("flashNetFile").onchange     = refreshFlashButtons;
 updateErasePanel();   // initial render (single-core view)
 $("logToggleBtn").onclick      = toggleLog;
 $("logClearBtn").onclick       = clearLog;

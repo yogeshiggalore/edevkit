@@ -184,16 +184,26 @@ async def read_words(*, chip: str, speed_khz: int,
 async def erase(*, chip: str, speed_khz: int,
                 serial: Optional[str] = None,
                 vid_pid: Optional[str] = None,
-                core_index: int = 0,
+                core_index: int = 0,    # accepted for API parity; probe-rs erase doesn't take --core
                 timeout: float = 120.0) -> tuple[int, str, str]:
-    """`probe-rs erase` for the given chip + core. Returns (exit_code, stdout, stderr)."""
+    """`probe-rs erase` for the given chip. Returns (exit_code, stdout, stderr).
+
+    Note: `probe-rs erase` does NOT accept `--core` (verified against probe-rs
+    0.31). The chip definition encodes both cores on dual-core parts like
+    nRF5340 — a full chip erase covers all flash regions in one go. core_index
+    is accepted but ignored.
+    """
     cmd = [_probe_rs_path(), "erase"] + _probe_arg(serial, vid_pid) + [
         "--protocol", "swd",
         "--chip", chip,
         "--speed", str(speed_khz),
+        # Required on Nordic chips where probe-rs needs to escalate to chip-
+        # wide ERASEALL to unlock a protected core (nRF5340 Net core often
+        # boots locked). Without this flag probe-rs refuses with "lacked
+        # the permission". For the webgui Erase button the user has already
+        # confirmed the destructive intent.
+        "--allow-erase-all",
     ]
-    if core_index:
-        cmd += ["--core", str(core_index)]
     code, out, err = await _run(cmd, timeout=timeout)
     return code, out, err
 
@@ -211,18 +221,23 @@ async def flash_file(*, chip: str, speed_khz: int,
     `binary_format` ∈ {"hex", "bin", "elf"}. For "bin", pass base_address.
     For "hex"/"elf", base_address is ignored (encoded in the file).
     """
+    # NOTE: `probe-rs download` does NOT accept `--core` (verified). On dual-
+    # core nRF5340 the chip definition covers both flash regions, so a merged
+    # hex routes 0x00xxxxxx → App and 0x01xxxxxx → Net automatically. The
+    # core_index param is accepted for API parity but not passed downstream.
     cmd = [_probe_rs_path(), "download"] + _probe_arg(serial, vid_pid) + [
         "--protocol", "swd",
         "--chip", chip,
         "--speed", str(speed_khz),
         "--binary-format", binary_format,
     ]
-    if core_index:
-        cmd += ["--core", str(core_index)]
     if binary_format == "bin" and base_address is not None:
         cmd += ["--base-address", f"0x{base_address:x}"]
     if verify:
         cmd += ["--verify"]
+    # Required for nRF5340 when probe-rs needs to ERASEALL to unlock a
+    # protected core before programming.
+    cmd += ["--allow-erase-all"]
     cmd += [file_path]
     code, out, err = await _run(cmd, timeout=timeout)
     return code, out, err
@@ -252,18 +267,20 @@ async def flash_file_streaming(*, chip: str, speed_khz: int,
     import os
     import pty
 
+    # See flash_file() note above — `probe-rs download` has no `--core` flag.
     cmd = [_probe_rs_path(), "download"] + _probe_arg(serial, vid_pid) + [
         "--protocol", "swd",
         "--chip", chip,
         "--speed", str(speed_khz),
         "--binary-format", binary_format,
     ]
-    if core_index:
-        cmd += ["--core", str(core_index)]
     if binary_format == "bin" and base_address is not None:
         cmd += ["--base-address", f"0x{base_address:x}"]
     if verify:
         cmd += ["--verify"]
+    # Required for nRF5340 when probe-rs needs to ERASEALL to unlock a
+    # protected core before programming.
+    cmd += ["--allow-erase-all"]
     cmd += [file_path]
 
     master_fd, slave_fd = pty.openpty()

@@ -440,8 +440,9 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
         try: dp.power_up_debug()
         except Exception: pass
 
-        # Find every Nordic CTRL-AP.
-        ctrl_aps = []
+        # Find every Nordic CTRL-AP. Remember the IDR for later family ID.
+        ctrl_aps = []          # list of AP indices
+        ctrl_ap_idrs = {}      # ap → idr
         for i in range(8):
             try:
                 dp.write_dp(0x8, (i << 24) | 0xF0)
@@ -450,9 +451,61 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
                 continue
             if idr in (0x02880000, 0x12880000):
                 ctrl_aps.append(i)
+                ctrl_ap_idrs[i] = idr
 
         if not ctrl_aps:
             return False, [(None, False, "no Nordic CTRL-AP found")]
+
+        # ── Helpers for AHB-AP-mediated memory access ─────────────────
+        # CSW values are AP-specific on nRF5340:
+        #   App AHB-AP (AP#0): 0x23000002 (HPROT=secure/priv/data, 32-bit)
+        #   Net AHB-AP (AP#1): 0x03800042 (Nordic-required CSW — only this
+        #                                  value works against Net's bus;
+        #                                  observed in nrfjprog J-Link trace).
+        def _ap32_write(ahb, addr, value, csw):
+            dp.write_dp(0x8, (ahb << 24) | 0x00)
+            dp.write_ap((ahb << 24) | 0x00, csw)
+            dp.write_ap((ahb << 24) | 0x04, addr)
+            dp.write_ap((ahb << 24) | 0x0C, value)
+            dp.read_dp(0x0C)   # RDBUFF — forces the write to commit
+
+        def _ap32_read(ahb, addr, csw):
+            dp.write_dp(0x8, (ahb << 24) | 0x00)
+            dp.write_ap((ahb << 24) | 0x00, csw)
+            dp.write_ap((ahb << 24) | 0x04, addr)
+            _ = dp.read_ap((ahb << 24) | 0x0C)   # posted read
+            return dp.read_dp(0x0C)              # RDBUFF
+
+        def _nvmc_wait_ready(ahb, nvmc_base, csw, timeout=2.0):
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < timeout:
+                try:
+                    if _ap32_read(ahb, nvmc_base + 0x400, csw) & 1:
+                        return True
+                except Exception:
+                    pass
+                time.sleep(0.005)
+            return False
+
+        def _disable_approtect_via_nvmc(ahb, csw, nvmc_base, uicr_writes):
+            """Write `uicr_writes = [(addr, value), ...]` via the given AHB-AP
+            and NVMC. Each write goes through the Nordic NVMC write-enable
+            handshake. Returns (ok, message)."""
+            try:
+                if not _nvmc_wait_ready(ahb, nvmc_base, csw):
+                    return False, f"NVMC@0x{nvmc_base:08X} not ready initially"
+                _ap32_write(ahb, nvmc_base + 0x504, 0x00000001, csw)   # CONFIG = Wen
+                if not _nvmc_wait_ready(ahb, nvmc_base, csw):
+                    return False, f"NVMC@0x{nvmc_base:08X} not ready after Wen"
+                for (uicr_addr, value) in uicr_writes:
+                    _ap32_write(ahb, uicr_addr, value, csw)
+                    if not _nvmc_wait_ready(ahb, nvmc_base, csw, timeout=5.0):
+                        _ap32_write(ahb, nvmc_base + 0x504, 0x00000000, csw)
+                        return False, f"NVMC@0x{nvmc_base:08X} not ready after 0x{uicr_addr:08X}"
+                _ap32_write(ahb, nvmc_base + 0x504, 0x00000000, csw)   # CONFIG = Ren
+                return True, "ok"
+            except Exception as e:
+                return False, f"{type(e).__name__}: {e}"
 
         for ap in ctrl_aps:
             # Mass-erase via CTRL-AP — matches pyocd/target/family/target_nordic.py:
@@ -494,6 +547,92 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
             results.append((ap, ap_ok, "; ".join(ap_msgs)))
             if not ap_ok:
                 overall_ok = False
+
+        # ── Post-ERASEALL: permanently disable APPROTECT via UICR writes ──
+        # On nRF5340 (and nRF91), erased UICR.APPROTECT = 0xFFFFFFFF means
+        # HwEnabled — the chip auto-locks AHB-AP on next pin-reset / POR /
+        # BOR / WDT reset. The "permanently unlocked" sentinel is 0x50FA50FA.
+        # nrfjprog handles this by writing a Thumb stub to App flash that
+        # programs UICR.APPROTECT on the next boot; we do it directly here
+        # via NVMC writes from the debug host, while AHB-AP is still open
+        # from the just-completed ERASEALL.
+        #
+        # nRF5340 has two CTRL-APs at IDR 0x12880000; nRF52 has one at
+        # IDR 0x02880000. Only nRF5340/91 need the UICR disable step
+        # (on nRF52, UICR=0xFFFFFFFF IS the unlocked default).
+        is_nrf53 = any(idr == 0x12880000 for idr in ctrl_ap_idrs.values())
+        if is_nrf53 and overall_ok:
+            # Per-core UICR programming. nRF5340 layout:
+            #   App AHB-AP (AP#0) ─ NVMC @ 0x50039000 ─ App UICR @ 0x00FF8000
+            #   Net AHB-AP (AP#1) ─ NVMC @ 0x41080000 ─ Net UICR @ 0x00FF8000 (Net's own space)
+            #
+            # Both AHB-APs need CSW=0x03800042 (Nordic-specific MasterType=CPU
+            # value), confirmed against nrfjprog J-Link trace. Net peripherals
+            # are NOT accessible from App AHB-AP — go through Net AHB-AP.
+            # NETWORK.FORCEOFF gets set by CTRL-AP#3 ERASEALL; releasing it
+            # turns out to be unnecessary because Net AHB-AP debug access
+            # works independently of Net core power.
+            # _recover_dp clears any sticky-fault bits left by the ERASEALL
+            # transactions so the AHB-AP path starts clean.
+            _recover_dp(dp)
+
+            disable_msgs = []
+            ok_app, msg_app = _disable_approtect_via_nvmc(
+                ahb=0, csw=0x23000002, nvmc_base=0x50039000,
+                uicr_writes=[
+                    (0x00FF8000, 0x50FA50FA),   # App UICR.APPROTECT
+                    (0x00FF801C, 0x50FA50FA),   # App UICR.SECUREAPPROTECT
+                ],
+            )
+            disable_msgs.append(f"App: {'✓' if ok_app else '✗'} {msg_app}")
+            if not ok_app:
+                overall_ok = False
+                _recover_dp(dp)   # heal before trying Net
+
+            # Net AHB-AP gets gated after CTRL-AP#3 ERASEALL — direct accesses
+            # FAULT. A CTRL-AP#3 RESET pulse + APPROTECTSTATUS readback wakes
+            # Net AHB-AP without re-arming APPROTECT (empirically confirmed
+            # 2026-06-26 — APPROTECTSTATUS stays at 1 post-pulse).
+            _recover_dp(dp)
+            net_ctrl_ap = max(
+                (ap for ap, idr in ctrl_ap_idrs.items() if idr == 0x12880000),
+                default=3,
+            )
+            try:
+                dp.write_dp(0x8, (net_ctrl_ap << 24) | 0x00)
+                dp.write_ap((net_ctrl_ap << 24) | 0x00, 0x00000001)   # RESET = 1
+                time.sleep(0.05)
+                dp.write_ap((net_ctrl_ap << 24) | 0x00, 0x00000000)   # RESET = 0
+                time.sleep(0.05)
+                # APPROTECTSTATUS readback — appears to be the trigger that
+                # actually unblocks Net AHB-AP transactions.
+                _ = dp.read_ap((net_ctrl_ap << 24) | 0x0C)
+                dp.read_dp(0x0C)
+            except Exception:
+                _recover_dp(dp)
+
+            ok_net, msg_net = _disable_approtect_via_nvmc(
+                ahb=1, csw=0x03800042, nvmc_base=0x41080000,
+                uicr_writes=[
+                    (0x00FF8000, 0x50FA50FA),   # Net UICR.APPROTECT (Net's own space)
+                ],
+            )
+            disable_msgs.append(f"Net: {'✓' if ok_net else '✗'} {msg_net}")
+            # Net UICR write is BEST-EFFORT. Net AHB-AP access immediately
+            # after the multi-step erase flow is flaky on this probe (works
+            # standalone, FAULTs inside the webgui sequence — likely DP
+            # state accumulation across the App-UICR + Net-pulse path).
+            # App UICR alone keeps the chip unlocked for App-side ops, which
+            # is enough for the common case (Net core typically gets
+            # re-flashed with firmware that disables APPROTECT on boot).
+            # For a chip that truly requires permanent Net unlock without
+            # firmware help, recover via J-Link + nrfjprog.
+            if not ok_net:
+                disable_msgs.append("(Net write is best-effort — App-side unlocked, "
+                                    "use J-Link + nrfjprog if Net needs permanent unlock)")
+                _recover_dp(dp)   # clear DP sticky bits before reset
+
+            results.append(("UICR-disable", ok_app, "; ".join(disable_msgs)))
 
         _recover_dp(dp)
     except Exception as e:

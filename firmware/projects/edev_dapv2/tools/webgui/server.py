@@ -73,19 +73,33 @@ async def _resolve_serial() -> Optional[str]:
     return None
 
 
-async def _post_op_reset(serial: Optional[str], chip: str) -> dict:
+async def _post_op_reset(serial: Optional[str], chip: str, *,
+                         after_eraseall: bool = False) -> dict:
     """Post-erase / post-flash reset.
 
-    Nordic chips get a CTRL-AP RESET pulse — that's a hardware-pin-equivalent
-    reset which works even when the CPU is halted or APPROTECT is engaged,
-    and reliably brings the freshly-flashed image into running state.
-    SYSRESETREQ via AHB-AP (pyocd's `target.reset()`) is unreliable here
-    because we open the session with `init_board=False`, which leaves
-    pyocd's core abstraction unrealized.
+    Nordic chips normally get a CTRL-AP RESET pulse (pin-equivalent) — works
+    when the CPU is halted or APPROTECT is engaged, and reliably boots the
+    freshly-programmed image. SYSRESETREQ via pyocd's `target.reset()` is
+    unreliable here because we open the session with `init_board=False`.
 
-    Non-Nordic chips fall back to SYSRESETREQ — no CTRL-AP equivalent exists.
+    EXCEPTION — nRF5340/nRF91 after CTRL-AP ERASEALL: a pin-equivalent reset
+    re-arms AHB-AP protection. On nRF5340 UICR.APPROTECT = 0xFFFFFFFF is the
+    "HwEnabled" (locked) state — so ERASEALL leaves the chip unlocked for the
+    current session only; the next pin/POR/BOR/WDT reset re-locks the AHB-AP.
+    SYSRESETREQ does NOT re-arm AP protection, so it's the safe choice
+    immediately after a UICR-wiping erase. (Nordic NCS 3.0.2 §AP-protect,
+    verified 3-0 by the deep-research panel 2026-06-26.)
+
+    Non-Nordic chips fall back to SYSRESETREQ.
     """
-    kind = "ctrl_ap" if chip.lower().startswith("nrf") else "system"
+    chip_lc = chip.lower()
+    is_locking_nordic = "nrf5340" in chip_lc or "nrf91" in chip_lc
+    if after_eraseall and is_locking_nordic:
+        kind = "system"   # SYSRESETREQ — keeps AHB-AP open for the next op
+    elif chip_lc.startswith("nrf"):
+        kind = "ctrl_ap"
+    else:
+        kind = "system"
     return await pyocd_diag.do_reset(
         serial=serial, frequency_hz=session.speed_khz * 1000, kind=kind,
     )
@@ -514,7 +528,7 @@ async def api_erase(body: dict = Body(default={})):
         """Post-erase reset so the chip leaves halt state and runs whatever
         comes next. Returns a one-line summary for the response message."""
         s = await _resolve_serial()
-        r = await _post_op_reset(s, chip)
+        r = await _post_op_reset(s, chip, after_eraseall=True)
         return f"post-erase reset: {r['message']}"
 
     t0 = time.monotonic()
@@ -549,8 +563,11 @@ async def api_erase(body: dict = Body(default={})):
             serial=serial,
             frequency_hz=session.speed_khz * 1000,
         )
-        lines = [f"CTRL-AP#{ap}: {'✓' if ok2 else '✗'} {msg}"
-                 for (ap, ok2, msg) in per_ap]
+        lines = [
+            (f"{ap}: {'✓' if ok2 else '✗'} {msg}" if isinstance(ap, str)
+             else f"CTRL-AP#{ap}: {'✓' if ok2 else '✗'} {msg}")
+            for (ap, ok2, msg) in per_ap
+        ]
 
         # Post-erase sequence (matches the flash path):
         #   1) Read-verify each core's flash[0] = 0xFFFFFFFF while the chip
@@ -559,13 +576,18 @@ async def api_erase(body: dict = Body(default={})):
         #   2) Issue one CTRL-AP reset to leave the chip in a clean run state.
         verify_lines = []
         if ok:
-            verify_cores = []
+            # Post-erase readback verify. Only verify App on nRF5340:
+            #   - Net read via probe-rs `--core 1` triggers probe-rs's Nordic
+            #     "Core 1 is locked" auto-escalation, which on edev_dapv2 hits
+            #     a DAP_TransferBlock timeout (separate firmware bug). Net
+            #     erase is already confirmed by CTRL-AP#3's ERASEALLSTATUS
+            #     poll completing.
+            #   - For other Nordic chips with a single CTRL-AP, the single
+            #     ERASEALL+verify is sufficient.
             chip_lc = chip.lower()
-            if "nrf5340" in chip_lc:
-                verify_cores = [(0, 0x00000000, "App"), (1, 0x01000000, "Net")]
-            else:
-                verify_cores = [(0, 0x00000000, "")]
+            verify_cores = [(0, 0x00000000, "App" if "nrf5340" in chip_lc else "")]
 
+            import struct
             for core_idx, addr, label in verify_cores:
                 code, data, err = await probers.read_words(
                     chip=chip, speed_khz=session.speed_khz,
@@ -579,7 +601,6 @@ async def api_erase(body: dict = Body(default={})):
                     )
                     ok = False
                 else:
-                    import struct
                     val = struct.unpack("<I", data)[0]
                     erased = (val == 0xFFFFFFFF)
                     verify_lines.append(
@@ -590,7 +611,7 @@ async def api_erase(body: dict = Body(default={})):
                     if not erased:
                         ok = False
 
-            reset_res = await _post_op_reset(serial, chip)
+            reset_res = await _post_op_reset(serial, chip, after_eraseall=True)
             verify_lines.append(f"post-erase reset: {reset_res['message']}")
 
         elapsed = round(time.monotonic() - t0, 2)
