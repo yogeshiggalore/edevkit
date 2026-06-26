@@ -91,12 +91,38 @@ static void swd_write_n(uint32_t data, uint8_t n)
     }
 }
 
-/* Read N bits LSB-first, return value with first received bit at LSB. */
+/* Read N bits LSB-first, return value with first received bit at LSB.
+ *
+ * Safety-net timeout: pio_sm_get_blocking() spins forever if the PIO
+ * SM stops pushing to the RX FIFO (e.g., the SM gets wedged in some
+ * corner case during high-traffic transactions). If we never return,
+ * the whole CMSIS-DAP command handler stalls and probe-rs eventually
+ * times out the USB roundtrip. That's Bug 2's symptom on nRF5340.
+ *
+ * Cap the wait at ~10 ms — typical worst-case is microseconds; 10 ms
+ * is 1000× headroom but still well under probe-rs's ~1-second USB
+ * timeout. If we hit the cap, restart the SM and return 0xFFFFFFFF
+ * (likely interpreted as no-ack/parity-err upstream, which triggers
+ * the retry path or a clean error response instead of a USB hang). */
 static uint32_t swd_read_n(uint8_t n)
 {
     uint32_t op = pio_opcode(probe_swd_offset_read_bits, n, 0);
     pio_sm_put_blocking(PROBE_PIO, PROBE_SM, op);
-    uint32_t v = pio_sm_get_blocking(PROBE_PIO, PROBE_SM);
+
+    /* Bounded wait for RX FIFO. ~10 ms at 125 MHz CPU = 1.25M loop
+     * iterations. Each iteration is ~2 cycles → 2.5M cycles. */
+    uint32_t guard = 1500000u;
+    while (pio_sm_is_rx_fifo_empty(PROBE_PIO, PROBE_SM)) {
+        if (--guard == 0) {
+            /* SM is wedged. Restart it cleanly so the next op works. */
+            pio_sm_clear_fifos(PROBE_PIO, PROBE_SM);
+            pio_sm_restart(PROBE_PIO, PROBE_SM);
+            pio_sm_exec(PROBE_PIO, PROBE_SM,
+                        pio_encode_jmp(s_pio_offset + probe_swd_offset_start));
+            return 0xFFFFFFFFu;   /* will look like NACK / parity err */
+        }
+    }
+    uint32_t v = pio_sm_get(PROBE_PIO, PROBE_SM);
     /* ISR was right-shifted N times; bits occupy positions 32-N .. 31.
      * Shift back so first-received bit is at bit 0. */
     if (n < 32) v >>= (32 - n);
