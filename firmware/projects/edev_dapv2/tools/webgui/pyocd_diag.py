@@ -18,29 +18,42 @@ from typing import Optional
 # starts fast even if pyocd has install issues.
 
 
-# ─── nRF5340 APPROTECT-disable Thumb stub (with VMC bootstrap) ────────
+# ─── nRF5340 APPROTECT-disable Thumb stub ─────────────────────────────
 # Source: edevkit/firmware/projects/edev_dapv2/tools/nrf53_disable_approtect.s
 # Build:  arm-none-eabi-as -mcpu=cortex-m33 -mthumb nrf53_disable_approtect.s
-# Writes the stub directly into App flash @ 0x00000000 (with a 2-word
-# vector-table prefix) so SYSRESETREQ boots the CPU into our code
-# (VTOR resets to 0 on Cortex-M33 SYSRESETREQ — RAM-loaded VTOR
-# doesn't survive). Stub does VMC RAM power-on, then programs
-# UICR.APPROTECT + SECUREAPPROTECT for both cores via NVMC, BKPTs.
+#
+# Layout: starts with a full Cortex-M33 vector table (initial MSP at +0x00,
+# Reset at +0x04, fault handlers at +0x08..+0x3C) followed by the code.
+# The fault handlers all point to a spin loop with BKPT #1 — without these,
+# any fault during stub execution causes lockup (CPU dispatches to
+# 0xFFFFFFFE → double fault → lockup).
+#
+# nrfjprog's 3748-byte recover image installs the same fault-handler
+# vectors; verified by reading flash post-recover. The actual UICR work
+# is inline right after the vectors (nrfjprog puts it at offset 0x448
+# after data-copy bootstrap; we skip that since our stub is PIC).
+#
+# Writes the stub directly to App flash @ 0x00000000 via App NVMC.
+# SYSRESETREQ boots the CPU into our vector table — VTOR resets to 0,
+# so flash[0] is the only place that survives.
 _NRF53_DISABLE_STUB = (
-    b"\x22\x48\x4f\xf0\xff\x31\x01\x60\x01\x61\x01\x62\x01\x63\x01\x64"
-    b"\x01\x65\x01\x66\x01\x67\x1e\x48\x01\x60\x1e\x4c\x1e\x4d\x1f\x4e"
-    b"\x22\x68\x01\x2a\xfc\xd1\x01\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1"
-    b"\x1b\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x1a\x48\x06\x60\x22\x68"
-    b"\x01\x2a\xfc\xd1\x00\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x16\x48"
-    b"\x00\x22\x02\x60\x00\x22\x4f\xf4\x80\x43\x01\x32\x9a\x42\xfc\xd3"
-    b"\x12\x4c\x13\x4d\x22\x68\x01\x2a\xfc\xd1\x01\x22\x2a\x60\x22\x68"
-    b"\x01\x2a\xfc\xd1\x0f\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22"
-    b"\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x00\xbe\xfe\xe7\x04\x16\x08\x50"
-    b"\x00\x54\x00\x50\x00\x94\x03\x50\x04\x95\x03\x50\xfa\x50\xfa\x50"
-    b"\x00\x80\xff\x00\x1c\x80\xff\x00\x14\x56\x00\x50\x00\x04\x08\x41"
-    b"\x04\x05\x08\x41\x00\x80\xff\x01"
+    b"\x00\x00\x01\x20\x45\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
+    b"\x41\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
+    b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x41\x00\x00\x00"
+    b"\x41\x00\x00\x00\x00\x00\x00\x00\x41\x00\x00\x00\x41\x00\x00\x00"
+    b"\x01\xbe\xfe\xe7\x22\x48\x4f\xf0\xff\x31\x01\x60\x01\x61\x01\x62"
+    b"\x01\x63\x01\x64\x01\x65\x01\x66\x01\x67\x1e\x48\x01\x60\x1e\x4c"
+    b"\x1e\x4d\x1f\x4e\x22\x68\x01\x2a\xfc\xd1\x01\x22\x2a\x60\x22\x68"
+    b"\x01\x2a\xfc\xd1\x1b\x48\x06\x60\x22\x68\x01\x2a\xfc\xd1\x1a\x48"
+    b"\x06\x60\x22\x68\x01\x2a\xfc\xd1\x00\x22\x2a\x60\x22\x68\x01\x2a"
+    b"\xfc\xd1\x16\x48\x00\x22\x02\x60\x00\x22\x4f\xf4\x80\x43\x01\x32"
+    b"\x9a\x42\xfc\xd3\x12\x4c\x13\x4d\x22\x68\x01\x2a\xfc\xd1\x01\x22"
+    b"\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x0f\x48\x06\x60\x22\x68\x01\x2a"
+    b"\xfc\xd1\x00\x22\x2a\x60\x22\x68\x01\x2a\xfc\xd1\x00\xbe\xfe\xe7"
+    b"\x04\x16\x08\x50\x00\x54\x00\x50\x00\x94\x03\x50\x04\x95\x03\x50"
+    b"\xfa\x50\xfa\x50\x00\x80\xff\x00\x1c\x80\xff\x00\x14\x56\x00\x50"
+    b"\x00\x04\x08\x41\x04\x05\x08\x41\x00\x80\xff\x01"
 )
-_STUB_INITIAL_MSP  = 0x20010000   # top of App SRAM after VMC power-on
 _STUB_TIMEOUT_S    = 5.0          # typical run is < 100 ms once running
 
 
@@ -717,17 +730,12 @@ def _run_disable_stub(dp, *, app_ahb: int = 0) -> tuple[bool, str]:
         return False
 
     try:
-        # 1. Build the flash payload: 2-word vector table + stub code.
-        #    Stub goes at flash[0x08] onwards; vectors point at it.
-        stub = _NRF53_DISABLE_STUB
-        if len(stub) % 4:
-            stub = stub + b"\x00" * (4 - (len(stub) % 4))
-        STUB_CODE_OFFSET = 8
-        stub_pc = STUB_CODE_OFFSET | 1   # Thumb bit
-        vector_table = _STUB_INITIAL_MSP.to_bytes(4, "little") + \
-                       stub_pc.to_bytes(4, "little")
-        blob = vector_table + stub
-        # Convert to (addr, value) word writes starting at flash 0x00000000.
+        # 1. Stub binary starts with its own vector table (initial MSP +
+        #    Reset + fault handlers); write verbatim to flash[0]. CPU
+        #    boots from these vectors after SYSRESETREQ.
+        blob = _NRF53_DISABLE_STUB
+        if len(blob) % 4:
+            blob = blob + b"\x00" * (4 - (len(blob) % 4))
         flash_writes = []
         for off in range(0, len(blob), 4):
             word = (blob[off] | (blob[off+1] << 8)
