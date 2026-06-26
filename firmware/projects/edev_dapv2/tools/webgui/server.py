@@ -222,22 +222,28 @@ async def api_read(body: dict = Body(...)):
     count = int(body["word_count"])
     core_index = int(body.get("core_index", session.core_index))
 
-    # nRF5340 Net core (core_index=1): probe-rs's CMSIS-DAP backend has
-    # multiple stacking issues on Net access (multidrop SWD on locked
-    # cores + post-lockup FAULT during session teardown). Use pyocd's
-    # direct AHB-AP read instead — bypasses all of probe-rs's vendor
-    # cleanup. Net AHB-AP is index 1; CSW=0x03800042 is Nordic-required.
-    if "nrf5340" in (session.chip or "").lower() and core_index == 1:
+    # nRF5340: ALWAYS use direct pyocd AHB-AP reads — never probe-rs.
+    # probe-rs's read with --allow-erase-all triggers a CTRL-AP ERASEALL
+    # the moment it sees ANY core locked, and the erase wipes BOTH cores
+    # (not just the locked one). That made every post-flash read of App
+    # destroy the firmware we just programmed. Direct pyocd reads bypass
+    # the vendor sequence entirely.
+    is_nrf5340 = "nrf5340" in (session.chip or "").lower()
+    if is_nrf5340:
         serial = await _resolve_serial()
+        if core_index == 1:
+            ahb, csw = 1, 0x03800052   # Net AHB-AP, Nordic-required CSW
+        else:
+            ahb, csw = 0, 0x23000002   # App AHB-AP, App secure CSW
         ok, data, msg = await pyocd_diag.read_memory(
             serial=serial,
             frequency_hz=session.speed_khz * 1000,
-            ahb=1, address=addr, word_count=count,
-            csw=0x03800042,
+            ahb=ahb, address=addr, word_count=count,
+            csw=csw,
         )
         if not ok or len(data) < count * 4:
             raise HTTPException(status_code=502,
-                                detail=f"net read failed: {msg}")
+                                detail=f"read failed: {msg}")
         err = ""
         code = 0
     else:

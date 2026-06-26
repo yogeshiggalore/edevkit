@@ -236,7 +236,9 @@ async def flash_file_streaming_pyocd(*, chip: str, frequency_hz: int,
             yield "done", {"ok": False, "exit_code": 1,
                            "message": f"Net flash failed after {net_bytes_written} bytes: {net_msg}"}
             return
-        net_msg = f"{net_bytes_written} bytes written"
+        # Keep the rich net_msg returned by pyocd_diag.program_net_flash —
+        # it includes the inline verify result and UICR.APPROTECT confirmation.
+        net_msg = f"{net_bytes_written} bytes written; {net_msg}"
 
     yield "done", {
         "ok": True, "exit_code": 0,

@@ -1308,6 +1308,18 @@ def _program_net_flash_sync(serial, frequency_hz, segments,
             return False, bytes_written, "Net NVMC stuck after UICR.APPROTECT write"
         nvmc_set_config(CONFIG_REN)
 
+        # Read it back IMMEDIATELY — same session, AHB-AP still open.
+        # If the value didn't stick we want a hard error, not a silent
+        # success that turns into a verify-fail two phases downstream.
+        ap_write(0x04, 0x01FF8000)
+        net_uicr = dp.read_ap((NET_AP << 24) | 0x0C) & 0xFFFFFFFF
+        if net_uicr != 0x50FA50FA:
+            return False, bytes_written, (
+                f"Net UICR.APPROTECT readback after write: "
+                f"got 0x{net_uicr:08X}, expected 0x50FA50FA — "
+                f"the write didn't take effect; Net core will re-lock after reset"
+            )
+
         # Write App UICR.APPROTECT + SECUREAPPROTECT via App NVMC + AHB-AP#0.
         # Same DP, different AP. CSW = 0x23000002 (Nordic App side).
         APP_AP = 0
