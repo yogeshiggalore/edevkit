@@ -961,3 +961,196 @@ async def read_memory(*, serial, frequency_hz, ahb, address, word_count, csw=0x2
     return await loop.run_in_executor(
         None, _read_memory_sync, serial, frequency_hz, ahb, address, word_count, csw,
     )
+
+
+# ── nRF5340 Net core flash programmer (host-driven, no on-target stub) ──
+#
+# We program Net flash via Net's own AHB-AP (AP#1) writing through the
+# Net NVMC peripheral. No App-side stub, no SPU bootstrap — Net AHB-AP
+# is unlocked by CTRL-AP#3 ERASEALL and stays open until the next reset.
+#
+# Net NVMC register map (Net's address space, also reachable via AP#1):
+#   0x41080400  READY    bit 0 = 1 when idle
+#   0x41080504  CONFIG   0=Ren (default), 1=Wen, 2=Een, 4=PEen
+# Net flash: 0x01000000 .. 0x0103FFFF (256 KB, 4 KB pages)
+# Net UICR:  0x01FF8000 .. 0x01FF8FFF (4 KB)
+#
+# CSW for AP#1 must be 0x03800042 — Nordic-required (HPROT=Cacheable,
+# Priv, Data + 32-bit + AddrInc=single). Observed in J-Link traces; any
+# other CSW value produces FAULT on Net's bus.
+#
+# Write timing: nRF5340 NVMC is ~40 us/word for App, similar for Net.
+# READY drops briefly during the write and rises again. We poll READY
+# before each write; the buffered-write mode used by the on-die flash
+# controller batches up to 4 words but pyocd's per-call sync model
+# negates that benefit here. ~1 ms per word over USB FS — 47k words
+# would take ~50s, so we keep the body small and batch SELECT/CSW writes.
+
+
+def _program_net_flash_sync(serial, frequency_hz, segments,
+                            progress_cb=None):
+    """Program Net flash via AP#1 + Net NVMC bridge.
+
+    Caller MUST have just issued CTRL-AP#3 ERASEALL (Net AHB-AP open,
+    Net flash entirely 0xFF). We don't sanity-check that; if Net AHB-AP
+    is locked the first DRW write will FAULT and we report it.
+
+    segments: iterable of (address, bytes). Address must be in
+        [0x01000000, 0x01040000) or [0x01FF8000, 0x01FF9000). Bytes
+        length must be a multiple of 4 (we pad with 0xFF inside).
+    progress_cb: optional callable(pct_int) — called periodically.
+
+    Returns (ok, bytes_written, message).
+    """
+    from pyocd.core.helpers import ConnectHelper
+    import time
+
+    NET_AP = 1
+    NET_CSW = 0x03800042
+    NVMC_READY = 0x41080400
+    NVMC_CONFIG = 0x41080504
+    CONFIG_REN = 0
+    CONFIG_WEN = 1
+
+    try:
+        sess = ConnectHelper.session_with_chosen_probe(
+            unique_id=serial, target_override="cortex_m",
+            connect_mode="attach", blocking=False,
+            options={"frequency": frequency_hz, "dap_protocol": "swd",
+                     "auto_unlock": False},
+        )
+    except Exception as e:
+        return False, 0, f"open session: {e}"
+    if not sess:
+        return False, 0, "no probe matched"
+
+    bytes_written = 0
+    try:
+        sess.open(init_board=False)
+        dp = sess.board.target.dp
+        try: dp.connect()
+        except Exception: pass
+        try: dp.power_up_debug()
+        except Exception: pass
+
+        # Defensive CTRL-AP#3 RESET pulse first — clears any stuck-erase
+        # state from a previous aborted operation. Without this, a stale
+        # ERASEALLSTATUS=1 (busy) blocks the new ERASEALL we're about
+        # to issue.
+        dp.write_dp(0x8, (3 << 24) | 0x00)
+        dp.write_ap((3 << 24) | 0x00, 1)
+        time.sleep(0.02)
+        dp.write_ap((3 << 24) | 0x00, 0)
+        time.sleep(0.02)
+
+        # CTRL-AP#3 ERASEALL — wipes Net flash + Net UICR, and unlocks
+        # Net AHB-AP for the remainder of this DP session.
+        dp.write_ap((3 << 24) | 0x04, 1)
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 10:
+            if dp.read_ap((3 << 24) | 0x08) == 0:
+                break
+            time.sleep(0.02)
+        else:
+            return False, 0, "CTRL-AP#3 ERASEALL timed out"
+
+        # AP#1 setup
+        def ap_write(reg_off, val):
+            dp.write_ap((NET_AP << 24) | reg_off, val)
+
+        def ap_read(reg_off):
+            _ = dp.read_ap((NET_AP << 24) | reg_off)
+            return dp.read_dp(0x0C) & 0xFFFFFFFF
+
+        def nvmc_wait_ready(timeout=2.0):
+            ap_write(0x04, NVMC_READY)   # TAR
+            t = time.monotonic()
+            while time.monotonic() - t < timeout:
+                if ap_read(0x0C) & 1:
+                    return True
+                time.sleep(0.0005)
+            return False
+
+        def nvmc_set_config(value):
+            ap_write(0x04, NVMC_CONFIG)
+            ap_write(0x0C, value)
+            dp.read_dp(0x0C)
+            return nvmc_wait_ready()
+
+        # Initial SELECT + CSW
+        dp.write_dp(0x8, (NET_AP << 24) | 0x00)
+        ap_write(0x00, NET_CSW)
+
+        if not nvmc_wait_ready():
+            return False, 0, "Net NVMC not ready before Wen"
+        if not nvmc_set_config(CONFIG_WEN):
+            return False, 0, "Net NVMC not ready after Wen"
+
+        # Count total words for progress
+        total_words = sum(((len(buf) + 3) // 4) for (_, buf) in segments)
+        words_done = 0
+        last_pct = -1
+
+        for (base, buf) in segments:
+            # Pad to word boundary
+            if len(buf) % 4:
+                buf = buf + b'\xff' * (4 - (len(buf) % 4))
+            # Process in 1 KB chunks (AP auto-increment boundary). We
+            # set TAR at the start of each 1 KB run; the NVMC handles
+            # the actual flash addressing.
+            n_words = len(buf) // 4
+            for w in range(n_words):
+                addr = base + w * 4
+                if w == 0 or (addr & 0x3FF) == 0:
+                    # AHB-AP auto-increment wraps every 1 KB — refresh TAR
+                    ap_write(0x04, addr)
+                val = int.from_bytes(buf[w*4:w*4+4], 'little')
+                if val == 0xFFFFFFFF:
+                    # Skip writes of 0xFFFFFFFF (already erased — Nordic
+                    # NVMC accepts these but each one still costs 40 us).
+                    words_done += 1
+                    continue
+                ap_write(0x0C, val)
+                # READY polls only every 4 words — NVMC has a small
+                # write buffer that absorbs a burst.
+                if (w & 0x3) == 0x3:
+                    if not nvmc_wait_ready(timeout=0.5):
+                        nvmc_set_config(CONFIG_REN)
+                        return False, words_done * 4, f"Net NVMC stuck @ 0x{addr:08X}"
+                    # Restore TAR after the READY poll moved it
+                    ap_write(0x04, addr + 4)
+                words_done += 1
+                bytes_written = words_done * 4
+
+                if progress_cb:
+                    pct = min(99, (words_done * 100) // max(total_words, 1))
+                    if pct != last_pct:
+                        progress_cb(pct)
+                        last_pct = pct
+
+            # Final READY for this segment
+            if not nvmc_wait_ready(timeout=1.0):
+                nvmc_set_config(CONFIG_REN)
+                return False, bytes_written, f"Net NVMC stuck at end of segment 0x{base:08X}"
+
+        if not nvmc_set_config(CONFIG_REN):
+            return False, bytes_written, "Net NVMC stuck during Ren switch"
+
+        if progress_cb:
+            progress_cb(100)
+        return True, bytes_written, "ok"
+    except Exception as e:
+        return False, bytes_written, f"{type(e).__name__}: {e}"
+    finally:
+        import threading
+        closer = threading.Thread(target=lambda: _safe_close(sess), daemon=True)
+        closer.start()
+        closer.join(timeout=2.0)
+
+
+async def program_net_flash(*, serial, frequency_hz, segments, progress_cb=None):
+    """Async wrapper for _program_net_flash_sync."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, _program_net_flash_sync, serial, frequency_hz, segments, progress_cb,
+    )
