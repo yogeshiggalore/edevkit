@@ -54,6 +54,9 @@ session = Session()
 # Active dump jobs: id → {"queue": asyncio.Queue, "data": bytearray, ...}
 DUMP_JOBS: dict[str, dict] = {}
 
+# Active flash jobs: id → {"queue": asyncio.Queue, "result": dict|None, ...}
+FLASH_JOBS: dict[str, dict] = {}
+
 
 async def _resolve_serial() -> Optional[str]:
     """Return session.serial, or auto-pick the first probe matching VID:PID."""
@@ -68,6 +71,24 @@ async def _resolve_serial() -> Optional[str]:
         if p.vid == vid and p.pid == pid:
             return p.serial
     return None
+
+
+async def _post_op_reset(serial: Optional[str], chip: str) -> dict:
+    """Post-erase / post-flash reset.
+
+    Nordic chips get a CTRL-AP RESET pulse — that's a hardware-pin-equivalent
+    reset which works even when the CPU is halted or APPROTECT is engaged,
+    and reliably brings the freshly-flashed image into running state.
+    SYSRESETREQ via AHB-AP (pyocd's `target.reset()`) is unreliable here
+    because we open the session with `init_board=False`, which leaves
+    pyocd's core abstraction unrealized.
+
+    Non-Nordic chips fall back to SYSRESETREQ — no CTRL-AP equivalent exists.
+    """
+    kind = "ctrl_ap" if chip.lower().startswith("nrf") else "system"
+    return await pyocd_diag.do_reset(
+        serial=serial, frequency_hz=session.speed_khz * 1000, kind=kind,
+    )
 
 
 # ── Index page ────────────────────────────────────────────────────────
@@ -466,6 +487,295 @@ async def api_identify():
     for core in d.get("cores", []):
         core["flash_base_hex"] = f"0x{core['flash_base']:08X}"
     return d
+
+
+# ── Erase / flash ─────────────────────────────────────────────────────
+
+@app.post("/api/erase")
+async def api_erase(body: dict = Body(default={})):
+    """Erase all non-volatile memory.
+
+    method:
+      - "auto"     (default): try probe-rs first (fast path for unlocked
+                              chips). If it fails AND the chip is Nordic,
+                              fall back to CTRL-AP ERASEALL — that's the
+                              only way to unlock an APPROTECT-locked chip.
+      - "ctrl_ap": force CTRL-AP path (Nordic-only). Use as "Recover" — it
+                   wipes flash AND clears APPROTECT in one shot.
+      - "probe_rs": force probe-rs erase (single chip, no --core flag).
+    """
+    import time
+    method = body.get("method", "auto")
+    chip = body.get("chip", session.chip)
+    is_nordic = chip.lower().startswith("nrf")
+    fallback_used = False
+
+    async def _post_erase_reset_msg() -> str:
+        """Post-erase reset so the chip leaves halt state and runs whatever
+        comes next. Returns a one-line summary for the response message."""
+        s = await _resolve_serial()
+        r = await _post_op_reset(s, chip)
+        return f"post-erase reset: {r['message']}"
+
+    t0 = time.monotonic()
+
+    # Auto: probe-rs first for speed, CTRL-AP if that fails on Nordic.
+    if method == "auto":
+        core_index = int(body.get("core_index", session.core_index))
+        code, out, err = await probers.erase(
+            chip=chip, speed_khz=session.speed_khz,
+            serial=session.serial, vid_pid=session.vid_pid,
+            core_index=core_index,
+        )
+        if code == 0:
+            reset_msg = await _post_erase_reset_msg()
+            return {"ok": True, "method": "probe_rs",
+                    "message": (out.strip() or "erase complete") + "\n" + reset_msg,
+                    "elapsed_s": round(time.monotonic() - t0, 2),
+                    "core_index": core_index}
+        if not is_nordic:
+            return {"ok": False, "method": "probe_rs",
+                    "message": err.strip() or out.strip() or f"exit {code}",
+                    "elapsed_s": round(time.monotonic() - t0, 2),
+                    "core_index": core_index}
+        # Probe-rs failed on a Nordic chip → fall through to CTRL-AP.
+        method = "ctrl_ap"
+        fallback_used = True
+
+    serial = await _resolve_serial()
+
+    if method == "ctrl_ap":
+        ok, per_ap = await pyocd_diag.erase_ctrl_ap_all(
+            serial=serial,
+            frequency_hz=session.speed_khz * 1000,
+        )
+        lines = [f"CTRL-AP#{ap}: {'✓' if ok2 else '✗'} {msg}"
+                 for (ap, ok2, msg) in per_ap]
+
+        # Post-erase sequence (matches the flash path):
+        #   1) Read-verify each core's flash[0] = 0xFFFFFFFF while the chip
+        #      is post-erase but pre-reset. AHB-AP is open because erased
+        #      flash can't have re-engaged APPROTECT.
+        #   2) Issue one CTRL-AP reset to leave the chip in a clean run state.
+        verify_lines = []
+        if ok:
+            verify_cores = []
+            chip_lc = chip.lower()
+            if "nrf5340" in chip_lc:
+                verify_cores = [(0, 0x00000000, "App"), (1, 0x01000000, "Net")]
+            else:
+                verify_cores = [(0, 0x00000000, "")]
+
+            for core_idx, addr, label in verify_cores:
+                code, data, err = await probers.read_words(
+                    chip=chip, speed_khz=session.speed_khz,
+                    address=addr, word_count=1,
+                    serial=session.serial, vid_pid=session.vid_pid,
+                    core_index=core_idx,
+                )
+                if code != 0 or not data:
+                    verify_lines.append(
+                        f"verify {label or 'core'} @ 0x{addr:08X}: ✗ read failed"
+                    )
+                    ok = False
+                else:
+                    import struct
+                    val = struct.unpack("<I", data)[0]
+                    erased = (val == 0xFFFFFFFF)
+                    verify_lines.append(
+                        f"verify {label or 'core'} @ 0x{addr:08X}: "
+                        f"{'✓' if erased else '✗'} 0x{val:08X}"
+                        f"{'' if erased else ' (NOT erased)'}"
+                    )
+                    if not erased:
+                        ok = False
+
+            reset_res = await _post_op_reset(serial, chip)
+            verify_lines.append(f"post-erase reset: {reset_res['message']}")
+
+        elapsed = round(time.monotonic() - t0, 2)
+        return {
+            "ok": ok,
+            "method": "ctrl_ap" + (" (auto-fallback)" if fallback_used else ""),
+            "message": "\n".join(lines + verify_lines) if (lines or verify_lines) else "done",
+            "elapsed_s": elapsed,
+            "ctrl_aps": [{"ap": ap, "ok": ok2, "message": msg} for (ap, ok2, msg) in per_ap],
+        }
+
+    # method == "probe_rs"
+    core_index = int(body.get("core_index", session.core_index))
+    code, out, err = await probers.erase(
+        chip=chip,
+        speed_khz=session.speed_khz,
+        serial=session.serial,
+        vid_pid=session.vid_pid,
+        core_index=core_index,
+    )
+    elapsed = round(time.monotonic() - t0, 2)
+    if code != 0:
+        return {"ok": False, "method": "probe_rs",
+                "message": err.strip() or out.strip() or f"exit {code}",
+                "elapsed_s": elapsed, "core_index": core_index}
+    reset_msg = await _post_erase_reset_msg()
+    return {"ok": True, "method": "probe_rs",
+            "message": (out.strip() or "erase complete") + "\n" + reset_msg,
+            "elapsed_s": elapsed, "core_index": core_index}
+
+
+@app.post("/api/flash")
+async def api_flash(
+    file: UploadFile = File(...),
+    core_index: int = 0,
+    verify: int = 1,
+    base_address: Optional[str] = None,
+    chip: Optional[str] = None,
+):
+    """Start a flash job. Returns {job_id} immediately; client polls
+    /api/flash/{job_id}/progress (SSE) for live Erasing/Programming progress,
+    and reads the final verify result from the same stream.
+
+    The file is saved to a temp path and handed to `probe-rs download` under
+    a pty so its progress bars actually emit. Format is inferred from
+    extension (.hex → hex, .bin → bin, .elf → elf)."""
+    import tempfile, time
+
+    fname = file.filename or "image.hex"
+    ext = (fname.rsplit(".", 1)[-1] or "").lower()
+    fmt_map = {"hex": "hex", "ihex": "hex", "ihx": "hex",
+               "bin": "bin", "elf": "elf", "out": "elf"}
+    binfmt = fmt_map.get(ext, "hex")
+    base = int(base_address, 0) if base_address else None
+    use_chip = chip or session.chip
+
+    suffix = f".{ext or 'hex'}"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
+        contents = await file.read()
+        tf.write(contents)
+        tmp_path = tf.name
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "queue": asyncio.Queue(),
+        "result": None,
+        "started": time.monotonic(),
+        "filename": fname,
+        "bytes_received": len(contents),
+        "binary_format": binfmt,
+        "core_index": core_index,
+    }
+    FLASH_JOBS[job_id] = job
+
+    async def runner():
+        try:
+            async for kind, payload in probers.flash_file_streaming(
+                chip=use_chip, speed_khz=session.speed_khz,
+                file_path=tmp_path, binary_format=binfmt,
+                serial=session.serial, vid_pid=session.vid_pid,
+                core_index=core_index, base_address=base,
+                verify=bool(int(verify)),
+            ):
+                if kind == "progress":
+                    await job["queue"].put({"type": "progress", **payload})
+                elif kind == "done":
+                    elapsed = round(time.monotonic() - job["started"], 2)
+                    if not payload["ok"]:
+                        result = {
+                            "ok": False,
+                            "message": payload["message"],
+                            "elapsed_s": elapsed,
+                            "core_index": core_index,
+                            "binary_format": binfmt,
+                            "filename": fname,
+                            "bytes_received": len(contents),
+                        }
+                        job["result"] = result
+                        await job["queue"].put({"type": "done", **result})
+                        return
+
+                    # Post-flash sequence:
+                    #   1) Read SP+Reset vector while chip is still halted
+                    #      from the flash op (AHB-AP is open, APPROTECT
+                    #      can't have re-engaged yet because firmware
+                    #      hasn't run).
+                    #   2) CTRL-AP reset (Nordic) / SYSRESETREQ (others)
+                    #      so the chip actually boots into the new image.
+                    # If we read AFTER reset, an APPROTECT-on-boot
+                    # firmware would lock us out before the readback.
+                    base_addr = (0x01000000 if (core_index == 1 and "nrf5340" in use_chip.lower())
+                                 else 0)
+                    rd_code, rd_data, _ = await probers.read_words(
+                        chip=use_chip, speed_khz=session.speed_khz,
+                        address=base_addr, word_count=2,
+                        serial=session.serial, vid_pid=session.vid_pid,
+                        core_index=core_index,
+                    )
+                    verify_lines = []
+                    if rd_code != 0 or not rd_data:
+                        verify_lines.append(f"verify @ 0x{base_addr:08X}: ✗ read failed")
+                        flash_ok = False
+                    else:
+                        sp, reset_vec = struct.unpack("<II", rd_data)
+                        is_real = (sp != 0xFFFFFFFF) and (reset_vec != 0xFFFFFFFF)
+                        verify_lines.append(
+                            f"verify @ 0x{base_addr:08X}: {'✓' if is_real else '✗'} "
+                            f"SP=0x{sp:08X}, Reset=0x{reset_vec:08X}"
+                        )
+                        flash_ok = is_real
+
+                    serial = await _resolve_serial()
+                    reset_res = await _post_op_reset(serial, use_chip)
+                    verify_lines.append(f"post-flash reset: {reset_res['message']}")
+
+                    result = {
+                        "ok": flash_ok,
+                        "message": (payload["message"] or
+                                    f"flashed {fname} ({len(contents):,} B)") +
+                                   "\n" + "\n".join(verify_lines),
+                        "elapsed_s": elapsed,
+                        "core_index": core_index,
+                        "binary_format": binfmt,
+                        "filename": fname,
+                        "bytes_received": len(contents),
+                    }
+                    job["result"] = result
+                    await job["queue"].put({"type": "done", **result})
+                    return
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            await job["queue"].put(None)   # sentinel
+
+    asyncio.create_task(runner())
+    return {"job_id": job_id, "filename": fname, "bytes": len(contents),
+            "binary_format": binfmt, "core_index": core_index}
+
+
+@app.get("/api/flash/{job_id}/progress")
+async def api_flash_progress(job_id: str):
+    job = FLASH_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="unknown job")
+
+    async def gen():
+        while True:
+            item = await job["queue"].get()
+            if item is None:
+                break
+            yield {"event": item["type"], "data": json.dumps(item)}
+
+    return EventSourceResponse(gen())
+
+
+@app.get("/api/flash/{job_id}/result")
+async def api_flash_result(job_id: str):
+    job = FLASH_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="unknown job")
+    if job["result"] is None:
+        raise HTTPException(status_code=425, detail="flash still in progress")
+    return job["result"]
 
 
 # ── Target reset ──────────────────────────────────────────────────────

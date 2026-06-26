@@ -31,56 +31,47 @@
 
 <main class="max-w-7xl mx-auto px-6 py-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-  <!-- ── Probe + Session ────────────────────────────── -->
-  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-5">
-    <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-3">Probe / Session</h2>
+  <!-- ── Probe + Session + Info (single compact bar) ── -->
+  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-3 lg:col-span-2">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Probe</span>
+      <select id="probeSel" class="border border-slate-300 rounded px-2 py-1 text-sm min-w-[14rem]"></select>
 
-    <div class="flex flex-wrap items-end gap-3">
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">Probe</label>
-        <select id="probeSel" class="border border-slate-300 rounded px-2 py-1.5 text-sm min-w-[18rem]"></select>
-      </div>
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">Target chip</label>
-        <select id="chipSel" class="border border-slate-300 rounded px-2 py-1.5 text-sm">
-          <option>nRF52840_xxAA</option>
-          <option>nRF52833_xxAA</option>
-          <option>nRF5340_xxAA</option>
-          <option>nRF5340_xxAA-NetCore</option>
-          <option>STM32F411RETx</option>
-          <option>STM32H743ZITx</option>
-          <option>RP2040</option>
-          <option>cortex_m</option>
-        </select>
-      </div>
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">SWD speed (kHz)</label>
-        <input id="speedInp" type="number" value="8000" min="100" max="25000" step="100"
-               class="border border-slate-300 rounded px-2 py-1.5 text-sm w-28" />
-      </div>
-      <button id="refreshProbesBtn" class="px-3 py-1.5 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded">Refresh probes</button>
-      <button id="connectBtn"       class="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded">Apply</button>
-    </div>
-    <p class="mt-2 text-xs text-slate-500">
-      Recommended: <span class="mono">8000</span> kHz on jumper wiring (~4× faster than probe-rs default with no reliability loss).
-    </p>
-  </section>
+      <span class="text-xs font-semibold uppercase tracking-wide text-slate-500 ml-2">Chip</span>
+      <select id="chipSel" class="border border-slate-300 rounded px-2 py-1 text-sm">
+        <option>nRF52840_xxAA</option>
+        <option>nRF52833_xxAA</option>
+        <option>nRF5340_xxAA</option>
+        <option>nRF5340_xxAA-NetCore</option>
+        <option>STM32F411RETx</option>
+        <option>STM32H743ZITx</option>
+        <option>RP2040</option>
+        <option>cortex_m</option>
+      </select>
 
-  <!-- ── Info ────────────────────────────────────────── -->
-  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-5">
-    <div class="flex items-center mb-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Probe Info</h2>
+      <span class="text-xs font-semibold uppercase tracking-wide text-slate-500 ml-2">kHz</span>
+      <input id="speedInp" type="number" value="8000" min="100" max="25000" step="100"
+             class="border border-slate-300 rounded px-2 py-1 text-sm w-20" />
+
+      <button id="refreshProbesBtn" class="px-2 py-1 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded">↻</button>
+      <button id="connectBtn"       class="px-3 py-1 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded">Apply</button>
+
       <div class="flex-1"></div>
-      <button id="infoBtn" class="px-3 py-1.5 text-sm bg-slate-900 hover:bg-slate-700 text-white rounded">probe-rs info</button>
+
+      <button id="infoBtn" class="px-3 py-1 text-sm bg-slate-900 hover:bg-slate-700 text-white rounded">probe-rs info</button>
     </div>
-    <div id="infoSummary" class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm mono">
-      <span class="text-slate-500">Debug Port</span>     <span id="info-dp">—</span>
-      <span class="text-slate-500">Designer</span>       <span id="info-des">—</span>
-      <span class="text-slate-500">Part</span>           <span id="info-part">—</span>
-      <span class="text-slate-500">Revision</span>       <span id="info-rev">—</span>
-      <span class="text-slate-500">APs found</span>      <span id="info-aps">—</span>
+
+    <!-- Compact one-line info readout; hidden until info runs. -->
+    <div id="infoSummary" class="hidden mt-2 pt-2 border-t border-slate-200 text-xs mono flex flex-wrap gap-x-4 gap-y-1">
+      <span><span class="text-slate-500">DP</span> <span id="info-dp">—</span></span>
+      <span><span class="text-slate-500">Designer</span> <span id="info-des">—</span></span>
+      <span><span class="text-slate-500">Part</span> <span id="info-part">—</span></span>
+      <span><span class="text-slate-500">Rev</span> <span id="info-rev">—</span></span>
+      <span><span class="text-slate-500">APs</span> <span id="info-aps">—</span></span>
+      <span class="flex-1"></span>
+      <button id="infoRawToggle" class="text-slate-500 hover:text-slate-900 underline decoration-dotted">raw ▾</button>
     </div>
-    <pre id="infoRaw" class="mono text-[11px] bg-slate-50 border border-slate-200 rounded p-2 mt-3 max-h-40 overflow-auto"></pre>
+    <pre id="infoRaw" class="hidden mono text-[11px] bg-slate-50 border border-slate-200 rounded p-2 mt-2 max-h-40 overflow-auto"></pre>
   </section>
 
   <!-- ── Identify chip ──────────────────────────────── -->
@@ -98,90 +89,173 @@
     <div id="identifyOut"></div>
   </section>
 
-  <!-- ── Memory read ─────────────────────────────────── -->
+  <!-- ── Read (memory + flash dump merged, hex viewer inline) ── -->
   <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-5 lg:col-span-2">
-    <div class="flex items-center mb-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Memory read</h2>
-      <div class="flex-1"></div>
-      <span id="readMD5" class="text-xs mono text-slate-500"></span>
-    </div>
-    <div class="flex flex-wrap items-end gap-3">
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">Address</label>
-        <input id="readAddr" type="text" value="0x00000000"
-               class="border border-slate-300 rounded px-2 py-1.5 text-sm mono w-36" />
-      </div>
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">Words (32-bit)</label>
-        <input id="readCount" type="number" value="64" min="1" max="65536"
-               class="border border-slate-300 rounded px-2 py-1.5 text-sm w-24" />
-      </div>
-      <button id="readBtn" class="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded">Read</button>
-      <button id="readDownloadBtn" class="px-3 py-1.5 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded" disabled>Download .bin</button>
-    </div>
-    <pre id="readDump" class="dump bg-slate-900 text-slate-100 rounded p-3 mt-3 max-h-96 min-h-[8rem] overflow-auto whitespace-pre">(no read yet)</pre>
-  </section>
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Read</h2>
 
-  <!-- ── Flash dump ──────────────────────────────────── -->
-  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-5">
-    <div class="flex items-center mb-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Flash dump</h2>
-      <div class="flex-1"></div>
-      <span id="dumpStatus" class="text-xs text-slate-500"></span>
-    </div>
-    <div class="flex flex-wrap items-end gap-3">
-      <div id="dumpCoreContainer" class="hidden">
-        <label class="block text-xs text-slate-500 mb-1">Core</label>
-        <select id="dumpCoreSel" class="border border-slate-300 rounded px-2 py-1.5 text-sm"></select>
+      <div id="dumpCoreContainer" class="hidden flex items-center gap-2">
+        <span class="text-xs text-slate-500">Core</span>
+        <select id="dumpCoreSel" class="border border-slate-300 rounded px-2 py-1 text-sm"></select>
       </div>
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">Address</label>
-        <input id="dumpAddr" type="text" value="0x00000000"
-               class="border border-slate-300 rounded px-2 py-1.5 text-sm mono w-36" />
-      </div>
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">Size (bytes)</label>
-        <select id="dumpSize" class="border border-slate-300 rounded px-2 py-1.5 text-sm">
-          <option value="4096">4 KB</option>
-          <option value="65536">64 KB</option>
-          <option value="262144">256 KB</option>
-          <option value="524288">512 KB</option>
-          <option value="1048576" selected>1 MB</option>
-        </select>
-      </div>
-      <button id="dumpBtn"       class="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded">Start dump</button>
-      <button id="dumpDownloadBtn" class="px-3 py-1.5 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded" disabled>Download .bin</button>
-      <button id="dumpViewBtn"     class="px-3 py-1.5 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded" disabled>View hex</button>
-    </div>
-    <div class="mt-3 bg-slate-200 rounded overflow-hidden h-3">
-      <div id="dumpBar" class="bg-emerald-500 h-full transition-[width] duration-150" style="width:0%"></div>
-    </div>
-    <p class="mt-2 text-xs mono" id="dumpDetail">idle</p>
-  </section>
 
-  <!-- ── Hex viewer ──────────────────────────────────── -->
-  <section id="hexViewerCard" class="bg-white rounded-lg shadow-sm border border-slate-200 p-5 lg:col-span-2 hidden">
-    <div class="flex flex-wrap items-center gap-3 mb-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Hex viewer</h2>
-      <span id="hexViewerSource" class="text-xs text-slate-500"></span>
-      <div class="flex-1"></div>
-      <label class="text-xs text-slate-500">Offset</label>
-      <input id="hexOffset" type="text" value="0x00000000"
+      <span class="text-xs text-slate-500">Address</span>
+      <input id="dumpAddr" type="text" value="0x00000000"
              class="border border-slate-300 rounded px-2 py-1 text-sm mono w-32" />
-      <label class="text-xs text-slate-500">Page</label>
+
+      <span class="text-xs text-slate-500">Size</span>
+      <select id="dumpSize" class="border border-slate-300 rounded px-2 py-1 text-sm">
+        <option value="256">256 B</option>
+        <option value="4096" selected>4 KB</option>
+        <option value="65536">64 KB</option>
+        <option value="262144">256 KB</option>
+        <option value="524288">512 KB</option>
+        <option value="1048576">1 MB</option>
+      </select>
+
+      <button id="dumpBtn"          class="px-3 py-1 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded">Read</button>
+      <button id="dumpDownloadBtn"  class="px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded" disabled>Download .bin</button>
+
+      <div class="flex-1"></div>
+      <span id="dumpStatus" class="text-xs mono text-slate-500"></span>
+    </div>
+
+    <!-- progress (hidden until a dump starts) -->
+    <div id="dumpProgressWrap" class="hidden mb-3">
+      <div class="bg-slate-200 rounded overflow-hidden h-2">
+        <div id="dumpBar" class="bg-emerald-500 h-full transition-[width] duration-150" style="width:0%"></div>
+      </div>
+      <p class="mt-1 text-xs mono text-slate-600" id="dumpDetail">idle</p>
+    </div>
+
+    <!-- hex viewer toolbar (inline, always visible) -->
+    <div class="flex flex-wrap items-center gap-2 mb-2 pt-2 border-t border-slate-100">
+      <span class="text-xs text-slate-500">Hex offset</span>
+      <input id="hexOffset" type="text" value="0x00000000"
+             class="border border-slate-300 rounded px-2 py-1 text-sm mono w-28" />
+      <span class="text-xs text-slate-500">Page</span>
       <select id="hexPageSize" class="border border-slate-300 rounded px-2 py-1 text-sm">
+        <option value="256">256 B</option>
         <option value="1024">1 KB</option>
         <option value="4096" selected>4 KB</option>
         <option value="16384">16 KB</option>
         <option value="65536">64 KB</option>
       </select>
-      <button id="hexPrevBtn"  class="px-2 py-1 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded">◀ Prev</button>
-      <button id="hexNextBtn"  class="px-2 py-1 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded">Next ▶</button>
+      <button id="hexPrevBtn"  class="px-2 py-1 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded">◀</button>
+      <button id="hexNextBtn"  class="px-2 py-1 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded">▶</button>
       <button id="hexGotoBtn"  class="px-2 py-1 text-sm bg-slate-900 hover:bg-slate-700 text-white rounded">Go</button>
-      <button id="hexCloseBtn" class="px-2 py-1 text-sm bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded">Close</button>
+      <div class="flex-1"></div>
+      <span id="hexViewerSource" class="text-xs mono text-slate-500"></span>
     </div>
-    <pre id="hexViewerOut" class="dump bg-slate-900 text-slate-100 rounded p-3 max-h-[36rem] overflow-auto whitespace-pre"></pre>
+    <pre id="hexViewerOut" class="dump bg-slate-900 text-slate-100 rounded p-3 max-h-[36rem] min-h-[12rem] overflow-auto whitespace-pre">(no read yet — pick address + size and click Read)</pre>
   </section>
+
+  <!-- ── Erase & flash ───────────────────────────────── -->
+  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-5 lg:col-span-2">
+    <div class="flex items-center mb-3">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Erase &amp; flash</h2>
+    </div>
+    <p class="text-xs text-slate-500 mb-3">
+      Destructive operations on the target's non-volatile memory. Erase wipes the chip's flash;
+      Flash writes a file (Intel <span class="mono">.hex</span>, raw <span class="mono">.bin</span>,
+      or <span class="mono">.elf</span>). On nRF5340 with the core dropdown set to
+      <em>All&nbsp;cores</em>, both App and Net are operated on sequentially. Both buttons confirm
+      before running.
+    </p>
+
+    <!-- ─── Erase ─── -->
+    <div class="rounded border border-rose-200 bg-rose-50/40 p-3 mb-3">
+      <div class="flex items-center gap-3 flex-wrap mb-2">
+        <span class="text-xs font-semibold text-rose-700 uppercase tracking-wide">Erase</span>
+        <select id="eraseCoreSel" class="border border-slate-300 rounded px-2 py-1 text-sm">
+          <option value="current">Current core (from Flash dump dropdown)</option>
+        </select>
+        <button id="eraseBtn" class="px-3 py-1.5 text-sm bg-rose-600 hover:bg-rose-700 text-white rounded">Erase chip</button>
+        <span class="text-xs text-slate-500">⚠ wipes flash; for an unlocked chip</span>
+      </div>
+      <div class="flex items-center gap-3 flex-wrap pt-2 border-t border-rose-200/60">
+        <span class="text-xs font-semibold text-amber-700 uppercase tracking-wide">Recover</span>
+        <button id="recoverBtn" class="px-3 py-1.5 text-sm bg-amber-600 hover:bg-amber-700 text-white rounded">Recover (CTRL-AP ERASEALL)</button>
+        <span class="text-xs text-slate-500">Nordic only — unlocks APPROTECT-locked chips by mass-erase</span>
+      </div>
+    </div>
+
+    <!-- ─── Flash ─── -->
+    <div class="rounded border border-emerald-200 bg-emerald-50/40 p-3">
+      <div class="flex items-center gap-3 flex-wrap mb-2">
+        <span class="text-xs font-semibold text-emerald-700 uppercase tracking-wide">Flash</span>
+        <label class="text-xs text-slate-500"><input id="flashVerify" type="checkbox" checked /> verify after</label>
+      </div>
+
+      <!-- App / single-core file row -->
+      <div class="flex items-center gap-3 flex-wrap mb-2">
+        <label id="flashAppLabel" class="text-xs text-slate-500 w-32">App core file:</label>
+        <input id="flashAppFile" type="file" accept=".hex,.bin,.elf,.ihex,.ihx" class="text-sm" />
+        <button id="flashAppBtn" class="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded" disabled>Flash App</button>
+      </div>
+
+      <!-- Net file row (shown only for multi-core chips) -->
+      <div id="flashNetRow" class="hidden flex items-center gap-3 flex-wrap mb-2">
+        <label class="text-xs text-slate-500 w-32">Net core file:</label>
+        <input id="flashNetFile" type="file" accept=".hex,.bin,.elf,.ihex,.ihx" class="text-sm" />
+        <button id="flashNetBtn" class="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded" disabled>Flash Net</button>
+      </div>
+
+      <!-- "Flash both" button -->
+      <div id="flashBothRow" class="hidden mt-1">
+        <button id="flashBothBtn" class="px-3 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-800 text-white rounded" disabled>Flash both cores (App then Net)</button>
+      </div>
+    </div>
+
+    <!-- Result card (color-coded like reset) -->
+    <div id="opResult" class="hidden mt-4 rounded-lg border p-3 text-sm">
+      <div class="flex items-center gap-2 mb-1">
+        <span id="opIcon"  class="font-bold"></span>
+        <span id="opTitle" class="font-semibold"></span>
+        <span class="flex-1"></span>
+        <span id="opTime"  class="text-xs text-slate-500 mono"></span>
+      </div>
+
+      <!-- Progress bars: shown only while op is running -->
+      <div id="opProgress" class="hidden mb-2 space-y-1.5">
+        <!-- Indeterminate (erase/recover) — solid stripe sliding -->
+        <div id="opIndet" class="hidden h-2 rounded bg-slate-200 overflow-hidden relative">
+          <div class="absolute inset-y-0 w-1/3 bg-rose-500/70 indet-slide"></div>
+        </div>
+        <!-- Determinate, two-phase (erase + program) for flash -->
+        <div id="opDet" class="hidden space-y-1.5">
+          <div>
+            <div class="flex items-baseline justify-between text-[11px] mono text-slate-600 mb-0.5">
+              <span><span class="font-semibold text-rose-700">Erasing</span> <span id="pgEraseLbl">0%</span></span>
+              <span id="pgEraseInfo" class="text-slate-500"></span>
+            </div>
+            <div class="h-2 rounded bg-slate-200 overflow-hidden">
+              <div id="pgEraseBar" class="h-full bg-rose-500 transition-all" style="width:0%"></div>
+            </div>
+          </div>
+          <div>
+            <div class="flex items-baseline justify-between text-[11px] mono text-slate-600 mb-0.5">
+              <span><span class="font-semibold text-emerald-700">Programming</span> <span id="pgProgLbl">0%</span></span>
+              <span id="pgProgInfo" class="text-slate-500"></span>
+            </div>
+            <div class="h-2 rounded bg-slate-200 overflow-hidden">
+              <div id="pgProgBar" class="h-full bg-emerald-500 transition-all" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <pre id="opMessage" class="mono text-[11px] whitespace-pre-wrap max-h-48 overflow-auto"></pre>
+    </div>
+  </section>
+
+  <style>
+    @keyframes indet-slide-kf {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(400%); }
+    }
+    .indet-slide { animation: indet-slide-kf 1.2s linear infinite; }
+  </style>
 
   <!-- ── Compare ─────────────────────────────────────── -->
   <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-5">
@@ -331,6 +405,7 @@ async function fetchInfo() {
     $("info-rev").textContent  = j.revision   || "—";
     $("info-aps").textContent  = (j.aps_found || []).join(", ") || "—";
     $("infoRaw").textContent   = j.raw || "";
+    $("infoSummary").classList.remove("hidden");
     setStatus("ok", `info ready (${((performance.now() - startedAt) / 1000).toFixed(1)}s)`);
   } finally {
     clearInterval(ticker);
@@ -339,66 +414,7 @@ async function fetchInfo() {
   }
 }
 
-// ─── Memory read ────────────────────────────────────────────────────
-let lastReadBytes = null;
-function formatHexDump(addr, words) {
-  const lines = [];
-  const bytesPerLine = 16;
-  const wordsPerLine = bytesPerLine / 4;
-  for (let i = 0; i < words.length; i += wordsPerLine) {
-    const chunk = words.slice(i, i + wordsPerLine);
-    const addrStr = (addr + i * 4).toString(16).padStart(8, "0");
-    const hexStr  = chunk.map((w) => w).join(" ");
-    // ASCII
-    const bytes = [];
-    chunk.forEach((w) => {
-      const v = parseInt(w, 16);
-      bytes.push(v & 0xff, (v>>8) & 0xff, (v>>16) & 0xff, (v>>24) & 0xff);
-    });
-    const ascii = bytes.map((b) => (b >= 32 && b < 127) ? String.fromCharCode(b) : ".").join("");
-    lines.push(`${addrStr}: ${hexStr.padEnd(36)}  ${ascii}`);
-  }
-  return lines.join("\n");
-}
-
-async function doRead() {
-  setStatus("idle", "reading…");
-  $("readDownloadBtn").disabled = true;
-  $("readDump").textContent = "(reading…)";
-  const r = await fetch("/api/read", {
-    method: "POST", headers: {"content-type": "application/json"},
-    body: JSON.stringify({
-      address: $("readAddr").value,
-      word_count: parseInt($("readCount").value, 10),
-    }),
-  });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({detail: r.statusText}));
-    $("readDump").textContent = `error: ${e.detail || r.statusText}`;
-    setStatus("err", "read failed");
-    return;
-  }
-  const j = await r.json();
-  const addr = parseInt($("readAddr").value, 16) || parseInt($("readAddr").value, 10) || 0;
-  $("readDump").textContent = formatHexDump(addr, j.words_hex);
-  $("readMD5").textContent  = `md5 ${j.md5}`;
-  lastReadBytes = Uint8Array.from(atob(j.bytes_b64), c => c.charCodeAt(0));
-  $("readDownloadBtn").disabled = false;
-  setStatus("ok", `read ${j.word_count} words`);
-}
-
-function downloadRead() {
-  if (!lastReadBytes) return;
-  const blob = new Blob([lastReadBytes], {type: "application/octet-stream"});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `read_${$("readAddr").value}_${$("readCount").value}.bin`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-// ─── Flash dump (SSE) ───────────────────────────────────────────────
+// ─── Read (memory + flash dump unified, SSE-streamed) ─────────────
 
 // Runs ONE dump (one core's flash), resolving with {jobId, bytes, md5, addr}.
 // Updates the dump progress UI; |label| is shown in the detail line.
@@ -449,9 +465,9 @@ function runSingleDump({ addr, size, label }) {
 
 async function doDump() {
   $("dumpDownloadBtn").disabled = true;
-  $("dumpViewBtn").disabled = true;
   state.dumpsByCore = {};
-  setStatus("idle", "dumping…");
+  setStatus("idle", "reading…");
+  $("dumpProgressWrap").classList.remove("hidden");
 
   // Figure out the plan.
   let plan;
@@ -520,8 +536,9 @@ async function doDump() {
   }).join("  ·  ");
   $("dumpStatus").textContent = summary;
   $("dumpDownloadBtn").disabled = false;
-  $("dumpViewBtn").disabled = false;
-  setStatus("ok", `dump complete (${allLabels.length} core${allLabels.length>1?"s":""})`);
+  // Render hex viewer inline immediately — no separate "View hex" click.
+  renderHexViewerNow();
+  setStatus("ok", `read complete (${allLabels.length} ${allLabels.length>1?"cores":"region"})`);
 }
 
 function downloadDump() {
@@ -555,6 +572,7 @@ async function doIdentify() {
   $("identifyOut").innerHTML = renderIdentify(j);
   state.cores = j.cores || [];
   updateCoreSelector();
+  updateErasePanel();
   setStatus(j.success ? "ok" : "err", j.success ? "identified" : "identify failed");
 }
 
@@ -731,30 +749,28 @@ function parseAddrInput(s) {
   return parseInt(s, 10) || 0;
 }
 
-function showHexViewer() {
-  // If multiple cores were dumped, view whichever the dropdown currently
-  // points at; if "All" is selected, default to the first core (App).
+function renderHexViewerNow() {
+  // If multiple cores were dumped, prefer whichever the core dropdown
+  // points at; otherwise show the first dump.
   const labels = Object.keys(state.dumpsByCore);
-  let chosen = null;
+  let chosen = null, chosenLabel = "";
   if (labels.length >= 2) {
     const sel = $("dumpCoreSel");
     if (sel && sel.value !== "all") {
       const idx = parseInt(sel.value, 10);
       const cname = state.cores[idx] && state.cores[idx].name;
-      if (cname && state.dumpsByCore[cname]) chosen = state.dumpsByCore[cname];
+      if (cname && state.dumpsByCore[cname]) { chosen = state.dumpsByCore[cname]; chosenLabel = cname; }
     }
-    if (!chosen) chosen = state.dumpsByCore[labels[0]];
+    if (!chosen) { chosen = state.dumpsByCore[labels[0]]; chosenLabel = labels[0]; }
     state.lastDumpBytes    = chosen.bytes;
     state.lastDumpBaseAddr = chosen.addr;
   }
   if (!state.lastDumpBytes) return;
-  $("hexViewerCard").classList.remove("hidden");
-  const label = chosen ? `${labels.find((k) => state.dumpsByCore[k] === chosen)} · ` : "";
+  const label = chosenLabel ? `${chosenLabel} · ` : "";
   $("hexViewerSource").textContent =
-    `${label}dump @ 0x${state.lastDumpBaseAddr.toString(16).padStart(8,'0')} · ${state.lastDumpBytes.length.toLocaleString()} B`;
+    `${label}@ 0x${state.lastDumpBaseAddr.toString(16).padStart(8,'0')} · ${state.lastDumpBytes.length.toLocaleString()} B`;
   $("hexOffset").value = `0x${state.lastDumpBaseAddr.toString(16).padStart(8,'0')}`;
   renderHexPage();
-  $("hexViewerCard").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderHexPage() {
@@ -841,6 +857,254 @@ async function doDiag() {
   }
   $("diagOut").textContent = lines.join("\n");
   setStatus(j.success ? "ok" : "warn", "diag done");
+}
+
+// ─── Erase & flash ──────────────────────────────────────────────────
+function updateErasePanel() {
+  // Populate eraseCoreSel with options based on identified cores.
+  const sel = $("eraseCoreSel");
+  sel.innerHTML = "";
+  if (state.cores.length >= 2) {
+    state.cores.forEach((c, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = `${c.name} only`;
+      sel.appendChild(opt);
+    });
+    const all = document.createElement("option");
+    all.value = "all";
+    all.textContent = `All ${state.cores.length} cores (sequential)`;
+    all.selected = true;
+    sel.appendChild(all);
+  } else {
+    const opt = document.createElement("option");
+    opt.value = "current";
+    opt.textContent = "Current core";
+    sel.appendChild(opt);
+  }
+
+  // Toggle Net row visibility based on whether identified chip is multi-core.
+  const isMulti = state.cores.length >= 2;
+  $("flashNetRow").className = isMulti
+    ? "flex items-center gap-3 flex-wrap mb-2"
+    : "hidden";
+  $("flashBothRow").className = isMulti ? "mt-1" : "hidden";
+  $("flashAppLabel").textContent = isMulti ? "App core file:" : "File:";
+  // Adapt flash-App button label when single-core
+  $("flashAppBtn").textContent = isMulti ? "Flash App" : "Flash";
+}
+
+function refreshFlashButtons() {
+  $("flashAppBtn").disabled  = !$("flashAppFile").files[0];
+  $("flashNetBtn").disabled  = !$("flashNetFile").files[0];
+  $("flashBothBtn").disabled = !(
+    $("flashAppFile").files[0] && $("flashNetFile").files[0]
+  );
+}
+
+function showOpResult({ state: st, title, message, elapsed }) {
+  const card = $("opResult");
+  card.classList.remove("hidden", "bg-emerald-50", "border-emerald-200",
+                       "bg-rose-50", "border-rose-200",
+                       "bg-amber-50", "border-amber-200");
+  let icon = "";
+  if (st === "ok")      { card.classList.add("bg-emerald-50", "border-emerald-200"); icon = "✓"; }
+  else if (st === "err"){ card.classList.add("bg-rose-50",    "border-rose-200");    icon = "✗"; }
+  else                  { card.classList.add("bg-amber-50",   "border-amber-200");   icon = "⏳"; }
+  $("opIcon").textContent  = icon;
+  $("opIcon").className    = "font-bold " + (
+    st === "ok"  ? "text-emerald-600" :
+    st === "err" ? "text-rose-600"    : "text-amber-600"
+  );
+  $("opTitle").textContent   = title;
+  $("opMessage").textContent = message;
+  $("opTime").textContent    = elapsed
+    ? `${new Date().toLocaleTimeString()} · ${elapsed}s`
+    : new Date().toLocaleTimeString();
+}
+
+// Progress-bar helpers. `mode` ∈ "none" | "indet" | "det".
+function setProgressMode(mode) {
+  const wrap = $("opProgress"), indet = $("opIndet"), det = $("opDet");
+  if (mode === "none") {
+    wrap.classList.add("hidden"); indet.classList.add("hidden"); det.classList.add("hidden");
+    return;
+  }
+  wrap.classList.remove("hidden");
+  if (mode === "indet") { indet.classList.remove("hidden"); det.classList.add("hidden"); }
+  else                  { indet.classList.add("hidden");    det.classList.remove("hidden");
+                          // Reset bars at start of a fresh determinate run.
+                          updateFlashProgress({ phase: "Erasing",     percent: 0, kib: null, rate_kib_s: null, eta_s: null });
+                          updateFlashProgress({ phase: "Programming", percent: 0, kib: null, rate_kib_s: null, eta_s: null }); }
+}
+
+function updateFlashProgress(ev) {
+  const isErase = ev.phase === "Erasing";
+  const bar   = $(isErase ? "pgEraseBar"  : "pgProgBar");
+  const lbl   = $(isErase ? "pgEraseLbl"  : "pgProgLbl");
+  const info  = $(isErase ? "pgEraseInfo" : "pgProgInfo");
+  bar.style.width = `${ev.percent}%`;
+  lbl.textContent = `${ev.percent}%`;
+  const parts = [];
+  if (ev.kib != null)        parts.push(`${ev.kib.toFixed(1)} KiB`);
+  if (ev.rate_kib_s != null) parts.push(`${ev.rate_kib_s.toFixed(1)} KiB/s`);
+  if (ev.eta_s != null && ev.percent < 100) parts.push(`ETA ${ev.eta_s}s`);
+  info.textContent = parts.join(" · ");
+}
+
+// All erase/flash buttons share this in-progress lock.
+const FLASH_BTNS = ["eraseBtn", "recoverBtn", "flashAppBtn", "flashNetBtn", "flashBothBtn"];
+function setFlashBusy(busy) {
+  FLASH_BTNS.forEach((b) => { $(b).disabled = busy; });
+  if (!busy) refreshFlashButtons();   // restore proper disabled state
+}
+
+// Shared body for /api/erase invocations. `method` ∈ {auto, ctrl_ap, probe_rs}.
+async function runErase(method, opTitle, confirmMsg) {
+  if (!confirm(confirmMsg)) return;
+  setFlashBusy(true);
+  showOpResult({ state: "running", title: `${opTitle}…`, message: `method=${method}` });
+  setProgressMode("indet");
+  setStatus("idle", `${opTitle.toLowerCase()}…`);
+
+  const t0 = performance.now();
+  const r = await fetch("/api/erase", {
+    method: "POST", headers: {"content-type": "application/json"},
+    body: JSON.stringify({ method }),
+  });
+  const j = await r.json();
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+  setProgressMode("none");
+  showOpResult({
+    state: j.ok ? "ok" : "err",
+    title: j.ok ? `${opTitle}: SUCCESS (${j.method})` : `${opTitle}: FAILED (${j.method})`,
+    message: j.message,
+    elapsed,
+  });
+  setStatus(j.ok ? "ok" : "err",
+            j.ok ? `${opTitle.toLowerCase()} complete` : `${opTitle.toLowerCase()} failed`);
+  setFlashBusy(false);
+}
+
+async function doErase() {
+  const desc = state.cores.length >= 2
+    ? "ALL cores"
+    : "the chip's flash";
+  await runErase(
+    "auto",
+    "Erase",
+    `Erase ${desc}? This wipes all non-volatile memory and cannot be undone.`
+  );
+}
+
+async function doRecover() {
+  await runErase(
+    "ctrl_ap",
+    "Recover",
+    "Recover (CTRL-AP ERASEALL)?\n\n" +
+    "This does a Nordic mass-erase via CTRL-AP, which also clears\n" +
+    "APPROTECT. Works on locked chips that ordinary erase can't touch.\n" +
+    "Flash will be wiped and cannot be undone."
+  );
+}
+
+// Flash a single core. Returns {ok, message, elapsed_s, ...} after the
+// SSE stream completes. Updates the determinate progress bar live.
+async function flashOneCore({ file, label, chip, core_index }) {
+  if (chip) {
+    await fetch("/api/connect", {
+      method: "POST", headers: {"content-type": "application/json"},
+      body: JSON.stringify({ chip, core_index }),
+    });
+  }
+  const fd = new FormData();
+  fd.append("file", file);
+  const verify = $("flashVerify").checked ? "1" : "0";
+  const url = `/api/flash?core_index=${core_index}&verify=${verify}`;
+  const r = await fetch(url, { method: "POST", body: fd });
+  const startResp = await r.json();
+  if (!startResp.job_id) {
+    return { ok: false, message: `flash start failed: ${JSON.stringify(startResp)}` };
+  }
+  // Reset bars for this core's flash; show determinate mode.
+  setProgressMode("det");
+
+  return new Promise((resolve) => {
+    const es = new EventSource(`/api/flash/${startResp.job_id}/progress`);
+    es.addEventListener("progress", (e) => {
+      try { updateFlashProgress(JSON.parse(e.data)); } catch {}
+    });
+    es.addEventListener("done", (e) => {
+      es.close();
+      try { resolve(JSON.parse(e.data)); }
+      catch { resolve({ ok: false, message: "malformed done event" }); }
+    });
+    es.onerror = () => {
+      es.close();
+      resolve({ ok: false, message: "SSE stream error" });
+    };
+  });
+}
+
+async function doFlash(which) {
+  // which ∈ "app" | "net" | "both"
+  const isMulti = state.cores.length >= 2;
+  let plan;
+  if (which === "app") {
+    const f = $("flashAppFile").files[0];
+    if (!f) return;
+    plan = [{ file: f,
+              label: isMulti ? state.cores[0].name : "chip",
+              chip:  isMulti ? state.cores[0].chip : null,
+              core_index: isMulti ? state.cores[0].core_index : 0 }];
+  } else if (which === "net") {
+    const f = $("flashNetFile").files[0];
+    if (!f) return;
+    plan = [{ file: f, label: state.cores[1].name,
+              chip: state.cores[1].chip, core_index: state.cores[1].core_index }];
+  } else {  // both
+    const fA = $("flashAppFile").files[0];
+    const fN = $("flashNetFile").files[0];
+    if (!fA || !fN) return;
+    plan = [
+      { file: fA, label: state.cores[0].name, chip: state.cores[0].chip, core_index: state.cores[0].core_index },
+      { file: fN, label: state.cores[1].name, chip: state.cores[1].chip, core_index: state.cores[1].core_index },
+    ];
+  }
+
+  const summary = plan.map((s) => `  ${s.label}  ←  ${s.file.name} (${s.file.size.toLocaleString()} B)`).join("\n");
+  if (!confirm(`Flash:\n${summary}\n\nVerify after: ${$("flashVerify").checked ? "yes" : "no"}\n\nProceed?`)) return;
+
+  setFlashBusy(true);
+  showOpResult({ state: "running", title: "Flashing…", message: summary });
+  setStatus("idle", "flashing…");
+
+  const t0 = performance.now();
+  const lines = [];
+  let allOk = true;
+  for (const step of plan) {
+    lines.push(`→ ${step.label}: ${step.file.name}`);
+    showOpResult({ state: "running", title: "Flashing…", message: lines.join("\n") });
+    let j;
+    try { j = await flashOneCore(step); }
+    catch (e) { j = { ok: false, message: `request failed: ${e.message || e}` }; }
+    if (j.ok) lines.push(`   ✓ ${j.message} (${j.elapsed_s}s, ${j.bytes_received?.toLocaleString?.() ?? "?"} B)`);
+    else {
+      lines.push(`   ✗ ${j.message}`);
+      allOk = false;
+    }
+    showOpResult({ state: "running", title: "Flashing…", message: lines.join("\n") });
+  }
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+  setProgressMode("none");
+  showOpResult({
+    state: allOk ? "ok" : "err",
+    title: allOk ? `Flash: SUCCESS (${plan.length} file${plan.length>1?"s":""})` : "Flash: FAILED",
+    message: lines.join("\n"),
+    elapsed,
+  });
+  setStatus(allOk ? "ok" : "err", allOk ? "flash complete" : "flash failed");
+  setFlashBusy(false);
 }
 
 // ─── Target reset ───────────────────────────────────────────────────
@@ -945,17 +1209,19 @@ function clearLog() {
 $("refreshProbesBtn").onclick  = refreshProbes;
 $("connectBtn").onclick        = applySession;
 $("infoBtn").onclick           = fetchInfo;
+$("infoRawToggle").onclick     = () => {
+  const r = $("infoRaw"), t = $("infoRawToggle");
+  const shown = !r.classList.contains("hidden");
+  if (shown) { r.classList.add("hidden");    t.textContent = "raw ▾"; }
+  else       { r.classList.remove("hidden"); t.textContent = "raw ▴"; }
+};
 $("identifyBtn").onclick       = doIdentify;
-$("readBtn").onclick           = doRead;
-$("readDownloadBtn").onclick   = downloadRead;
 $("dumpBtn").onclick           = doDump;
 $("dumpDownloadBtn").onclick   = downloadDump;
-$("dumpViewBtn").onclick       = showHexViewer;
 $("dumpCoreSel").onchange      = applyCoreSelection;
 $("hexPrevBtn").onclick        = () => hexStep(-1);
 $("hexNextBtn").onclick        = () => hexStep(+1);
 $("hexGotoBtn").onclick        = renderHexPage;
-$("hexCloseBtn").onclick       = () => $("hexViewerCard").classList.add("hidden");
 $("hexPageSize").onchange      = renderHexPage;
 $("hexOffset").addEventListener("keydown", (e) => { if (e.key === "Enter") renderHexPage(); });
 $("compareBtn").onclick        = doCompare;
@@ -963,6 +1229,14 @@ $("diagBtn").onclick           = doDiag;
 $("resetSysBtn").onclick       = () => doReset("system",  "resetSysBtn");
 $("resetHaltBtn").onclick      = () => doReset("halt",    "resetHaltBtn");
 $("resetCtrlApBtn").onclick    = () => doReset("ctrl_ap", "resetCtrlApBtn");
+$("eraseBtn").onclick          = doErase;
+$("recoverBtn").onclick        = doRecover;
+$("flashAppBtn").onclick       = () => doFlash("app");
+$("flashNetBtn").onclick       = () => doFlash("net");
+$("flashBothBtn").onclick      = () => doFlash("both");
+$("flashAppFile").onchange     = refreshFlashButtons;
+$("flashNetFile").onchange     = refreshFlashButtons;
+updateErasePanel();   // initial render (single-core view)
 $("logToggleBtn").onclick      = toggleLog;
 $("logClearBtn").onclick       = clearLog;
 

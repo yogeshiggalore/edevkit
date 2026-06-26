@@ -181,6 +181,175 @@ async def read_words(*, chip: str, speed_khz: int,
     return code, data, err.strip()
 
 
+async def erase(*, chip: str, speed_khz: int,
+                serial: Optional[str] = None,
+                vid_pid: Optional[str] = None,
+                core_index: int = 0,
+                timeout: float = 120.0) -> tuple[int, str, str]:
+    """`probe-rs erase` for the given chip + core. Returns (exit_code, stdout, stderr)."""
+    cmd = [_probe_rs_path(), "erase"] + _probe_arg(serial, vid_pid) + [
+        "--protocol", "swd",
+        "--chip", chip,
+        "--speed", str(speed_khz),
+    ]
+    if core_index:
+        cmd += ["--core", str(core_index)]
+    code, out, err = await _run(cmd, timeout=timeout)
+    return code, out, err
+
+
+async def flash_file(*, chip: str, speed_khz: int,
+                     file_path: str, binary_format: str,
+                     serial: Optional[str] = None,
+                     vid_pid: Optional[str] = None,
+                     core_index: int = 0,
+                     base_address: Optional[int] = None,
+                     verify: bool = True,
+                     timeout: float = 600.0) -> tuple[int, str, str]:
+    """`probe-rs download` a file (hex / bin / elf) to the target.
+
+    `binary_format` ∈ {"hex", "bin", "elf"}. For "bin", pass base_address.
+    For "hex"/"elf", base_address is ignored (encoded in the file).
+    """
+    cmd = [_probe_rs_path(), "download"] + _probe_arg(serial, vid_pid) + [
+        "--protocol", "swd",
+        "--chip", chip,
+        "--speed", str(speed_khz),
+        "--binary-format", binary_format,
+    ]
+    if core_index:
+        cmd += ["--core", str(core_index)]
+    if binary_format == "bin" and base_address is not None:
+        cmd += ["--base-address", f"0x{base_address:x}"]
+    if verify:
+        cmd += ["--verify"]
+    cmd += [file_path]
+    code, out, err = await _run(cmd, timeout=timeout)
+    return code, out, err
+
+
+async def flash_file_streaming(*, chip: str, speed_khz: int,
+                               file_path: str, binary_format: str,
+                               serial: Optional[str] = None,
+                               vid_pid: Optional[str] = None,
+                               core_index: int = 0,
+                               base_address: Optional[int] = None,
+                               verify: bool = True,
+                               timeout: float = 600.0):
+    """Run `probe-rs download` under a pty so its progress bars emit, then
+    yield parsed {phase, percent, kib, total_kib, rate_kib_s, eta_s} events.
+
+    probe-rs only prints progress when stderr is a TTY. We give it one by
+    spawning under a pty (master/slave fd pair) and reading the master.
+
+    Yields:
+      - ("progress", {phase: "Erasing"|"Programming", percent: 0..100,
+                      kib: float|None, total_kib: float|None,
+                      rate_kib_s: float|None, eta_s: int|None})
+      - ("done", {ok: bool, exit_code: int, message: str})
+    """
+    import asyncio
+    import os
+    import pty
+
+    cmd = [_probe_rs_path(), "download"] + _probe_arg(serial, vid_pid) + [
+        "--protocol", "swd",
+        "--chip", chip,
+        "--speed", str(speed_khz),
+        "--binary-format", binary_format,
+    ]
+    if core_index:
+        cmd += ["--core", str(core_index)]
+    if binary_format == "bin" and base_address is not None:
+        cmd += ["--base-address", f"0x{base_address:x}"]
+    if verify:
+        cmd += ["--verify"]
+    cmd += [file_path]
+
+    master_fd, slave_fd = pty.openpty()
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=slave_fd, stderr=slave_fd, stdin=asyncio.subprocess.DEVNULL,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+
+    loop = asyncio.get_running_loop()
+
+    # Regex tolerant of ANSI: capture phase + percent + (kib + unit + rate-kib + (eta_s | took_s))
+    # Lines look like:
+    #   Erasing\x1b[0m ⠉  47% [#########-----------] 192.00 KiB @  44.06 KiB/s (ETA 5s)
+    #   Programming\x1b[0m ✔ 100% [####################] 408.00 KiB @  83.31 KiB/s (took 5s)
+    line_re = re.compile(
+        r"(Erasing|Programming)\x1b\[0m\s+\S+\s+(\d+)%"
+        r"(?:.*?(\d+\.\d+)\s+(KiB|B)\s+@\s+(\d+\.\d+)\s+KiB/s\s+"
+        r"\((?:ETA|took)\s+(\d+)s\))?"
+    )
+
+    buf = b""
+    last_per_phase: dict[str, int] = {}   # phase → last emitted percent
+    final_msg = ""
+    ansi_re = re.compile(r"\x1b\[[\d;]*[A-Za-z]")
+    try:
+        while True:
+            try:
+                chunk = await loop.run_in_executor(
+                    None, lambda: os.read(master_fd, 4096)
+                )
+            except OSError:
+                break
+            if not chunk:
+                break
+            buf += chunk
+            # Each progress frame is delimited by either \r or \n (probe-rs
+            # uses \r to redraw the same line in place).
+            while True:
+                # Find next CR or LF
+                cr = buf.find(b"\r")
+                lf = buf.find(b"\n")
+                if cr == -1 and lf == -1:
+                    break
+                if cr == -1: i = lf
+                elif lf == -1: i = cr
+                else: i = min(cr, lf)
+                frame = buf[:i].decode("utf-8", "replace")
+                buf = buf[i+1:]
+
+                m = line_re.search(frame)
+                if m:
+                    phase = m.group(1)
+                    pct = int(m.group(2))
+                    if last_per_phase.get(phase) == pct:
+                        continue
+                    last_per_phase[phase] = pct
+                    kib_val = float(m.group(3)) if m.group(3) else None
+                    unit = m.group(4)
+                    if unit == "B" and kib_val is not None:
+                        kib_val = kib_val / 1024.0
+                    rate = float(m.group(5)) if m.group(5) else None
+                    eta = int(m.group(6)) if m.group(6) else None
+                    yield "progress", {
+                        "phase": phase,
+                        "percent": pct,
+                        "kib": kib_val,
+                        "rate_kib_s": rate,
+                        "eta_s": eta,
+                    }
+                elif "Finished" in frame:
+                    final_msg = ansi_re.sub("", frame).strip()
+    finally:
+        try:
+            os.close(master_fd)
+        except Exception:
+            pass
+
+    rc = await proc.wait()
+    yield "done", {
+        "ok": rc == 0,
+        "exit_code": rc,
+        "message": final_msg or (f"exit {rc}" if rc != 0 else "flash complete"),
+    }
+
+
 async def stream_dump(*, chip: str, speed_khz: int,
                       address: int, byte_count: int,
                       chunk_bytes: int = 4096,

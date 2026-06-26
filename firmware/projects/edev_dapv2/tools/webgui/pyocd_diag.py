@@ -392,3 +392,123 @@ async def do_reset(*, serial, frequency_hz, kind):
         None, _reset_sync, serial, frequency_hz, kind
     )
     return {"ok": ok, "message": msg}
+
+
+# ── Nordic CTRL-AP ERASEALL ───────────────────────────────────────────
+
+def _erase_ctrl_ap_sync(serial, frequency_hz):
+    """Issue ERASEALL on every Nordic CTRL-AP we can find on this DP.
+
+    Nordic CTRL-AP register layout:
+      0x000  RESET           write 1 to assert / 0 to release
+      0x004  ERASEALL        write 1 to start mass-erase
+      0x008  ERASEALLSTATUS  0 = idle, 1 = busy
+      0x010  APPROTECTSTATUS
+
+    On nRF52: one CTRL-AP per chip (IDR 0x02880000).
+    On nRF5340: two CTRL-APs (one per core, both IDR 0x12880000) —
+    AP#2 wipes App core flash + UICR, AP#3 wipes Net core flash + UICR.
+
+    Returns (ok, [(ap_index, ok, message), ...]).
+    """
+    from pyocd.core.helpers import ConnectHelper
+    import time
+
+    try:
+        sess = ConnectHelper.session_with_chosen_probe(
+            unique_id=serial,
+            target_override="cortex_m",
+            connect_mode="attach",
+            options={
+                "frequency": frequency_hz,
+                "dap_protocol": "swd",
+                "auto_unlock": False,
+            },
+        )
+    except Exception as e:
+        return False, [(None, False, f"open session: {e}")]
+    if not sess:
+        return False, [(None, False, "no probe matched")]
+
+    results = []
+    overall_ok = True
+    try:
+        sess.open(init_board=False)
+        dp = sess.board.target.dp
+        try: dp.connect()
+        except Exception: pass
+        try: dp.power_up_debug()
+        except Exception: pass
+
+        # Find every Nordic CTRL-AP.
+        ctrl_aps = []
+        for i in range(8):
+            try:
+                dp.write_dp(0x8, (i << 24) | 0xF0)
+                idr = dp.read_ap((i << 24) | 0xFC)
+            except Exception:
+                continue
+            if idr in (0x02880000, 0x12880000):
+                ctrl_aps.append(i)
+
+        if not ctrl_aps:
+            return False, [(None, False, "no Nordic CTRL-AP found")]
+
+        for ap in ctrl_aps:
+            # Mass-erase via CTRL-AP — matches pyocd/target/family/target_nordic.py:
+            #   1) ERASEALL = 1
+            #   2) Poll ERASEALLSTATUS until 0 (READY)
+            #
+            # We DO NOT hold RESET during step 1: with RESET asserted the
+            # on-chip flash controller (which lives in the CPU domain) can't
+            # run, so ERASEALL never completes and ERASEALLSTATUS stays at
+            # BUSY forever. This matches what pyocd's nordic family does;
+            # the OpenOCD "hold reset" pattern is folklore that times out
+            # on nRF52 in practice.
+            #
+            # The post-erase reset pulse is the caller's job — server.py
+            # routes both erase and flash through _post_op_reset so there's
+            # exactly one CTRL-AP reset for each destructive op.
+            ap_ok = True
+            ap_msgs = []
+            try:
+                dp.write_dp(0x8, (ap << 24) | 0x00)
+                dp.write_ap((ap << 24) | 0x04, 0x00000001)   # ERASEALL=1
+                # Poll ERASEALLSTATUS until READY (== 0).
+                t0 = time.monotonic()
+                busy = True
+                while busy and time.monotonic() - t0 < 10.0:
+                    time.sleep(0.02)
+                    try:
+                        s = dp.read_ap((ap << 24) | 0x08)
+                    except Exception:
+                        s = None
+                    if s == 0:
+                        busy = False
+                if busy:
+                    raise TimeoutError("ERASEALLSTATUS never reached READY within 10s")
+                ap_msgs.append(f"{round(time.monotonic() - t0, 2)}s")
+            except Exception as e:
+                ap_ok = False
+                ap_msgs.append(str(e))
+            results.append((ap, ap_ok, "; ".join(ap_msgs)))
+            if not ap_ok:
+                overall_ok = False
+
+        _recover_dp(dp)
+    except Exception as e:
+        results.append((None, False, f"erase: {e}"))
+        overall_ok = False
+    finally:
+        try: sess.close()
+        except Exception: pass
+
+    return overall_ok, results
+
+
+async def erase_ctrl_ap_all(*, serial, frequency_hz):
+    """Async wrapper around _erase_ctrl_ap_sync."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, _erase_ctrl_ap_sync, serial, frequency_hz
+    )
