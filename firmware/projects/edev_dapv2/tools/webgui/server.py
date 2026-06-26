@@ -756,26 +756,37 @@ async def api_flash(
                     #      so the chip actually boots into the new image.
                     # If we read AFTER reset, an APPROTECT-on-boot
                     # firmware would lock us out before the readback.
-                    base_addr = (0x01000000 if (core_index == 1 and "nrf5340" in use_chip.lower())
-                                 else 0)
-                    rd_code, rd_data, _ = await probers.read_words(
-                        chip=use_chip, speed_khz=session.speed_khz,
-                        address=base_addr, word_count=2,
-                        serial=session.serial, vid_pid=session.vid_pid,
-                        core_index=core_index,
-                    )
+                    #
+                    # pyocd path (nRF5340): pyocd resumes the chip right after
+                    # programming; Ring firmware boots in milliseconds and
+                    # re-locks APPROTECT before any subsequent SWD attach
+                    # can succeed. Skip the read-back step — pyocd's own
+                    # FileProgrammer already verifies each programmed page
+                    # against the source buffer during commit.
                     verify_lines = []
-                    if rd_code != 0 or not rd_data:
-                        verify_lines.append(f"verify @ 0x{base_addr:08X}: ✗ read failed")
-                        flash_ok = False
+                    if use_pyocd_path:
+                        verify_lines.append("verify: pyocd verified pages during program (read-back skipped — firmware re-locks)")
+                        flash_ok = True
                     else:
-                        sp, reset_vec = struct.unpack("<II", rd_data)
-                        is_real = (sp != 0xFFFFFFFF) and (reset_vec != 0xFFFFFFFF)
-                        verify_lines.append(
-                            f"verify @ 0x{base_addr:08X}: {'✓' if is_real else '✗'} "
-                            f"SP=0x{sp:08X}, Reset=0x{reset_vec:08X}"
+                        base_addr = (0x01000000 if (core_index == 1 and "nrf5340" in use_chip.lower())
+                                     else 0)
+                        rd_code, rd_data, _ = await probers.read_words(
+                            chip=use_chip, speed_khz=session.speed_khz,
+                            address=base_addr, word_count=2,
+                            serial=session.serial, vid_pid=session.vid_pid,
+                            core_index=core_index,
                         )
-                        flash_ok = is_real
+                        if rd_code != 0 or not rd_data:
+                            verify_lines.append(f"verify @ 0x{base_addr:08X}: ✗ read failed")
+                            flash_ok = False
+                        else:
+                            sp, reset_vec = struct.unpack("<II", rd_data)
+                            is_real = (sp != 0xFFFFFFFF) and (reset_vec != 0xFFFFFFFF)
+                            verify_lines.append(
+                                f"verify @ 0x{base_addr:08X}: {'✓' if is_real else '✗'} "
+                                f"SP=0x{sp:08X}, Reset=0x{reset_vec:08X}"
+                            )
+                            flash_ok = is_real
 
                     serial = await _resolve_serial()
                     reset_res = await _post_op_reset(serial, use_chip)
