@@ -568,7 +568,11 @@ async def api_erase(body: dict = Body(default={})):
         stub_loaded = any(isinstance(ap, str) and ap == "UICR-disable" and ok2
                           for (ap, ok2, _) in per_ap)
         if stub_loaded and "nrf5340" in chip.lower():
-            await asyncio.sleep(0.5)   # USB settle
+            # Stub takes <5 ms to complete on-chip, but Net core may
+            # be running garbage post-FORCEOFF=0 which destabilizes the
+            # bridge briefly. Give USB + bridge a generous settle window
+            # before the probe-rs verify.
+            await asyncio.sleep(2.0)
             loop = asyncio.get_running_loop()
             ok_v, msg_v = await loop.run_in_executor(
                 None,

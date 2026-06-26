@@ -54,28 +54,29 @@ _vectors:
  *   0x20000004  fault_lr    (LR at time of fault — points near offender)
  */
 fault_handler:
-    /* Read the stacked PC from MSP+24 — that's the return-PC of the
-     * faulting instruction. (LR in the handler is EXC_RETURN, not the
-     * faulting PC; my earlier iteration captured the wrong value.) */
-    mrs  r0, msp                /* r0 = MSP at exception entry                */
-    ldr  r1, [r0, #24]          /* r1 = stacked PC (return PC)                */
-    ldr  r0, =0x20000004
-    str  r1, [r0]               /* record faulting PC                         */
-    /* Also record xPSR for fault decoding (offset 28 in stacked frame).    */
-    mrs  r0, msp
-    ldr  r1, [r0, #28]
-    ldr  r0, =0x20000008
-    str  r1, [r0]
-    /* Record fault magic.                                                   */
-    ldr  r0, =0x20000000
-    ldr  r1, =0xBADF00D5
-    str  r1, [r0]
+    /* DON'T overwrite stage at 0x20000000 — host needs to see how far
+     * the reset_handler got. Stamp fault info at separate offsets:
+     *   0x20000004  fault magic 0xBADF00D5
+     *   0x20000008  stacked PC (the faulting instruction)
+     *   0x2000000C  stacked xPSR
+     */
+    ldr  r0, =0xBADF00D5
+    ldr  r1, =0x20000004
+    str  r0, [r1]
+    mrs  r0, msp                /* MSP at exception entry                     */
+    ldr  r2, [r0, #24]          /* stacked PC                                 */
+    ldr  r1, =0x20000008
+    str  r2, [r1]
+    ldr  r2, [r0, #28]          /* stacked xPSR                               */
+    ldr  r1, =0x2000000C
+    str  r2, [r1]
 1:  b    1b
 
 /* ─── Reset handler / main work ────────────────────────────────────── */
 .equ VMC_RAMBLOCK_PSET,  0x50081604
 .equ RESET_RESETREAS,    0x50005400
 .equ NETWORK_FORCEOFF,   0x50005614
+.equ SPU_EXTDOMAIN_PERM, 0x50003C00     /* App SPU EXTDOMAIN[0].PERM */
 .equ APP_NVMC_READY,     0x50039400
 .equ APP_NVMC_CONFIG,    0x50039504
 .equ APP_UICR_APPROT,    0x00FF8000
@@ -154,7 +155,22 @@ reset_handler:
     ldr  r1, =0x33333333
     str  r1, [r0]
 
-    /* Release Net core. */
+    /* Configure SPU.EXTDOMAIN[0].PERM to grant App secure access to
+       the Net peripheral bridge.  Per Nordic nRF5340 SPU spec:
+         SPU_S.EXTDOMAIN[0].PERM @ 0x50003C00 — bit 4 = SECATTR (1=Secure
+                                                allowed), bit 8 = LOCK
+       Writing 0x10 = SECATTR=1 (Net domain accessible as Secure). */
+    ldr  r0, =SPU_EXTDOMAIN_PERM
+    movs r2, #0x10
+    str  r2, [r0]
+
+    /* Configure SPU.PERIPHID[5..N].PERM if needed. nrfjprog writes
+       these but our minimal stub only needs Net peripheral bridge. */
+
+    /* Release Net core. (Originally Net flash is erased = 0xFFFFFFFF,
+       Net core would lockup on garbage code. But with FORCEOFF released
+       and a brief settle, Net's peripheral clocks are alive enough for
+       NVMC access to work via the bridge.) */
     ldr  r0, =NETWORK_FORCEOFF
     movs r2, #0
     str  r2, [r0]
