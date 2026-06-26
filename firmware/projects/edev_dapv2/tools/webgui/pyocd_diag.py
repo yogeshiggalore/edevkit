@@ -600,50 +600,12 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
             if not ap_ok:
                 overall_ok = False
 
-        # ── Post-ERASEALL: permanently disable APPROTECT via UICR writes ──
-        # On nRF5340 (and nRF91), erased UICR.APPROTECT = 0xFFFFFFFF means
-        # HwEnabled — the chip auto-locks AHB-AP on next pin-reset / POR /
-        # BOR / WDT reset. The "permanently unlocked" sentinel is 0x50FA50FA.
-        # nrfjprog handles this by writing a Thumb stub to App flash that
-        # programs UICR.APPROTECT on the next boot; we do it directly here
-        # via NVMC writes from the debug host, while AHB-AP is still open
-        # from the just-completed ERASEALL.
-        #
-        # nRF5340 has two CTRL-APs at IDR 0x12880000; nRF52 has one at
-        # IDR 0x02880000. Only nRF5340/91 need the UICR disable step
-        # (on nRF52, UICR=0xFFFFFFFF IS the unlocked default).
-        is_nrf53 = any(idr == 0x12880000 for idr in ctrl_ap_idrs.values())
-        if is_nrf53 and overall_ok:
-            # Try the on-target stub first (programs BOTH App + Net UICR
-            # via on-chip NVMC after VMC RAM power-on). If the stub fails
-            # for any reason — chip in unusual state, NVMC sticky, etc. —
-            # fall back to host-side App UICR write (which is bulletproof)
-            # and leave Net as session-only.
-            _recover_dp(dp)
-            ok_stub, msg_stub = _run_disable_stub(
-                dp, session=sess, serial=serial, frequency_hz=frequency_hz,
-                app_ahb=0,
-            )
-            if ok_stub:
-                results.append(("UICR-disable", True, f"stub: ✓ {msg_stub}"))
-            else:
-                _recover_dp(dp)
-                ok_app, msg_app = _disable_approtect_via_nvmc(
-                    ahb=0, csw=0x23000002, nvmc_base=0x50039000,
-                    uicr_writes=[
-                        (0x00FF8000, 0x50FA50FA),
-                        (0x00FF801C, 0x50FA50FA),
-                    ],
-                )
-                fallback = (f"stub failed ({msg_stub}); "
-                            f"fallback App-only: {'✓' if ok_app else '✗'} {msg_app}; "
-                            f"Net: SESSION-only (flash firmware that writes APPROTECT.DISABLE, "
-                            f"or use J-Link + nrfjprog --recover --coprocessor CP_NETWORK)")
-                results.append(("UICR-disable", ok_app, fallback))
-                if not ok_app:
-                    overall_ok = False
-                    _recover_dp(dp)
-
+        # ERASEALL on each CTRL-AP already wiped both flash + UICR per core
+        # (App via AP#2, Net via AP#3 on nRF5340). On reset, UICR.APPROTECT
+        # is 0xFFFFFFFF — HwEnabled — and the chip re-locks until the next
+        # ERASEALL. That's the natural Nordic erase state; flash a new image
+        # with APPROTECT.DISABLE in its UICR section if you need persistent
+        # unlock across resets.
         _recover_dp(dp)
     except Exception as e:
         results.append((None, False, f"erase: {e}"))
