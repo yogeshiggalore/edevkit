@@ -1098,6 +1098,15 @@ def _program_net_flash_sync(serial, frequency_hz, segments,
     import time
 
     NET_AP = 1
+    # CSW = 0x03800042: HPROT=Priv/Cacheable/Data, DeviceEn=1, Size=word,
+    # AddrInc=Off. We DO NOT use auto-increment for Net programming —
+    # the interaction between AHB-AP 1 KB wraps + NVMC.READY polling
+    # (which retargets TAR) made the bookkeeping subtly wrong; got us
+    # the same deterministic verify mismatch at 0x01004401 (byte
+    # offset 0x2F1 into segment 2, i.e. the first byte just past the
+    # 1 KB boundary of the second segment).
+    # Per-word TAR-set + DRW-write + NVMC.READY-poll. Slow (~80s for
+    # 175 KB Net image) but verifiably correct.
     NET_CSW = 0x03800042
     NVMC_READY = 0x41080400
     NVMC_CONFIG = 0x41080504
@@ -1169,13 +1178,22 @@ def _program_net_flash_sync(serial, frequency_hz, segments,
             dp.write_ap((NET_AP << 24) | reg_off, val)
 
         def ap_read(reg_off):
-            _ = dp.read_ap((NET_AP << 24) | reg_off)
-            return dp.read_dp(0x0C) & 0xFFFFFFFF
+            # pyocd's read_ap is synchronous (issues AP read + RDBUFF
+            # internally, returns the data). Don't double-read RDBUFF.
+            return dp.read_ap((NET_AP << 24) | reg_off) & 0xFFFFFFFF
 
         def nvmc_wait_ready(timeout=2.0):
-            ap_write(0x04, NVMC_READY)   # TAR
+            # CRITICAL: CSW.AddrInc=Single is enabled (Nordic-required for
+            # bulk Net flash writes), so EACH ap_read(DRW) auto-increments
+            # TAR by 4. Without refreshing TAR per iteration, we'd walk
+            # past NVMC.READY into unrelated peripheral registers and
+            # get a spurious READY=1 from whatever happens to have bit 0
+            # set there (e.g. NVMC.ERASEUICR has bit 0 high after a UICR
+            # erase, so the wrong-address read would falsely report
+            # READY=1 and let us write garbage to flash).
             t = time.monotonic()
             while time.monotonic() - t < timeout:
+                ap_write(0x04, NVMC_READY)   # TAR — refresh every poll
                 if ap_read(0x0C) & 1:
                     return True
                 time.sleep(0.0005)
@@ -1201,54 +1219,142 @@ def _program_net_flash_sync(serial, frequency_hz, segments,
         words_done = 0
         last_pct = -1
 
+        prior_segments_words = 0
         for (base, buf) in segments:
-            # Pad to word boundary
             if len(buf) % 4:
                 buf = buf + b'\xff' * (4 - (len(buf) % 4))
-            # Process in 1 KB chunks (AP auto-increment boundary). We
-            # set TAR at the start of each 1 KB run; the NVMC handles
-            # the actual flash addressing.
             n_words = len(buf) // 4
+            # Per-word TAR + DRW + READY. AddrInc=Off (CSW=0x03800042).
+            # We tried fancier burst strategies — all failed verify with
+            # the same deterministic mismatch at byte 0x01004401. The
+            # bug turned out to be in the verify code, not the writes
+            # (double-read of RDBUFF after pyocd's already-synchronous
+            # read_ap). The boring per-word write IS correct.
             for w in range(n_words):
                 addr = base + w * 4
-                if w == 0 or (addr & 0x3FF) == 0:
-                    # AHB-AP auto-increment wraps every 1 KB — refresh TAR
-                    ap_write(0x04, addr)
                 val = int.from_bytes(buf[w*4:w*4+4], 'little')
                 if val == 0xFFFFFFFF:
-                    # Skip writes of 0xFFFFFFFF (already erased — Nordic
-                    # NVMC accepts these but each one still costs 40 us).
-                    words_done += 1
                     continue
+                ap_write(0x04, addr)
                 ap_write(0x0C, val)
-                # READY polls only every 4 words — NVMC has a small
-                # write buffer that absorbs a burst.
-                if (w & 0x3) == 0x3:
-                    if not nvmc_wait_ready(timeout=0.5):
-                        nvmc_set_config(CONFIG_REN)
-                        return False, words_done * 4, f"Net NVMC stuck @ 0x{addr:08X}"
-                    # Restore TAR after the READY poll moved it
-                    ap_write(0x04, addr + 4)
-                words_done += 1
+                if not nvmc_wait_ready(timeout=0.1):
+                    nvmc_set_config(CONFIG_REN)
+                    return False, bytes_written, f"Net NVMC stuck @ 0x{addr:08X}"
+                words_done = prior_segments_words + (w + 1)
                 bytes_written = words_done * 4
-
-                if progress_cb:
+                if progress_cb and (w & 0xFF) == 0:
                     pct = min(99, (words_done * 100) // max(total_words, 1))
                     if pct != last_pct:
                         progress_cb(pct)
                         last_pct = pct
-
-            # Final READY for this segment
-            if not nvmc_wait_ready(timeout=1.0):
-                nvmc_set_config(CONFIG_REN)
-                return False, bytes_written, f"Net NVMC stuck at end of segment 0x{base:08X}"
+            prior_segments_words += n_words
 
         if not nvmc_set_config(CONFIG_REN):
             return False, bytes_written, "Net NVMC stuck during Ren switch"
 
+        # ── Inline readback verify ────────────────────────────────────────
+        # Nordic explicitly warns (per nan_041 / nan_042 production docs):
+        # "Make sure not to reset between programming and verifying."
+        # Net AHB-AP is open right now (CTRL-AP#3 ERASEALL did the unlock,
+        # no reset has fired since). Read every programmed word back and
+        # compare to the source bytes.
+        import hashlib
+        verified_bytes = 0
+        for (base, buf) in segments:
+            if len(buf) % 4:
+                buf = buf + b'\xff' * (4 - (len(buf) % 4))
+            n_words = len(buf) // 4
+            actual = bytearray()
+            for w in range(n_words):
+                addr = base + w * 4
+                # Per-word TAR set — matches the write side (AddrInc=Off).
+                # pyocd's dp.read_ap is synchronous and handles posted-read
+                # + RDBUFF internally; don't double-read RDBUFF, that's
+                # what introduced the deterministic verify mismatch in
+                # earlier iterations.
+                ap_write(0x04, addr)
+                v = dp.read_ap((NET_AP << 24) | 0x0C) & 0xFFFFFFFF
+                actual += v.to_bytes(4, 'little')
+            if bytes(actual) != buf:
+                # Find first mismatch for a useful error message.
+                for i in range(len(buf)):
+                    if actual[i] != buf[i]:
+                        return (False, bytes_written,
+                                f"verify mismatch @ 0x{base + i:08X}: "
+                                f"expect=0x{buf[i]:02X} got=0x{actual[i]:02X}")
+            verified_bytes += len(buf)
+
+        verify_md5 = hashlib.md5()
+        for (_, buf) in segments:
+            verify_md5.update(buf)
+
+        # ── UICR.APPROTECT permanent disable ───────────────────────────
+        # Ring Pro 351 (and many production hex files) ship without UICR
+        # content. With UICR.APPROTECT left at 0xFFFFFFFF (HwEnabled) the
+        # chip re-locks Net AHB-AP on every reset. nrfjprog handles this
+        # with on-target stubs that program UICR.APPROTECT after each
+        # core's recover. We do the same directly from the host via NVMC
+        # while Net AHB-AP is still open (CTRL-AP ERASEALL we did at the
+        # start of this function unlocked it for the session — and no
+        # reset has fired since).
+        #
+        # Write Net UICR.APPROTECT (Net NVMC, same AP#1 we just used):
+        if not nvmc_set_config(CONFIG_WEN):
+            return False, bytes_written, "Net NVMC stuck on Wen for UICR.APPROTECT"
+        ap_write(0x04, 0x01FF8000)
+        ap_write(0x0C, 0x50FA50FA)
+        if not nvmc_wait_ready(timeout=0.5):
+            nvmc_set_config(CONFIG_REN)
+            return False, bytes_written, "Net NVMC stuck after UICR.APPROTECT write"
+        nvmc_set_config(CONFIG_REN)
+
+        # Write App UICR.APPROTECT + SECUREAPPROTECT via App NVMC + AHB-AP#0.
+        # Same DP, different AP. CSW = 0x23000002 (Nordic App side).
+        APP_AP = 0
+        APP_CSW = 0x23000002
+        APP_NVMC_READY  = 0x50039400
+        APP_NVMC_CONFIG = 0x50039504
+        def app_ap_write(reg_off, val):
+            dp.write_dp(0x8, (APP_AP << 24) | 0x00)
+            dp.write_ap((APP_AP << 24) | 0x00, APP_CSW)
+            dp.write_ap((APP_AP << 24) | 0x04, reg_off)
+            dp.write_ap((APP_AP << 24) | 0x0C, val)
+            dp.read_dp(0x0C)
+        def app_ap_read(reg_off):
+            dp.write_dp(0x8, (APP_AP << 24) | 0x00)
+            dp.write_ap((APP_AP << 24) | 0x00, APP_CSW)
+            dp.write_ap((APP_AP << 24) | 0x04, reg_off)
+            return dp.read_ap((APP_AP << 24) | 0x0C) & 0xFFFFFFFF
+        def app_wait_ready(timeout=0.5):
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < timeout:
+                if app_ap_read(APP_NVMC_READY) & 1:
+                    return True
+                time.sleep(0.0005)
+            return False
+
+        if not app_wait_ready():
+            return False, bytes_written, "App NVMC not ready for UICR.APPROTECT"
+        app_ap_write(APP_NVMC_CONFIG, 1)   # Wen
+        if not app_wait_ready():
+            return False, bytes_written, "App NVMC stuck after Wen for UICR.APPROTECT"
+        # App UICR.APPROTECT @ 0x00FF8000
+        app_ap_write(0x00FF8000, 0x50FA50FA)
+        if not app_wait_ready():
+            app_ap_write(APP_NVMC_CONFIG, 0)
+            return False, bytes_written, "App NVMC stuck after UICR.APPROTECT write"
+        # App UICR.SECUREAPPROTECT @ 0x00FF801C — required for secure debug
+        app_ap_write(0x00FF801C, 0x50FA50FA)
+        if not app_wait_ready():
+            app_ap_write(APP_NVMC_CONFIG, 0)
+            return False, bytes_written, "App NVMC stuck after UICR.SECUREAPPROTECT write"
+        app_ap_write(APP_NVMC_CONFIG, 0)   # Ren
+
         if progress_cb:
             progress_cb(100)
-        return True, bytes_written, "ok"
+        return True, bytes_written, (f"verified {verified_bytes} B "
+                                      f"hex md5={verify_md5.hexdigest()[:12]} "
+                                      f"+ App/Net UICR.APPROTECT=HwDisabled")
     except Exception as e:
         return False, bytes_written, f"{type(e).__name__}: {e}"
     finally:
