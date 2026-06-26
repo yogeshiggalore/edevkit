@@ -164,6 +164,15 @@ async def read_words(*, chip: str, speed_khz: int,
     ]
     if core_index:
         cmd += ["--core", str(core_index)]
+    # On Nordic dual-core chips, the Net core re-locks after every CTRL-AP
+    # reset (UICR.APPROTECT=0xFFFFFFFF=HwEnabled is the erased default).
+    # Without --allow-erase-all, probe-rs would fail with
+    # "lacked the permission to do so: erase_all" the moment you try to
+    # read a locked core. probe-rs's auto-unlock wipes the locked core to
+    # gain access — destructive on a flashed chip; harmless on an erased
+    # one. Trade-off accepted; "Read" assumes the chip is already in a
+    # state where the user is OK with that.
+    cmd += ["--allow-erase-all"]
     cmd += ["b32", f"0x{address:08x}", str(word_count)]
     code, out, err = await _run(cmd, timeout=timeout)
     if code != 0:
