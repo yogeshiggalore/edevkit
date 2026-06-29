@@ -81,11 +81,20 @@ static void swd_write_n(const struct device *dev, uint32_t data, uint8_t n)
 	uint32_t op = pio_opcode(d->sm_offset, probe_swd_offset_write_bits,
 				 n, data);
 
+	/* RTOS-vs-bare-metal: the bare-metal pico-sdk firmware was never
+	 * preempted between the two put_blocking() calls. Under Zephyr a
+	 * higher-priority IRQ (USB, sys-tick, work queue) can land in the gap
+	 * — the PIO then drains the opcode word, hits autopull at the 32-bit
+	 * threshold, and stalls mid-write_bits waiting for a continuation
+	 * word that's still sitting in our C call frame unposted. Hold off
+	 * IRQs across the pair so the second put_blocking() is guaranteed to
+	 * follow the first before the SM can stall. */
+	unsigned int key = irq_lock();
 	pio_sm_put_blocking(pio, d->sm, op);
 	if (n > 19) {
-		/* Bits 19..31 ride in a second word; PIO autopull fetches it. */
 		pio_sm_put_blocking(pio, d->sm, data >> 19);
 	}
+	irq_unlock(key);
 }
 
 static uint32_t swd_read_n(const struct device *dev, uint8_t n)
