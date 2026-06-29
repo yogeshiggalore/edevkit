@@ -60,3 +60,15 @@ This is multi-day firmware work, not a quick patch.
 1. **(P1) Port SWCLK keep-alive to Zephyr port.** Either via a PIO0 state machine (matching the dropped pico-sdk impl) or via Zephyr GPIO toggling from a high-priority work item.
 2. **(P2) Investigate Zephyr CMSIS-DAP WAIT-ACK retry budget.** Confirm what value DAP_TransferConfigure ends up setting on the wire, and whether `wait_retry=65535` from pyocd's max actually translates to retries in our probe firmware.
 3. **(P3) Capture J-Link wire trace** (the user has J-Link Pro) at the wedge state and diff against ours to identify any specific SWJ_Sequence pattern J-Link uses that we don't.
+
+## Progress this session (2026-06-29 — task #18/#19/#20/#21)
+
+**#18 audit:** DAP_SwjSequence handler is correct. Real bottleneck on wedged nRF5340 is the WAIT-ACK retry loop emitting thousands of DBG log lines that flood the cdc_acm console + log subsystem — easily exceeds probe-rs's 1-second per-USB-command timeout. Fix: keep DAP_LOG_LEVEL at INF in prj.conf. Additional finding: Zephyr's `drivers/dp/swdp_ll_pin.h` falls through to slow stubs (`FAST_BITBANG_HW_SUPPORT=0`) on RP2350 because no SoC-specific impl existed. Patched upstream with `swdp_ll_pin_rpi_pico.h` (direct SIO MMIO writes, FAST=1) — net improvement for ALL Zephyr-based RP2350 debug probe work, not just edevkit.
+
+**#19 SWCLK keep-alive:** Implemented as a k_timer at 5 kHz generating one isolated SWCLK pulse per fire (in `src/swclk_keepalive.c`). Live test on wedged nRF5340: removes the USB timeout (probe-rs now gets a proper response) BUT each async pulse shifts the chip's SWD frame counter → subsequent DPIDR reads land at the wrong bit offset = "Target did not respond". **An async timer cannot fix this without breaking protocol.** The real fix is **in-protocol idle cycles inserted between WAIT-ACK retries inside Zephyr's `drivers/dp/swdp_bitbang.c::sw_transfer`** — i.e. after the WAIT-FAULT exit path, drive a few SWCLK cycles with SWDIO=0 (legal SWD idle, no protocol disruption) before returning so the next retry sees the chip still clocked. Requires patching upstream Zephyr. Scaffolding for the timer is left in place but the `keepalive_active` atomic stays 0; `edev_swclk_keepalive_resume()` is the hook to flip it on once the in-protocol path is built.
+
+**#20 retry budget:** Confirmed `do_swdp_transfer` honors `retry_count` (defaults to 100, set by probe-rs via DAP_TransferConfigure). At 200 kHz, 100 retries × ~250 µs ≈ 25 ms per Transfer — well inside the USB timeout. Not the bottleneck. No tuning needed.
+
+**#21 TARGETSEL bits:** Audited the DAP_SwjSequence handler + sw_output_sequence — byte-accurate transmission, no truncation. probe-rs's multidrop alert pattern is being sent correctly. Failure is on the chip's response side, not our transmit side.
+
+**Net status:** nRF5340 wedge recovery still requires J-Link. Path to fixing it on edev_dapv2 is: upstream-patch Zephyr's `swdp_bitbang.c` to add in-protocol idle cycles in the WAIT-ACK retry path, then call `edev_swclk_keepalive_resume()` from main. Multi-day work, blocks on upstream review or carrying a local patch.

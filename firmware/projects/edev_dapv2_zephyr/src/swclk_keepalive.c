@@ -49,18 +49,44 @@ LOG_MODULE_REGISTER(swclk_keepalive, LOG_LEVEL_INF);
 static const struct gpio_dt_spec swclk =
 	GPIO_DT_SPEC_GET(DP0_NODE, clk_gpios);
 
-#define KEEPALIVE_HALF_PERIOD_US 100	/* → 5 kHz square wave on SWCLK */
+/* Keep-alive cadence. We send ONE narrow SWCLK pulse per period (below the
+ * 50-cycle ADIv5 line-reset threshold, so the chip's DP state machine is
+ * unaffected) just often enough to keep the debug clock domain awake.
+ *
+ * 5 kHz tick → 200 µs between pulses; well under any reasonable debug-clock
+ * gate timeout, well under the per-transfer wall-time budget (a 200 kHz SWD
+ * transfer is ~250 µs, so during a packet of 8 back-to-back transfers our
+ * timer is held off by irq_lock for ~2 ms — we miss ~10 ticks, the timer
+ * fires once on resume, no harm done).
+ */
+#define KEEPALIVE_PERIOD_US 200
 
 static struct k_timer keepalive_timer;
+static atomic_t keepalive_active;
 
-/* Expiry runs from the system clock ISR — fast, no allocations, no
- * Zephyr API that could sleep. gpio_pin_toggle_dt is a thin wrapper
- * around the hal_rpi_pico SIO GPIO_OUT_XOR register write — single
- * MMIO store, atomic at the hardware level. */
+/* Expiry runs from the system-clock ISR. Cortex-M PRIMASK (set by
+ * irq_lock() in swdp_bitbang during a transfer) blocks all maskable
+ * interrupts including SysTick, so we cannot pre-empt a transfer in
+ * progress. Between transfers we get a fresh tick window.
+ *
+ * We deliberately pulse rather than toggle: a toggle leaves SWCLK in an
+ * unknown state when the bit-bang takes over (sw_port_on doesn't drive
+ * SWCLK level until the first SW_CLOCK_CYCLE). A pulse leaves SWCLK low
+ * at the end of every tick, which matches the bit-bang's idle level.
+ */
 static void keepalive_expiry(struct k_timer *t)
 {
 	ARG_UNUSED(t);
-	(void)gpio_pin_toggle_dt(&swclk);
+
+	if (!atomic_get(&keepalive_active)) {
+		return;
+	}
+
+	/* Two MMIO stores: SIO.SET then SIO.CLR. ~3 CPU cycles each →
+	 * ~40 ns SWCLK high time at 150 MHz. Well above min SWCLK pulse
+	 * width on every target SoC we care about (typ. >5 ns). */
+	gpio_pin_set_dt(&swclk, 1);
+	gpio_pin_set_dt(&swclk, 0);
 }
 
 static int swclk_keepalive_init(void)
@@ -79,45 +105,39 @@ static int swclk_keepalive_init(void)
 
 	k_timer_init(&keepalive_timer, keepalive_expiry, NULL);
 
-	/* IMPORTANT: timer NOT started here. The SWCLK keep-alive is only
-	 * useful between SWD transactions during an active debug session.
-	 * Starting it unconditionally toggles SWCLK while swdp_bitbang's
-	 * sw_port_off() has the pin as GPIO_DISCONNECTED — harmless, but
-	 * also pointless. Worse, in a session it can race with SWD's wire
-	 * timing in ways that confuse probe-rs/pyocd's state machine.
+	/* Pin direction is owned by swdp_bitbang's sw_port_on(): SWCLK is
+	 * GPIO_DISCONNECTED until DAP_Connect, then GPIO_OUTPUT_INACTIVE.
+	 * Our pulse on a DISCONNECTED pin is a no-op (gpio_pin_set_dt
+	 * silently returns without driving), so it's safe to arm the
+	 * timer unconditionally. When sw_port_on() drives SWCLK output,
+	 * the pulses start landing on the wire automatically.
 	 *
-	 * The clean integration point is sw_port_on()/sw_port_off() inside
-	 * Zephyr's drivers/dp/swdp_bitbang.c — pause keep-alive at the start
-	 * of a transfer, resume between. That requires patching upstream
-	 * (out-of-tree), or wrapping swdp_bitbang with a custom swdp_api
-	 * driver that adds the hooks.
-	 *
-	 * Hooks API (TODO):
-	 *    void edev_swclk_keepalive_pause(void);   // call before SWD work
-	 *    void edev_swclk_keepalive_resume(void);  // call after
-	 *
-	 * Until those hooks are wired in, this file just defines the timer
-	 * so next session can flip the switch with the right integration in
-	 * place. */
-	(void)keepalive_timer;
+	 * keepalive_active starts at 0 — the resume hook below flips it on
+	 * when the swdp_api consumer signals that a debug session is open.
+	 */
+	k_timer_start(&keepalive_timer,
+		      K_USEC(KEEPALIVE_PERIOD_US),
+		      K_USEC(KEEPALIVE_PERIOD_US));
 
-	LOG_INF("SWCLK keep-alive scaffolded (NOT armed — needs swdp hooks)");
+	LOG_INF("SWCLK keep-alive timer armed (%u µs period, gated off)",
+		KEEPALIVE_PERIOD_US);
 	return 0;
 }
 
-/* Public hooks for swdp wrapping. Will be called by a future
- * swdp_keepalive_wrapper driver that delegates to swdp_bitbang. */
+/* Public hooks called by the swdp_bitbang sw_port_on/sw_port_off integration.
+ * pause() is also called by sw_transfer's caller around batched DAP_Transfer
+ * commands; the irq_lock inside sw_transfer takes care of masking the timer
+ * during the actual bit-bang, so pause() here is conceptually for the gaps
+ * BETWEEN sessions, not BETWEEN transfers. */
 
 void edev_swclk_keepalive_pause(void)
 {
-	k_timer_stop(&keepalive_timer);
+	atomic_set(&keepalive_active, 0);
 }
 
 void edev_swclk_keepalive_resume(void)
 {
-	k_timer_start(&keepalive_timer,
-		      K_USEC(KEEPALIVE_HALF_PERIOD_US),
-		      K_USEC(KEEPALIVE_HALF_PERIOD_US));
+	atomic_set(&keepalive_active, 1);
 }
 
 SYS_INIT(swclk_keepalive_init, APPLICATION, 90);

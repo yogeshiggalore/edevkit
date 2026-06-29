@@ -194,6 +194,24 @@ int main(void)
 	LOG_INF("edev_dapv2 (Zephyr port) — boot ok");
 	LOG_INF("Built: %s %s", __DATE__, __TIME__);
 
+	/* SWCLK keep-alive is staged but LEFT OFF at boot. Live-fire
+	 * testing 2026-06-29 showed that an asynchronous SWCLK pulse train
+	 * (5 kHz isolated single-cycle pulses) breaks SWD protocol timing
+	 * — the chip's frame aligner counts the keep-alive cycles, so
+	 * probe-rs's subsequent DPIDR read lands at the wrong bit offset
+	 * and returns Protocol Error.
+	 *
+	 * The right fix is to insert idle cycles INSIDE Zephyr's
+	 * drivers/dp/swdp_bitbang.c sw_transfer (the WAIT-ACK retry path
+	 * currently exits without clocking; idle cycles between retries
+	 * would keep the debug clock alive in-protocol). That's an
+	 * upstream patch — tracked in NRF5340_FIRMWARE_GAP.md and the
+	 * memory note nrf5340-edev-vs-jlink-firmware-gap-2026-06-29.
+	 *
+	 * Leaving the timer scaffolding in place so the next session can
+	 * call edev_swclk_keepalive_resume() once the in-protocol path is
+	 * built. For now it stays gated off via keepalive_active=0. */
+
 	while (1) {
 		if (gpio_is_ready_dt(&led)) {
 			gpio_pin_toggle_dt(&led);
