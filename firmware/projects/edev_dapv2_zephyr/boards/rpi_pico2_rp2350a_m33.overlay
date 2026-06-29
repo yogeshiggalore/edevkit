@@ -29,6 +29,24 @@
 			label = "On-board heartbeat LED";
 		};
 	};
+
+	/*
+	 * SWD Debug Port — M2 placeholder using upstream zephyr,swdp-gpio
+	 * (drivers/dp/swdp_bitbang.c). Pin assignments match probe_pins.h in
+	 * the pico-sdk project:
+	 *   SWCLK = GPIO2, SWDIO = GPIO3 (input pull-up by default).
+	 *
+	 * This will be replaced by zephyr,swdp-pio-rpi (PIO-driven, 25 MHz) in
+	 * M3 — but the upstream GPIO bit-banger is enough to validate
+	 * USB-CMSIS-DAP-v2 enumeration end-to-end with probe-rs first.
+	 */
+	dp0: dp0 {
+		compatible = "zephyr,swdp-gpio";
+		status = "okay";
+		clk-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+		dio-gpios = <&gpio0 3 GPIO_PULL_UP>;
+		port-write-cycles = <2>;
+	};
 };
 
 &zephyr_udc0 {

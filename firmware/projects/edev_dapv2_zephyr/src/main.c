@@ -10,10 +10,14 @@
  * porting is straightforward.
  */
 
+/* Order matters: kernel.h must precede dap_link.h — the latter uses atomic_t
+ * without including <zephyr/sys/atomic.h> itself (upstream header omission). */
+#include <zephyr/kernel.h>
+
+#include <zephyr/dap/dap_link.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
-#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/usb/usbd.h>
 
@@ -25,6 +29,13 @@ LOG_MODULE_REGISTER(edev_dapv2, LOG_LEVEL_INF);
 #define HEARTBEAT_MS	1000
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(LED_NODE, gpios, {0});
+
+/*
+ * DAP Link context bound to the SWDP device declared in the board overlay.
+ * M2 uses the upstream zephyr,swdp-gpio bit-banger. M3 swaps the DT
+ * compatible to our zephyr,swdp-pio-rpi-pico driver — no code change here.
+ */
+DAP_LINK_CONTEXT_DEFINE(edev_dap_ctx, DEVICE_DT_GET_ONE(zephyr_swdp_gpio));
 
 static int setup_usb(void)
 {
@@ -60,6 +71,24 @@ static void wait_for_dtr(const struct device *console)
 	}
 }
 
+static int setup_dap(void)
+{
+	int ret = dap_link_init(&edev_dap_ctx);
+
+	if (ret) {
+		LOG_ERR("dap_link_init failed: %d", ret);
+		return ret;
+	}
+
+	ret = dap_link_backend_usb_init(&edev_dap_ctx);
+	if (ret) {
+		LOG_ERR("dap_link_backend_usb_init failed: %d", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
 int main(void)
 {
 	int ret;
@@ -68,6 +97,11 @@ int main(void)
 		LOG_WRN("Status LED not ready");
 	} else {
 		gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+	}
+
+	ret = setup_dap();
+	if (ret) {
+		return ret;
 	}
 
 	ret = setup_usb();
