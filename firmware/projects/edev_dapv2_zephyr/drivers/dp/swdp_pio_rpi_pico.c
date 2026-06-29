@@ -28,8 +28,27 @@
 
 #include <hardware/clocks.h>
 #include <hardware/pio.h>
+#include <hardware/regs/pads_bank0.h>
+#include <hardware/structs/pads_bank0.h>
 
 #include "probe_swd.pio.h"
+
+/*
+ * RP2350-only: clear the per-pad input-isolation bit (silicon erratum E10).
+ *
+ * After power-on RP2350 boots with PADS_BANK0.GPIOn[ISO] = 1, which isolates
+ * the pad input from the GPIO/PIO/etc. peripheral function. The latest
+ * pico-sdk's pio_gpio_init() clears this bit automatically; Zephyr's
+ * hal_rpi_pico module ships an older copy of pio_gpio_init() that only sets
+ * the function and never touches ISO. The Zephyr GPIO driver clears it via
+ * a different path, which is why zephyr,swdp-gpio works on RP2350 but our
+ * PIO bit-banger sees garbage on SWDIO reads. Mirror what the modern pico-sdk
+ * does — explicit clear after pio_gpio_init().
+ */
+static inline void rp2350_pad_unisolate(uint pin)
+{
+	hw_clear_bits(&pads_bank0_hw->io[pin], PADS_BANK0_GPIO0_ISO_BITS);
+}
 
 LOG_MODULE_REGISTER(swdp_pio_rpi, CONFIG_DP_DRIVER_LOG_LEVEL);
 
@@ -171,6 +190,8 @@ static void sm_configure(const struct device *dev)
 
 	pio_gpio_init(pio, cfg->clk_gpio.pin);
 	pio_gpio_init(pio, cfg->dio_gpio.pin);
+	rp2350_pad_unisolate(cfg->clk_gpio.pin);
+	rp2350_pad_unisolate(cfg->dio_gpio.pin);
 
 	pio_sm_set_consecutive_pindirs(pio, d->sm, cfg->clk_gpio.pin, 1, true);
 
@@ -224,10 +245,17 @@ static int api_input_sequence(const struct device *dev, uint32_t count,
 
 	uint32_t bits_left = count;
 	uint32_t bit_pos = 0;
+	uint32_t first_word = 0;
+	bool first_captured = false;
 
 	while (bits_left) {
 		uint8_t chunk = (bits_left > 32u) ? 32u : (uint8_t)bits_left;
 		uint32_t v = swd_read_n(dev, chunk);
+
+		if (!first_captured) {
+			first_word = v;
+			first_captured = true;
+		}
 
 		for (uint8_t i = 0; i < chunk; i++) {
 			uint8_t bit = (v >> i) & 1u;
@@ -240,6 +268,8 @@ static int api_input_sequence(const struct device *dev, uint32_t count,
 		bits_left -= chunk;
 		bit_pos += chunk;
 	}
+	LOG_INF("in_seq: count=%u first=0x%08x",
+		(unsigned)count, (unsigned)first_word);
 	return 0;
 }
 

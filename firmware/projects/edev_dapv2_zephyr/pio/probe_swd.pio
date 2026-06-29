@@ -46,7 +46,8 @@ public read_bits:
     out x, 5                           ; count - 1
     set pindirs, 0         side 0      ; SWDIO = input (release)
 read_loop:
-    in pins, 1             side 1 [2]  ; sample SWDIO on rising edge
-    jmp x-- read_loop      side 0 [2]  ; SWCLK low — target updates
+    nop                    side 0 [2]  ; SWCLK low — target drives + settles
+    in pins, 1             side 1 [0]  ; SWCLK rising, sample (target stable)
+    jmp x-- read_loop      side 1 [1]  ; SWCLK still high — fan out delay
     push                               ; ISR → RX FIFO
     jmp start
