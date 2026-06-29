@@ -15,6 +15,12 @@ export ZEPHYR_BASE=/Users/yogesh/projects/temp/zephyrproject/zephyr
 export ZEPHYR_SDK_INSTALL_DIR=$HOME/zephyr-sdk-1.0.1
 export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
 
+# One-time on a fresh Zephyr checkout: apply the vendored upstream
+# patches (RP2350 fast SIO bit-bang for drivers/dp). Idempotent — safe
+# to re-run; skips patches already in place. See firmware/zephyr-patches/
+# README.md for what they do and why they're not upstreamed yet.
+../../zephyr-patches/apply.sh
+
 west build -b rpi_pico2/rp2350a/m33 --pristine
 ```
 

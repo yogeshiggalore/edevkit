@@ -1,0 +1,15 @@
+diff --git a/drivers/dp/swdp_ll_pin.h b/drivers/dp/swdp_ll_pin.h
+index cf463bce756..bb728d70eaf 100644
+--- a/drivers/dp/swdp_ll_pin.h
++++ b/drivers/dp/swdp_ll_pin.h
+@@ -32,6 +32,10 @@ static ALWAYS_INLINE void pin_delay_asm(uint32_t delay)
+ 
+ #include "swdp_ll_pin_stm32.h"
+ 
++#elif defined(CONFIG_SOC_SERIES_RP2040) || defined(CONFIG_SOC_SERIES_RP2350)
++
++#include "swdp_ll_pin_rpi_pico.h"
++
+ #else
+ 
+ #define CPU_CLOCK CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC

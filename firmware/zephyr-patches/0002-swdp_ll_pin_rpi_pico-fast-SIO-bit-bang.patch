@@ -1,0 +1,60 @@
+diff --git a/drivers/dp/swdp_ll_pin_rpi_pico.h b/drivers/dp/swdp_ll_pin_rpi_pico.h
+new file mode 100644
+index 00000000000..49793ffbf3c
+--- /dev/null
++++ b/drivers/dp/swdp_ll_pin_rpi_pico.h
+@@ -0,0 +1,54 @@
++/*
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Fast bit-bang pin ops for RP2040 / RP2350.
++ *
++ * All bank-0 GPIOs route to a single SIO register block (one bit per
++ * GPIO, 32 GPIOs in bank 0). The "base" parameter is unused — SIO is
++ * a fixed-address peripheral. pin is the absolute GPIO number 0..31.
++ *
++ * Without this, drivers/dp/swdp_bitbang.c falls back to gpio_pin_set_dt
++ * + gpio_pin_configure_dt which are tens to hundreds of times slower
++ * than the single-MMIO SIO writes here. The slow path empirically
++ * blows past probe-rs's USB-response timeout on nRF5340 multidrop SWD
++ * setup (DAP_SwjSequence with the 148-bit dormant alert + TARGETSEL).
++ *
++ * Originally tracked in edevkit's NRF5340_FIRMWARE_GAP.md / memory
++ * note `nrf5340-edev-vs-jlink-firmware-gap-2026-06-29`.
++ */
++
++#include <hardware/structs/sio.h>
++
++/* RP2350 default CPU clock (board defconfig). 150 MHz. */
++#define CPU_CLOCK 150000000U
++#define FAST_BITBANG_HW_SUPPORT 1
++
++static ALWAYS_INLINE void swdp_ll_pin_input(void *const base, uint8_t pin)
++{
++	ARG_UNUSED(base);
++	sio_hw->gpio_oe_clr = BIT(pin);
++}
++
++static ALWAYS_INLINE void swdp_ll_pin_output(void *const base, uint8_t pin)
++{
++	ARG_UNUSED(base);
++	sio_hw->gpio_oe_set = BIT(pin);
++}
++
++static ALWAYS_INLINE void swdp_ll_pin_set(void *const base, uint8_t pin)
++{
++	ARG_UNUSED(base);
++	sio_hw->gpio_set = BIT(pin);
++}
++
++static ALWAYS_INLINE void swdp_ll_pin_clr(void *const base, uint8_t pin)
++{
++	ARG_UNUSED(base);
++	sio_hw->gpio_clr = BIT(pin);
++}
++
++static ALWAYS_INLINE uint32_t swdp_ll_pin_get(void *const base, uint8_t pin)
++{
++	ARG_UNUSED(base);
++	return (sio_hw->gpio_in >> pin) & 1U;
++}
