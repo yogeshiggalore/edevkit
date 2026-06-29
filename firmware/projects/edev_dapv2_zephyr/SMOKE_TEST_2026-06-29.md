@@ -37,20 +37,30 @@ The PIO driver receives a real ACK value of 0x4 (FAULT in wire-order bits 0,0,1)
 
 Pico-sdk firmware on the **same hardware** reads the nRF52840 cleanly (`probe-rs info` returns the full ROM walk including the Nordic ETM). So the wiring + target are fine.
 
-## Hypotheses, ranked
+## A/B test result (added 2026-06-29 after first round)
 
-1. **Sticky error in target DP from prior session.** Standard recovery: DPIDR FAULT → host reads CTRL/STAT (to learn which sticky bit is set) → host writes DP.ABORT (with sticky-clear bits). probe-rs's CTRL/STAT read fails (ack=0) so it never gets to the ABORT write, and the bus stays stuck. Reset target + re-run = should clear. Try this first next session.
-2. **SWDIO turnaround timing slightly off** for *back-to-back* transactions. The first transaction works (FAULT is a valid response). The second one returns ack=0 — line is being held low somewhere. The PIO program holds SWDIO=1 between transactions (via the `set pins, 1` park) but releases on entering `read_bits`. If the target is still in FAULT-recovery (driving 33 dummy bits) we'd be reading those bits, not the new ACK. → try forcing `data_phase=1` to always consume the dummy data.
-3. **Specific to Zephyr cmsis_dap.c command ordering.** Zephyr might emit DAP commands in a slightly different sequence than pico-sdk's DAP dispatcher, exposing a wire-state assumption that pico-sdk's dispatcher kept hidden.
+**Definitive**: the bug is in the Zephyr port, not in stickiness recovery. Sequence:
 
-Most likely: 2. Pico-sdk's dap_swd.c happened to handle this case because the failing op never made it to `probe_swd_xact` twice in a row before the FAULT was cleared upstream.
+1. Reverted Pico 2 W to Friday's pico-sdk firmware (`build/edev_dapv2_v0_1.uf2`, 2026-06-26)
+2. Ran `probe-rs info` against the same nRF52840 on the same wires → full ROM walk including Cortex-M4 ETM, Nordic VLSI ASA designer, byte-identical to original baseline. **Target DP is clean and pico-sdk reads it fine.**
+3. Immediately re-flashed the diagnostic Zephyr build (no power-cycle of the target between firmwares — DP state preserved as left by pico-sdk's successful disconnect)
+4. Ran `probe-rs info` again → **identical failure mode**: first DPIDR returns ACK=4 (FAULT), follow-up CTRL/STAT returns ACK=0.
 
-## Next session — debugging steps
+So a known-clean DP still triggers FAULT under our Zephyr firmware. Hypothesis #1 (stale sticky) is **ruled out**. The bug is in our PIO driver or in Zephyr's `cmsis_dap.c` command-emission pattern.
 
-1. **Power-cycle the nRF52840 target**, then run `probe-rs info` — does the first DPIDR succeed when the DP has no sticky bits? (Tests hypothesis 1.)
-2. If still failing: add CDC log of every `api_output_sequence` call (count, first bits) to confirm probe-rs is actually sending the SWD line reset before DPIDR. (Tests whether line reset is being executed.)
-3. Force `d->data_phase = 1` unconditionally in `api_configure` and rebuild. If the wire works, the bug is the FAULT data-phase asymmetry handling. (Tests hypothesis 2.)
-4. Side-by-side: capture USB packets from `probe-rs info` against pico-sdk firmware vs Zephyr — diff the DAP command sequences. (Tests hypothesis 3.)
+## Hypotheses, ranked (revised)
+
+1. **Line reset isn't actually clocking 51+ HIGH bits.** If our `api_output_sequence` for SWJ_Sequence doesn't send all 51 bits HIGH (e.g., bit ordering bug, opcode-vs-data race in PIO autopull, swd_write_n call shape), the target's DP state machine never resets and DPIDR returns FAULT. **First thing to verify next session.** Add LOG to `api_output_sequence` to dump count + first word.
+2. **PIO is being torn down + re-set-up between Connect and the first transaction**, losing carefully prepared state. We see two `sm_configure` log lines back-to-back at Connect time. Each calls `pio_sm_clear_fifos` and `pio_sm_init`. The second one (from `swdp_set_clock`) might be re-running while PIO is mid-line-reset.
+3. **Inter-opcode gap on the SWD line is too long.** Between `swd_write_n` for the header and `swd_read_n` for ACK, there's a ~0.8 us gap (5 PIO cycles for `pull block` → `out pc` → `out x` → `set pindirs`). At 1 MHz SWD, that's almost a whole SWD cycle of SWCLK held low while neither host nor target drives SWDIO. Some targets may interpret the gap as a phase-state reset.
+4. **Force `data_phase=1` always** — one-line test in `api_configure` to set `d->data_phase = 1;` unconditionally. Worth trying as a 5-second experiment.
+
+## Next session — debug plan (revised after the A/B confirms the bug is ours)
+
+1. Add `LOG_INF` in `api_output_sequence` dumping `{count, data[0]}` — confirms whether probe-rs actually issues the 51-bit line-reset and what the first byte looks like. The fastest diagnostic.
+2. Delete or skip one of the two back-to-back `sm_configure` calls at Connect time — `api_set_clock` should only update `d->clock_hz` and defer reconfigure to next port_on. Removes a known source of PIO state churn before any wire activity.
+3. One-line test: set `d->data_phase = 1` unconditionally in `api_configure`. Reflash, re-run. If it works, bug is FAULT data-phase handling.
+4. If all the above fail: USB-capture both pico-sdk and Zephyr against the same target and diff the DAP command sequences byte-by-byte.
 
 ## Repro
 
