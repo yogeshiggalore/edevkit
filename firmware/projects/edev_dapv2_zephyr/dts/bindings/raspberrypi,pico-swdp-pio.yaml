@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# PIO-driven SWDP (Serial Wire Debug Port) for RP2040 / RP2350.
+#
+# Drop-in replacement for the upstream zephyr,swdp-gpio binding when speed
+# matters — the PIO state machine clocks SWD up to 25 MHz (vs ~few-MHz for
+# the GPIO bit-banger). The PIO program is the same one the pico-sdk
+# implementation at firmware/projects/edev_dapv2/src/pio/probe_swd.pio uses.
+#
+# Example:
+#
+#   &pio1 {
+#       status = "okay";
+#       dp0: dp0 {
+#           compatible = "raspberrypi,pico-swdp-pio";
+#           status = "okay";
+#           clk-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;     /* SWCLK */
+#           dio-gpios = <&gpio0 3 GPIO_PULL_UP>;         /* SWDIO */
+#           reset-gpios = <&gpio0 6 GPIO_ACTIVE_LOW>;    /* nRESET (optional) */
+#       };
+#   };
+
+description: |
+  Raspberry Pi Pico PIO-driven SWDP driver. Implements zephyr/drivers/swdp.h
+  for use with subsys/dap. The parent node must be a raspberrypi,pico-pio
+  controller; the driver allocates one state machine on it.
+
+compatible: "raspberrypi,pico-swdp-pio"
+
+include: base.yaml
+
+properties:
+  clk-gpios:
+    type: phandle-array
+    required: true
+    description: SWCLK pin (always driven by the PIO state machine).
+
+  dio-gpios:
+    type: phandle-array
+    required: true
+    description: SWDIO pin (bidirectional; direction managed by PIO).
+
+  reset-gpios:
+    type: phandle-array
+    description: |
+      Optional nRESET line to the target. Driven open-drain — low pulls the
+      target into reset, high (input/Hi-Z) releases it.
+
+  port-write-cycles:
+    type: int
+    default: 2
+    description: |
+      Compatibility knob carried over from zephyr,swdp-gpio. Unused by the
+      PIO driver because PIO clocks have deterministic phase; kept so
+      existing overlays migrate cleanly.

@@ -32,10 +32,12 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(LED_NODE, gpios, {0})
 
 /*
  * DAP Link context bound to the SWDP device declared in the board overlay.
- * M2 uses the upstream zephyr,swdp-gpio bit-banger. M3 swaps the DT
- * compatible to our zephyr,swdp-pio-rpi-pico driver — no code change here.
+ * The compatible string matches the binding in
+ * dts/bindings/raspberrypi,pico-swdp-pio.yaml — the PIO-driven backend
+ * preserves the 25 MHz SWD speed of the pico-sdk firmware.
  */
-DAP_LINK_CONTEXT_DEFINE(edev_dap_ctx, DEVICE_DT_GET_ONE(zephyr_swdp_gpio));
+DAP_LINK_CONTEXT_DEFINE(edev_dap_ctx,
+			DEVICE_DT_GET_ONE(raspberrypi_pico_swdp_pio));
 
 static int setup_usb(void)
 {

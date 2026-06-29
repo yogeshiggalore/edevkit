@@ -19,6 +19,10 @@ include(${ZEPHYR_BASE}/samples/subsys/usb/common/common.cmake)
 
 target_sources(app PRIVATE
     src/main.c
+    drivers/dp/swdp_pio_rpi_pico.c
 )
 
-target_include_directories(app PRIVATE src)
+target_include_directories(app PRIVATE
+    src
+    pio
+)

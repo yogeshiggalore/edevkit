@@ -30,22 +30,22 @@
 		};
 	};
 
-	/*
-	 * SWD Debug Port — M2 placeholder using upstream zephyr,swdp-gpio
-	 * (drivers/dp/swdp_bitbang.c). Pin assignments match probe_pins.h in
-	 * the pico-sdk project:
-	 *   SWCLK = GPIO2, SWDIO = GPIO3 (input pull-up by default).
-	 *
-	 * This will be replaced by zephyr,swdp-pio-rpi (PIO-driven, 25 MHz) in
-	 * M3 — but the upstream GPIO bit-banger is enough to validate
-	 * USB-CMSIS-DAP-v2 enumeration end-to-end with probe-rs first.
-	 */
+};
+
+/*
+ * SWD Debug Port — PIO-driven (M3+). Sits as a child of pio1 (PIO0 is left
+ * free for a future cyw43_arch-style sidecar; the upstream pico-sdk firmware
+ * uses PIO1 for the same reason). Pin assignments match probe_pins.h in the
+ * pico-sdk project: SWCLK = GPIO2, SWDIO = GPIO3.
+ */
+&pio1 {
+	status = "okay";
+
 	dp0: dp0 {
-		compatible = "zephyr,swdp-gpio";
+		compatible = "raspberrypi,pico-swdp-pio";
 		status = "okay";
 		clk-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
 		dio-gpios = <&gpio0 3 GPIO_PULL_UP>;
-		port-write-cycles = <2>;
 	};
 };
 
