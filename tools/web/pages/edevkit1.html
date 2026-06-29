@@ -1059,6 +1059,16 @@
     <li><a href="#decisions" class="l1">15. Decision Log</a></li>
     <li><a href="#glossary" class="l1">16. Glossary</a></li>
     <li><a href="#references" class="l1">17. References</a></li>
+    <li><a href="#ble-staging" class="l1">18. Future: BLE staging-buffer</a>
+      <ol>
+        <li><a href="#ble-why" class="l2">18.1 Why a staging buffer</a></li>
+        <li><a href="#ble-buffer" class="l2">18.2 Where the buffer lives</a></li>
+        <li><a href="#ble-usecases" class="l2">18.3 Use cases unlocked</a></li>
+        <li><a href="#ble-gatt" class="l2">18.4 GATT service design</a></li>
+        <li><a href="#ble-stack" class="l2">18.5 Software stack &amp; concurrency</a></li>
+        <li><a href="#ble-risk" class="l2">18.6 Open questions</a></li>
+      </ol>
+    </li>
   </ol>
 </nav>
 
@@ -1245,6 +1255,7 @@
 <tr><td>ETM / parallel trace</td><td>Requires HSTX peripheral driver in Zephyr (not yet) + ribbon connector</td></tr>
 <tr><td>Multi-target switch</td><td>Single Cortex Debug header in v1; v2 could add a TC2030 selector mux</td></tr>
 <tr><td>Real-time LA streaming &gt; 12 MS/s</td><td>USB-FS bandwidth limited; would need USB-HS MCU or external buffer SRAM</td></tr>
+<tr><td>BLE staging-buffer companion mode (<a href="#ble-staging">§18</a>)</td><td>Wireless flash dump / firmware update / field state-capture via a phone app, decoupled from SWD speed by an on-probe flash buffer. Needs CYW43439 (Pico 2 W variant or v2 hardware option) + Zephyr Bluetooth stack. Reuses the planned 128 MB W25Q01JV emulation flash as the staging area. ~3-4 weeks engineering once Part 1 USB CMSIS-DAP lands.</td></tr>
 </tbody>
 </table>
 </div>
@@ -2648,6 +2659,97 @@ Files attached:     Gerbers, drill, pick-and-place, BOM, assembly drawings
 <li><a href="https://github.com/raspberrypi/pico-sdk">pico-sdk (for reference)</a></li>
 <li><a href="https://sigrok.org/wiki/Protocol_decoders">sigrok protocol decoders (~80, MIT-licensed)</a></li>
 </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="ble-staging" data-search-text="ble bluetooth low energy staging buffer companion mobile phone app wireless flash dump firmware update field support cyw43439 pico2_w zephyr bluetooth gatt littlefs w25q01 nordic uart service async">
+<h2><span class="num">18</span>Future: BLE Staging-Buffer Architecture</h2>
+
+<p>This chapter documents a roadmap item that is <em>not</em> in v1 scope but is preserved here because it shapes hardware decisions already locked in v1 (specifically the 128 MB W25Q01JV data flash) and because the prototype hardware platform — Pico 2 W — already carries the wireless chip needed to validate it. Implementation will follow Part 1 USB CMSIS-DAP shipping.</p>
+
+<p>The proposal: add a <strong>BLE companion mode</strong> in which a phone app talks to the edevkit over Bluetooth Low Energy, and the edevkit relays operations to the SWD-attached target. A flash partition on the probe acts as a <strong>staging buffer</strong> between the slow wireless link and the fast SWD link, decoupling them so neither bottlenecks the other.</p>
+
+<h3 id="ble-why">18.1 Why a staging buffer</h3>
+<p>BLE 5 real-world throughput is ~700 kbps (1.4 Mbps theoretical with 2M PHY). SWD at edevkit's target speeds is 5-25 Mbps — a 10-30× mismatch. Without a buffer, BLE becomes the bottleneck for every operation and a dropped wireless connection aborts whatever was in flight. With a buffer:</p>
+<ul>
+<li>The probe runs SWD operations at full speed; the wireless link runs asynchronously.</li>
+<li>The phone can disconnect mid-operation. The probe keeps working. The phone reconnects later to fetch results.</li>
+<li>BLE drops become resumable: re-attach and continue from the last acknowledged byte.</li>
+<li>Multiple pre-staged firmware images can live on the probe; the phone picks which one to flash.</li>
+<li>Operations that don't need a host at all (logger mode, factory load) become possible.</li>
+</ul>
+
+<h3 id="ble-buffer">18.2 Where the buffer lives</h3>
+<p>Three options on the v1 hardware design:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Buffer location</th><th>Capacity</th><th>Tradeoff</th></tr></thead>
+<tbody>
+<tr><td>RP2350 SRAM</td><td>~256 KB usable after stack/heap</td><td>Lost on power-cycle or probe reset. No resume. Useful only for the tiniest payloads.</td></tr>
+<tr><td>W25Q128JV boot flash (LittleFS partition)</td><td>~2 MB free (v1 already reserves this region for device profiles)</td><td>Shared with executable / OTA scratch. Erase coordination needed. Workable for single target images up to ~1.5 MB.</td></tr>
+<tr><td><strong>W25Q01JV data flash (preferred)</strong></td><td><strong>128 MB</strong></td><td>Fully decoupled from executable. Already in v1 BOM as the device-emulation backing store; a second LittleFS namespace on the same chip gives the BLE buffer effectively unlimited capacity for the multi-image library use case.</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Prototype path on Pico 2 W:</strong> use the on-module 4 MB QSPI flash with a 2-3 MB LittleFS partition. This validates the architecture end-to-end with zero hardware additions. Migrate to the W25Q01JV when the design lands in v1 silicon.</p>
+
+<h3 id="ble-usecases">18.3 Use cases unlocked</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Use case</th><th>Why a USB probe can't do this</th><th>Killer feature?</th></tr></thead>
+<tbody>
+<tr><td><strong>Field firmware update</strong> — engineer arrives at field unit with phone; uploads .hex over BLE (~30 s for 1 MB); walks away while probe flashes target.</td><td>USB requires a laptop to be physically present and attached for the duration.</td><td>Yes — biggest single value driver.</td></tr>
+<tr><td><strong>Multi-image bench testing</strong> — probe stores 5 firmware revisions; phone picks one and applies. Quick A/B without launching IDE.</td><td>Possible with USB but requires laptop + IDE invocation each time.</td><td>Yes — radically lower friction.</td></tr>
+<tr><td><strong>Support state capture</strong> — operator hits "Capture"; probe dumps target flash + RAM + key registers into local storage. Phone emails the bundle to engineering.</td><td>USB requires the operator to have an engineering laptop and know how to drive it.</td><td>Yes — turns any operator into a triage tool.</td></tr>
+<tr><td><strong>Pre-staged production loads</strong> — operator on factory line uses phone to pick SKU variant; probe writes the right pre-loaded image.</td><td>USB workflow needs per-station laptop or factory-image server. Phone removes both.</td><td>Yes for low-volume / mixed-SKU lines.</td></tr>
+<tr><td><strong>Autonomous logger mode</strong> — probe periodically wakes target via CTRL-AP, reads a counter / heartbeat / state struct, stores log in flash. Phone retrieves the log when convenient.</td><td>USB tether constrains where the probe can live.</td><td>Niche but enables long-term monitoring scenarios no commercial probe addresses.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The first three are the differentiators that justify adding BLE. Nothing in the open-source probe ecosystem offers them.</p>
+
+<h3 id="ble-gatt">18.4 GATT service design</h3>
+<p>Three custom GATT services exposed by the probe, plus the standard Battery / Device Information services:</p>
+<dl>
+<dt><strong>Image Transfer Service</strong> (chunked upload / download)</dt>
+<dd>Modeled on Nordic LE Secure DFU but generalized. Characteristics: <code>image_open</code> (path + size + sha256), <code>image_chunk</code> (write-without-response for speed), <code>image_status</code> (notify per N KB). Resume by re-opening with the same SHA — probe replies with bytes-already-received.</dd>
+<dt><strong>Command Service</strong> (RPC for operations)</dt>
+<dd>One write characteristic accepting a CBOR-encoded command (<code>{op:"flash", path:"/img/fwA.bin", target:"app", erase:"sector"}</code>), one notify characteristic streaming progress events. Operations queue server-side so the phone can fire-and-forget.</dd>
+<dt><strong>State Service</strong> (read-only chip / probe state)</dt>
+<dd>Characteristics for: connected target identity (from Identify panel), last operation result, free flash space, queued ops, probe firmware version. Lets the phone render a useful "what's going on" screen without driving each query.</dd>
+</dl>
+<p>Pairing: use LE Secure Connections with passkey entry. The probe's WS2812 LED chain can display the 6-digit code; phone enters it. No keys persist across power-cycles — bonding is opt-in per session to keep field swaps easy.</p>
+
+<h3 id="ble-stack">18.5 Software stack &amp; concurrency</h3>
+<p><strong>Bluetooth host:</strong> Zephyr Bluetooth subsystem (Apache 2.0 license, ships with Zephyr 4.x, already a v1 dependency). The competing pico-sdk BTstack option is rejected — Bluestack/BTstack has a commercial-use licensing wrinkle that conflicts with edevkit's open hardware positioning. The CYW43439 controller talks HCI to Zephyr's host over the cyw43-driver shim; this is a well-trodden path on Pico W under Zephyr.</p>
+
+<p><strong>Concurrency model on RP2350:</strong></p>
+<ul>
+<li><strong>Core 0:</strong> USB stack (CMSIS-DAP v2 / CDC bridges) + protocol engines I²C/SPI</li>
+<li><strong>Core 1:</strong> Bluetooth host + Image Transfer / Command / State services + LittleFS staging-buffer access</li>
+<li><strong>PIO0:</strong> SWD/JTAG (already on PIO0 SM0 in v1)</li>
+<li><strong>PIO1:</strong> I²C/SPI testers (already in v1)</li>
+<li>SWD and BLE never share a PIO state machine; the only contention is the W25Q01JV — protected by Zephyr's QSPI driver mutex.</li>
+</ul>
+
+<p><strong>Hardware variant:</strong> v1 silicon plans RP2350B (QFN-80, no built-in wireless). For BLE support there are two options:</p>
+<ol>
+<li><strong>v1-BLE option:</strong> add the CYW43439 module + its 6-pin SPI/PWR interface as a populated-on-request variant. Cost +$3, board area ~120 mm². Roughly the same footprint as the Murata 1YN module Raspberry Pi uses on Pico W.</li>
+<li><strong>Defer to v2 hardware:</strong> v1 ships USB-only; v2 (or a dedicated edevkit1-BLE SKU) adds the radio. Simpler v1 BOM, slower path to validation.</li>
+</ol>
+<p>The Pico 2 W development boards used during firmware bring-up already have CYW43439, so firmware prototyping can begin <em>now</em> against the dev hardware without committing to a v1 hardware variant.</p>
+
+<h3 id="ble-risk">18.6 Open questions</h3>
+<ul>
+<li><strong>Mobile companion app effort.</strong> Need Android + iOS clients (or React Native / Flutter cross-platform). This is a separate workstream comparable in size to the Tauri desktop GUI. Could ship initially as Android-only.</li>
+<li><strong>Signed / attested updates.</strong> Field firmware update over wireless is a security-sensitive operation. Probe should refuse images without a valid signature from a known build key — same ECDSA-P256 key chain as MCUboot uses for probe self-update.</li>
+<li><strong>BLE regulatory.</strong> Adding a radio to the v1-BLE variant requires FCC/CE/IC certification (or shipping with a pre-certified module like Murata 1YN). Pre-certified module path adds cost but skips a 4-6 week certification effort.</li>
+<li><strong>Battery-powered operation.</strong> v1 is USB-powered. A standalone BLE-only operation mode (no USB host present) would need a small Li-Po + charger circuit — out of v1 scope but a natural follow-on if the field-update use case takes off.</li>
+<li><strong>Throughput vs latency tradeoff.</strong> Target image transfer benefits from connection-event-packed write-without-response. Command-channel ops want low-latency request/response. Need to validate that we can host both classes of service on the same connection without one starving the other.</li>
+</ul>
+
+<p><strong>Status:</strong> roadmap-only as of <em>2026-06-25</em>. Implementation gated on Part 1 USB CMSIS-DAP v2 shipping cleanly. First validation milestone is the prototype path on Pico 2 W using the internal 4 MB QSPI flash — once that demonstrates the architecture, hardware-side BOM additions become a justified follow-on.</p>
+
 </section>
 
 <hr>
