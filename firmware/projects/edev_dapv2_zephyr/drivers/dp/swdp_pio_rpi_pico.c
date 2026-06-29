@@ -19,6 +19,15 @@
 
 #define DT_DRV_COMPAT raspberrypi_pico_swdp_pio
 
+#include <zephyr/devicetree.h>
+
+/* Only compile the body of this driver when at least one DT instance with
+ * compatible "raspberrypi,pico-swdp-pio" is status="okay". This lets us
+ * ship with the upstream zephyr,swdp-gpio bit-banger (production) while
+ * keeping the PIO driver source in the tree as a known-debug-needed
+ * artefact for later. */
+#if DT_HAS_COMPAT_STATUS_OKAY(raspberrypi_pico_swdp_pio)
+
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/misc/pio_rpi_pico/pio_rpi_pico.h>
@@ -615,3 +624,5 @@ static int swdp_pio_init(const struct device *dev)
 			      &swdp_pio_api);
 
 DT_INST_FOREACH_STATUS_OKAY(SWDP_PIO_INIT)
+
+#endif /* DT_HAS_COMPAT_STATUS_OKAY(raspberrypi_pico_swdp_pio) */

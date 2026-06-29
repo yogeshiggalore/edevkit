@@ -53,8 +53,7 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(LED_NODE, gpios, {0})
  * dts/bindings/raspberrypi,pico-swdp-pio.yaml — the PIO-driven backend
  * preserves the 25 MHz SWD speed of the pico-sdk firmware.
  */
-DAP_LINK_CONTEXT_DEFINE(edev_dap_ctx,
-			DEVICE_DT_GET_ONE(raspberrypi_pico_swdp_pio));
+DAP_LINK_CONTEXT_DEFINE(edev_dap_ctx, DEVICE_DT_GET_ONE(zephyr_swdp_gpio));
 
 static int setup_usb(void)
 {

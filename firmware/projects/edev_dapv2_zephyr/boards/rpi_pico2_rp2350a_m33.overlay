@@ -33,22 +33,26 @@
 };
 
 /*
- * SWD Debug Port — PIO-driven. Sits as a child of pio1 (PIO0 left free).
+ * SWD Debug Port — production: upstream Zephyr GPIO bit-banger.
+ *
+ * The PIO-driven driver (raspberrypi,pico-swdp-pio) is preserved in the
+ * tree (drivers/dp/) but its DT node is disabled. The GPIO bit-banger
+ * proves out the rest of the stack (USB, DAP dispatcher, identity, BLE
+ * roadmap, etc.) at the cost of slower SWD speed (~few MHz vs PIO's
+ * 25 MHz target). Wire-level FAULT in the PIO driver still needs a
+ * logic-analyser session to crack — see UPSTREAM_VALIDATES.md.
+ *
  * Pin assignments match probe_pins.h in the pico-sdk project: SWCLK=GP2,
- * SWDIO=GP3.
+ * SWDIO=GP3 (with internal pull-up — Zephyr's GPIO driver handles RP2350
+ * pad isolation correctly via gpio_pin_configure_dt).
  */
-&pio1 {
-	status = "okay";
-
+/ {
 	dp0: dp0 {
-		compatible = "raspberrypi,pico-swdp-pio";
+		compatible = "zephyr,swdp-gpio";
 		status = "okay";
 		clk-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
-		/* No GPIO_PULL_UP on dio: PIO takes ownership via pio_gpio_init,
-		 * and a leftover pad pull-up set by Zephyr's GPIO subsys may
-		 * fight the PIO during turnaround. Match pico-sdk's "no pull"
-		 * default. */
-		dio-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
+		dio-gpios = <&gpio0 3 GPIO_PULL_UP>;
+		port-write-cycles = <2>;
 	};
 };
 
