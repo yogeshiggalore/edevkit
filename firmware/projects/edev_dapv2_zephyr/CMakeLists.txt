@@ -61,6 +61,7 @@ endif()
 
 target_sources(app PRIVATE
     src/main.c
+    src/swclk_keepalive.c
     drivers/dp/swdp_pio_rpi_pico.c
 )
 
