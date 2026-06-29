@@ -179,6 +179,8 @@ static int api_output_sequence(const struct device *dev, uint32_t count,
 {
 	uint32_t bits_left = count;
 	uint32_t byte_pos = 0;
+	uint32_t chunks_sent = 0;
+	uint32_t first_word = 0;
 
 	while (bits_left) {
 		uint8_t chunk = (bits_left > 32u) ? 32u : (uint8_t)bits_left;
@@ -188,10 +190,17 @@ static int api_output_sequence(const struct device *dev, uint32_t count,
 			uint8_t bit = (data[byte_pos + (i >> 3)] >> (i & 7u)) & 1u;
 			word |= (uint32_t)bit << i;
 		}
+		if (chunks_sent == 0) {
+			first_word = word;
+		}
 		swd_write_n(dev, word, chunk);
 		bits_left -= chunk;
 		byte_pos += (chunk + 7u) / 8u;
+		chunks_sent++;
 	}
+	LOG_INF("seq: count=%u chunks=%u first=0x%08x data[0]=0x%02x",
+		(unsigned)count, (unsigned)chunks_sent,
+		(unsigned)first_word, (unsigned)data[0]);
 	return 0;
 }
 
@@ -399,6 +408,18 @@ static int api_set_clock(const struct device *dev, uint32_t clock)
 	if (clock == 0) {
 		clock = 1000000u;
 	}
+	/* RTOS difference vs bare-metal pico-sdk: in the upstream pico-sdk
+	 * firmware the dispatcher reconfigures the PIO only at probe_init.
+	 * Zephyr's cmsis_dap.c routes through swdp_set_clock at Connect time,
+	 * which we used to honor unconditionally — calling sm_configure a
+	 * second time right after port_on already did. That redundant
+	 * pio_sm_init + clear_fifos churns the SM mid-bring-up and may leave
+	 * the line in a state the target doesn't expect by the time the first
+	 * SWJ_Sequence arrives. Skip the reconfigure when the divider would
+	 * not actually change. */
+	if (d->clock_hz == clock) {
+		return 0;
+	}
 	d->clock_hz = clock;
 	if (d->enabled) {
 		sm_configure(dev);
@@ -413,6 +434,8 @@ static int api_configure(const struct device *dev, uint8_t turnaround,
 
 	d->turnaround = (turnaround & 0x3u) + 1u;
 	d->data_phase = data_phase ? 1u : 0u;
+	LOG_INF("configure: turnaround=%u data_phase=%u",
+		(unsigned)d->turnaround, (unsigned)d->data_phase);
 	return 0;
 }
 

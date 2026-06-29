@@ -55,6 +55,26 @@ So a known-clean DP still triggers FAULT under our Zephyr firmware. Hypothesis #
 3. **Inter-opcode gap on the SWD line is too long.** Between `swd_write_n` for the header and `swd_read_n` for ACK, there's a ~0.8 us gap (5 PIO cycles for `pull block` → `out pc` → `out x` → `set pindirs`). At 1 MHz SWD, that's almost a whole SWD cycle of SWCLK held low while neither host nor target drives SWDIO. Some targets may interpret the gap as a phase-state reset.
 4. **Force `data_phase=1` always** — one-line test in `api_configure` to set `d->data_phase = 1;` unconditionally. Worth trying as a 5-second experiment.
 
+## Round 2 (same day) — added diagnostic LOGs + tried 3 fixes
+
+Added `LOG_INF` at `api_output_sequence` and `api_configure`. Reproduced via the new 1200-baud BOOTSEL trick (no manual button press needed). Confirmed:
+
+- `configure: turnaround=2 data_phase=0` — probe-rs sets turnaround=1→2cyc, data_phase off. **Same as pico-sdk computes.**
+- `seq: count=51 chunks=2 first=0xffffffff data[0]=0xff` — SWD line reset (51 HIGH) issued ✓
+- `seq: count=16 chunks=1 first=0x0000e79e data[0]=0x9e` — JTAG→SWD switch (0xE79E LSB-first) issued ✓
+- `seq: count=54 chunks=2 first=0xffffffff data[0]=0xff` — post-switch line reset ✓
+- `xfer req=0x02 hdr=0xa5 ack=0x4` — DPIDR returns FAULT (the same bug)
+
+So line reset + switch + reset all reach the wire correctly. Bits are right. Target DP state machine should be in fresh-reset state. FAULT on DPIDR is still inexplicable from the framework / driver perspective.
+
+Things tried and ruled out this session (no change to the FAULT symptom):
+
+1. **Skip the redundant `sm_configure` in `api_set_clock`** when the divider doesn't change. Removes RTOS-flavoured churn that bare-metal pico-sdk doesn't do.
+2. **Remove `GPIO_PULL_UP` from `dio-gpios`** in the board overlay. Matches pico-sdk which leaves pad pulls untouched.
+3. **Force `data_phase=1`** unconditionally. → Made the symptom *worse* (probe-rs falls back to dormant-wake-up loop with the `0x99 ff 24 05` 48-bit pattern). Reverted.
+
+Bonus: **1200-baud → BOOTSEL trick is now implemented** in `src/main.c` (background `K_THREAD_DEFINE` polls `UART_LINE_CTRL_BAUD_RATE` every 250 ms; on 1200 calls `reset_usb_boot(0, 0)`). Validated on hardware — `stty -f /dev/cu.usbmodem* 1200` now reboots into mass-storage mode without touching the button. Future reflashes are hands-free.
+
 ## Next session — debug plan (revised after the A/B confirms the bug is ours)
 
 1. Add `LOG_INF` in `api_output_sequence` dumping `{count, data[0]}` — confirms whether probe-rs actually issues the 51-bit line-reset and what the first byte looks like. The fastest diagnostic.

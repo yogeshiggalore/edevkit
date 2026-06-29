@@ -26,6 +26,8 @@
 
 #include <sample_usbd.h>
 
+#include <pico/bootrom.h>
+
 LOG_MODULE_REGISTER(edev_dapv2, LOG_LEVEL_INF);
 
 /* MS OS 2.0 BOS — pulled in *after* LOG_MODULE_REGISTER because the static
@@ -99,6 +101,47 @@ static void wait_for_dtr(const struct device *console)
 		k_sleep(K_MSEC(100));
 	}
 }
+
+/*
+ * 1200-baud-to-BOOTSEL reboot trick.
+ *
+ * The pico-sdk firmware ports this via TinyUSB's tud_cdc_line_coding_cb. The
+ * Zephyr USB-Device-Next CDC ACM driver doesn't expose a line-coding callback,
+ * so we poll the console's baud rate every 250 ms; if the host opens at 1200
+ * baud (e.g. `stty -f /dev/cu.usbmodem* 1200`) we hand off to the RP2350
+ * bootrom to enter UF2 mass-storage mode. This is the same UX the host-side
+ * `picotool` / pico-sdk firmware expects.
+ */
+#define EDEV_REBOOT_MAGIC_BAUD	1200u
+
+static void bootsel_watch_entry(void *a, void *b, void *c)
+{
+	ARG_UNUSED(a);
+	ARG_UNUSED(b);
+	ARG_UNUSED(c);
+
+	const struct device *console = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+
+	while (!device_is_ready(console)) {
+		k_sleep(K_MSEC(100));
+	}
+
+	while (1) {
+		uint32_t baud = 0;
+
+		uart_line_ctrl_get(console, UART_LINE_CTRL_BAUD_RATE, &baud);
+		if (baud == EDEV_REBOOT_MAGIC_BAUD) {
+			LOG_WRN("1200-baud — entering BOOTSEL");
+			k_sleep(K_MSEC(50));	/* let the log line drain */
+			reset_usb_boot(0, 0);
+			/* not reached */
+		}
+		k_sleep(K_MSEC(250));
+	}
+}
+
+K_THREAD_DEFINE(bootsel_watch, 1024, bootsel_watch_entry, NULL, NULL, NULL,
+		K_LOWEST_APPLICATION_THREAD_PRIO, 0, 1000);
 
 static int setup_dap(void)
 {

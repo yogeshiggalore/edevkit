@@ -44,7 +44,11 @@
 		compatible = "raspberrypi,pico-swdp-pio";
 		status = "okay";
 		clk-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
-		dio-gpios = <&gpio0 3 GPIO_PULL_UP>;
+		/* No GPIO_PULL_UP on dio: PIO takes ownership via pio_gpio_init,
+		 * and a leftover pad pull-up set by Zephyr's GPIO subsys may
+		 * fight the PIO during turnaround. Match pico-sdk's "no pull"
+		 * default. */
+		dio-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
 	};
 };
 
