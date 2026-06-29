@@ -13,9 +13,6 @@ project(pio_sanity_zephyr LANGUAGES C)
 include(${ZEPHYR_BASE}/samples/subsys/usb/common/common.cmake)
 
 # pioasm — same auto-generation path as edev_dapv2_zephyr.
-set(PIO_SRC ${CMAKE_CURRENT_SOURCE_DIR}/pio/toggle.pio)
-set(PIO_HDR ${CMAKE_CURRENT_BINARY_DIR}/zephyr/include/generated/toggle.pio.h)
-
 find_program(PIOASM_EXECUTABLE
     NAMES pioasm
     HINTS
@@ -24,19 +21,25 @@ find_program(PIOASM_EXECUTABLE
         $ENV{HOME}/.pico-sdk/tools/2.1.1/pioasm
 )
 
-if(PIOASM_EXECUTABLE)
-    add_custom_command(
-        OUTPUT ${PIO_HDR}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/zephyr/include/generated
-        COMMAND ${PIOASM_EXECUTABLE} -o c-sdk ${PIO_SRC} ${PIO_HDR}
-        DEPENDS ${PIO_SRC}
-        VERBATIM
-    )
-    add_custom_target(toggle_pio_header DEPENDS ${PIO_HDR})
-    add_dependencies(app toggle_pio_header)
-else()
+if(NOT PIOASM_EXECUTABLE)
     message(FATAL_ERROR "pioasm not found")
 endif()
+
+set(PIO_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/zephyr/include/generated)
+
+foreach(pio_name toggle probe_swd)
+    set(src ${CMAKE_CURRENT_SOURCE_DIR}/pio/${pio_name}.pio)
+    set(hdr ${PIO_GEN_DIR}/${pio_name}.pio.h)
+    add_custom_command(
+        OUTPUT ${hdr}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${PIO_GEN_DIR}
+        COMMAND ${PIOASM_EXECUTABLE} -o c-sdk ${src} ${hdr}
+        DEPENDS ${src}
+        VERBATIM
+    )
+    add_custom_target(${pio_name}_pio_header DEPENDS ${hdr})
+    add_dependencies(app ${pio_name}_pio_header)
+endforeach()
 
 target_sources(app PRIVATE src/main.c)
 target_include_directories(app PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/zephyr/include/generated)

@@ -1,0 +1,53 @@
+; SPDX-License-Identifier: MIT
+;
+; probe_swd.pio — PIO-driven SWD bit-bang for edev_dapv2.
+;
+; Function-dispatch model: C pushes one opcode word into TX FIFO,
+; then PIO `out pc, 8` jumps to write_bits or read_bits. After the
+; function completes, PIO `.wrap` returns to `start`, which does
+; another explicit `pull` to wait for the next opcode.
+;
+; The explicit `pull block` at start (vs. yapicoprobe's `out null, 32`
+; trailer trick) is what lets us issue single isolated operations
+; without stalling on an empty FIFO at the end.
+;
+; Opcode word layout:
+;   bits 0..7   : function address (consumed by `out pc, 8`)
+;   bits 8..12  : count - 1 (consumed by `out x, 5`)
+;   bits 13..31 : up to 19 bits of write data
+;
+; For writes > 19 bits, C pushes a follow-up word with the remaining
+; data. Autopull (threshold 32) pulls it mid-loop when OSR drains.
+;
+; Pin map (set by C):
+;   side-set pin 0 = SWCLK
+;   OUT/IN/SET base = SWDIO
+;
+; Timing: 3 PIO cycles per phase × 2 phases = 6 PIO cycles per SWD bit.
+; PIO clock = SWD clock × 6.  At PIO 150 MHz → 25 MHz SWD max.
+
+.program probe_swd
+.side_set 1 opt
+
+public start:
+    pull block                         ; wait for opcode; resets shift counter
+    out pc, 8                          ; jump to write_bits or read_bits
+
+public write_bits:
+    out x, 5                           ; count - 1 (0..31 → 1..32 bits)
+    set pindirs, 1                     ; SWDIO = output (drive)
+write_loop:
+    out pins, 1            side 0 [2]  ; SWDIO = next bit, SWCLK low
+    jmp x-- write_loop     side 1 [2]  ; SWCLK rising — peer samples
+    set pins, 1            side 0      ; park SWDIO high, SWCLK low
+    jmp start
+
+public read_bits:
+    out x, 5                           ; count - 1
+    set pindirs, 0         side 0      ; SWDIO = input (release)
+read_loop:
+    nop                    side 0 [2]  ; SWCLK low — target drives + settles
+    in pins, 1             side 1 [0]  ; SWCLK rising, sample (target stable)
+    jmp x-- read_loop      side 1 [1]  ; SWCLK still high — fan out delay
+    push                               ; ISR → RX FIFO
+    jmp start

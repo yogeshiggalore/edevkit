@@ -47,6 +47,7 @@ static const struct device *const g_piodev = DEVICE_DT_GET(PIODEV_NODE);
 #include <pico/bootrom.h>
 
 #include "toggle.pio.h"
+#include "probe_swd.pio.h"
 
 #define EDEV_REBOOT_MAGIC_BAUD 1200u
 
@@ -206,6 +207,138 @@ static int setup_pio(void)
 	return 0;
 }
 
+/* --------------------------------------------------------------------
+ * Test 3: load our actual probe_swd.pio's write_bits and capture the
+ * SWDIO bits it drives with a fast-sampling reader SM. Compares the
+ * captured pattern against the expected 0xA5 (DPIDR header LSB-first).
+ * -------------------------------------------------------------------- */
+
+#define WT_SWCLK_PIN 4u		/* GP4, free in this test */
+#define WT_SWDIO_PIN 5u		/* GP5, free in this test */
+
+static int run_write_test(void)
+{
+	PIO pio = pio_rpi_pico_get_pio(g_piodev);
+	size_t writer_sm, reader_sm;
+
+	if (pio_rpi_pico_allocate_sm(g_piodev, &writer_sm)) {
+		LOG_ERR("writer sm allocate failed");
+		return -1;
+	}
+	if (pio_rpi_pico_allocate_sm(g_piodev, &reader_sm)) {
+		LOG_ERR("reader_fast sm allocate failed");
+		return -1;
+	}
+
+	if (!pio_can_add_program(pio, &probe_swd_program)) {
+		LOG_ERR("probe_swd won't fit alongside the other programs");
+		return -1;
+	}
+	uint sw_off = pio_add_program(pio, &probe_swd_program);
+
+	if (!pio_can_add_program(pio, &reader_fast_program)) {
+		LOG_ERR("reader_fast won't fit");
+		return -1;
+	}
+	uint rd_off = pio_add_program(pio, &reader_fast_program);
+
+	/* --- writer config (matches our SWD driver's sm_configure) --- */
+	pio_sm_config wc = probe_swd_program_get_default_config(sw_off);
+
+	sm_config_set_sideset_pins(&wc, WT_SWCLK_PIN);
+	sm_config_set_out_pins(&wc, WT_SWDIO_PIN, 1);
+	sm_config_set_in_pins(&wc, WT_SWDIO_PIN);
+	sm_config_set_set_pins(&wc, WT_SWDIO_PIN, 1);
+	sm_config_set_out_shift(&wc, true, true, 32);
+	sm_config_set_in_shift(&wc, true, false, 32);
+	sm_config_set_clkdiv(&wc, 65535.0f);
+	/* No wrap set — write_bits/read_bits use explicit jmp 0. */
+
+	pio_gpio_init(pio, WT_SWCLK_PIN);
+	pio_gpio_init(pio, WT_SWDIO_PIN);
+	hw_clear_bits(&pads_bank0_hw->io[WT_SWCLK_PIN],
+		      PADS_BANK0_GPIO0_ISO_BITS);
+	hw_clear_bits(&pads_bank0_hw->io[WT_SWDIO_PIN],
+		      PADS_BANK0_GPIO0_ISO_BITS);
+	pio_sm_set_consecutive_pindirs(pio, writer_sm, WT_SWCLK_PIN, 1, true);
+
+	pio_sm_init(pio, writer_sm, sw_off, &wc);
+	pio_sm_clear_fifos(pio, writer_sm);
+
+	/* --- reader_fast config: sample SWDIO every PIO cycle --- */
+	pio_sm_config rc = reader_fast_program_get_default_config(rd_off);
+
+	sm_config_set_in_pins(&rc, WT_SWDIO_PIN);
+	sm_config_set_in_shift(&rc, true /*right*/, true /*autopush*/, 32);
+	sm_config_set_clkdiv(&rc, 65535.0f);	/* same clock as writer */
+
+	pio_sm_init(pio, reader_sm, rd_off, &rc);
+	pio_sm_clear_fifos(pio, reader_sm);
+
+	pio_sm_set_enabled(pio, reader_sm, true);
+	pio_sm_set_enabled(pio, writer_sm, true);
+
+	/* Build opcode for write_bits(data=0xA5, n=8) — same encoding our
+	 * SWD driver uses: bits 0..7 = absolute PC (sw_off + write_bits_off),
+	 * bits 8..12 = count-1, bits 13..31 = low 19 data bits. */
+	uint8_t func = (uint8_t)(sw_off + probe_swd_offset_write_bits);
+	uint32_t data = 0xA5u;
+	uint32_t opcode = (uint32_t)func
+			| ((uint32_t)(8u - 1u) << 8)
+			| ((data & 0x7FFFFu) << 13);
+
+	LOG_INF("write-test: pushing opcode=0x%08x (func=0x%02x data=0xA5 n=8)",
+		(unsigned)opcode, (unsigned)func);
+	pio_sm_put_blocking(pio, writer_sm, opcode);
+
+	/* Wait long enough for 8 SWD bits + park to complete. At PIO 2288 Hz
+	 * and 6 cycles per SWD bit, 8 bits = 8 × 6 / 2288 = 21 ms. Add a
+	 * generous margin. */
+	k_sleep(K_MSEC(200));
+
+	pio_sm_set_enabled(pio, reader_sm, false);
+	pio_sm_set_enabled(pio, writer_sm, false);
+
+	/* Drain reader RX and print the bit stream the reader captured.
+	 * Each push is 32 bits = 32 samples. We expect ~6 samples per SWD
+	 * bit, so 8 bits ≈ 48 samples = 1 push + a partial. */
+	LOG_INF("write-test: draining captured samples...");
+	uint32_t pushes = 0;
+	uint32_t high = 0, low = 0;
+
+	while (!pio_sm_is_rx_fifo_empty(pio, reader_sm)) {
+		uint32_t v = pio_sm_get(pio, reader_sm);
+
+		LOG_INF("  capture[%u] = 0x%08x", (unsigned)pushes,
+			(unsigned)v);
+		pushes++;
+		for (int i = 0; i < 32; i++) {
+			if (v & (1u << i)) {
+				high++;
+			} else {
+				low++;
+			}
+		}
+	}
+	LOG_INF("write-test: %u pushes captured, high=%u low=%u",
+		pushes, high, low);
+
+	if (pushes == 0) {
+		LOG_ERR("write-test: no samples — writer or reader didn't run");
+		return -1;
+	}
+	if (high == 0) {
+		LOG_ERR("write-test: SWDIO never went HIGH — out pins broken");
+		return -1;
+	}
+	if (low == 0) {
+		LOG_ERR("write-test: SWDIO never went LOW — out pins broken");
+		return -1;
+	}
+	LOG_INF("write-test: writer produced HIGH and LOW samples ✓");
+	return 0;
+}
+
 static bool read_pad_raw(uint pin)
 {
 	/* SIO GPIO_IN reflects the actual pad level regardless of which
@@ -262,6 +395,9 @@ int main(void)
 
 	uint32_t expected = 357;	/* 71.4 Hz × 5 sec ≈ 357 transitions */
 	int32_t diff = (int32_t)transitions - (int32_t)expected;
+
+	/* Test 3: load probe_swd.pio and capture what write_bits emits. */
+	run_write_test();
 
 	if (transitions < 10) {
 		LOG_ERR("PIO output appears DEAD (no transitions)");

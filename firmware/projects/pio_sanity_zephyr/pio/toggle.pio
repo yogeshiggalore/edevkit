@@ -39,3 +39,18 @@
     in pins, 1 [31]
     push noblock
 .wrap
+
+; --------------------------------------------------------------------
+; reader_fast — sample IN pin every PIO cycle, autopush at threshold 32.
+;
+; Used in concert with our actual probe_swd.pio's write_bits to capture
+; exactly what SWDIO sees during a write. With both SMs at the same PIO
+; clock and write_bits taking 6 cycles per SWD bit, reader_fast gets ~6
+; samples per SWD bit.
+; --------------------------------------------------------------------
+
+.program reader_fast
+
+.wrap_target
+    in pins, 1
+.wrap
