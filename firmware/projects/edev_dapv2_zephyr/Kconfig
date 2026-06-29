@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# edev_dapv2 Zephyr port — application Kconfig.
+#
+# We reuse the sample USBD helper from samples/subsys/usb/common/. The Zephyr
+# upstream policy is that the SAMPLE_USBD_* symbols are sample-scope only — for
+# the long-term port we should mint our own EDEV_USBD_* symbols and helper. For
+# the M1 scaffold we follow the same shortcut the upstream DAP sample uses.
+
+source "samples/subsys/usb/common/Kconfig.sample_usbd"
+
+source "Kconfig.zephyr"

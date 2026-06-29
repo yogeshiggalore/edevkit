@@ -1,0 +1,39 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * edev_dapv2 (Zephyr port) — board overlay for Raspberry Pi Pico 2 (RP2350A,
+ * Cortex-M33 cores).
+ *
+ * Wires:
+ *   - USB CDC ACM as the Zephyr console (replaces UART0 console default)
+ *   - LED alias to the on-board GPIO25 LED (heartbeat)
+ *   - Reserves SWD pins (GPIO2/3) and JTAG pins (GPIO4/5) for later milestones;
+ *     no driver is attached yet — driver bindings land with the swdp_pio_rpi
+ *     driver in M4.
+ */
+
+/ {
+	chosen {
+		zephyr,console = &cdc_acm_uart0;
+		zephyr,shell-uart = &cdc_acm_uart0;
+	};
+
+	aliases {
+		led-status = &led0;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		led0: led_0 {
+			gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;
+			label = "On-board heartbeat LED";
+		};
+	};
+};
+
+&zephyr_udc0 {
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "edev_dapv2 CDC log";
+	};
+};
