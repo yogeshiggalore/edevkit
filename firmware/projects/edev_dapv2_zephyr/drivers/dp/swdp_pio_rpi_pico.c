@@ -92,13 +92,13 @@ static inline void drain_rx(PIO pio, uint sm)
 	}
 }
 
-static void swd_write_n(const struct device *dev, uint32_t data, uint8_t n)
+static void swd_write_n_func(const struct device *dev, uint8_t func_offset,
+			     uint32_t data, uint8_t n)
 {
 	const struct swdp_pio_config *cfg = dev->config;
 	struct swdp_pio_data *d = dev->data;
 	PIO pio = pio_rpi_pico_get_pio(cfg->piodev);
-	uint32_t op = pio_opcode(d->sm_offset, probe_swd_offset_write_bits,
-				 n, data);
+	uint32_t op = pio_opcode(d->sm_offset, func_offset, n, data);
 
 	/* RTOS-vs-bare-metal: the bare-metal pico-sdk firmware was never
 	 * preempted between the two put_blocking() calls. Under Zephyr a
@@ -109,11 +109,34 @@ static void swd_write_n(const struct device *dev, uint32_t data, uint8_t n)
 	 * IRQs across the pair so the second put_blocking() is guaranteed to
 	 * follow the first before the SM can stall. */
 	unsigned int key = irq_lock();
+
 	pio_sm_put_blocking(pio, d->sm, op);
 	if (n > 19) {
 		pio_sm_put_blocking(pio, d->sm, data >> 19);
 	}
 	irq_unlock(key);
+}
+
+/* Regular write: parks SWDIO HIGH + SWCLK LOW at end. Use for chunks of a
+ * write sequence that will be followed by another write (e.g. SWJ_Sequence
+ * line resets). */
+static inline void swd_write_n(const struct device *dev, uint32_t data,
+			       uint8_t n)
+{
+	swd_write_n_func(dev, probe_swd_offset_write_bits, data, n);
+}
+
+/* Release-at-end write: drives SWDIO Hi-Z while SWCLK is STILL HIGH after
+ * the last bit, then drops SWCLK. Use at write→read transitions so the
+ * target sees the SWCLK falling edge of the turnaround AFTER host has
+ * already released SWDIO — bitbang's pin_swdio_out_disable + pin_swclk_clr
+ * pattern. WITHOUT this, the target sees SWCLK falling while we're still
+ * asserting SWDIO HIGH and interprets the turnaround as host still
+ * driving, which corrupts the next ACK phase. */
+static inline void swd_write_n_release(const struct device *dev,
+				       uint32_t data, uint8_t n)
+{
+	swd_write_n_func(dev, probe_swd_offset_write_bits_release, data, n);
 }
 
 static uint32_t swd_read_n(const struct device *dev, uint8_t n)
@@ -305,7 +328,18 @@ static int api_transfer(const struct device *dev, uint8_t request,
 	uint8_t ack;
 
 	for (int attempt = 0; attempt < 8; attempt++) {
-		swd_write_n(dev, header, 8);
+		/* Header → turnaround → ACK is the only write→read transition
+		 * in a SWD transaction. Use the RELEASE variant so SWDIO is
+		 * Hi-Z when SWCLK falls at the turnaround edge — same pattern
+		 * as bit-bang's pin_swdio_out_disable + pin_swclk_clr.
+		 *
+		 * Note: empirically this alone does NOT fix the FAULT-on-first-
+		 * DPIDR symptom on the nRF52840 target — see SMOKE_TEST notes.
+		 * The release pattern matches bit-bang's wire ordering but
+		 * something *else* about our PIO-driven SWD wire trips the
+		 * target. Further investigation needs a logic analyser.
+		 */
+		swd_write_n_release(dev, header, 8);
 		swd_clock_idle_n(dev, turnaround);
 
 		ack = (uint8_t)swd_read_n(dev, 3);

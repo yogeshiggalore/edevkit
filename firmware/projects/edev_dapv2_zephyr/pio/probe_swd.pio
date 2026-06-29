@@ -42,6 +42,26 @@ write_loop:
     set pins, 1            side 0      ; park SWDIO high, SWCLK low
     jmp start
 
+; --------------------------------------------------------------------
+; write_bits_release — same drive sequence as write_bits, but at the end
+; releases SWDIO BEFORE dropping SWCLK. This mirrors bitbang's `pin_swdio
+; _out_disable` before `pin_swclk_clr` (sw_transfer line 325-326). Use
+; ONLY at write→read transitions (the 8-bit header before turnaround,
+; the parity bit before idle cycles that lead to a read, etc.). Mid-
+; sequence write chunks (SWJ_Sequence line reset, etc.) keep using
+; write_bits so SWDIO never goes Hi-Z between consecutive writes.
+; --------------------------------------------------------------------
+
+public write_bits_release:
+    out x, 5
+    set pindirs, 1
+write_rel_loop:
+    out pins, 1            side 0 [2]
+    jmp x-- write_rel_loop side 1 [2]  ; final SWCLK is HIGH after last bit
+    set pindirs, 0         side 1      ; SWDIO → Hi-Z, SWCLK STAYS HIGH (1 cyc)
+    nop                    side 0      ; SWCLK falls
+    jmp start
+
 public read_bits:
     out x, 5                           ; count - 1
     set pindirs, 0         side 0      ; SWDIO = input (release)
