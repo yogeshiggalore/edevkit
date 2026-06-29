@@ -156,6 +156,9 @@ static void sm_configure(const struct device *dev)
 		div = 65535.0f;
 	}
 	sm_config_set_clkdiv(&c, div);
+	LOG_INF("sm_configure: swd=%u Hz sys=%u Hz div=%d.%03d",
+		(unsigned)d->clock_hz, (unsigned)sys_hz,
+		(int)div, (int)((div - (int)div) * 1000.0f));
 
 	pio_gpio_init(pio, cfg->clk_gpio.pin);
 	pio_gpio_init(pio, cfg->dio_gpio.pin);
@@ -232,6 +235,8 @@ static inline uint8_t parity4(uint8_t v)
 	return (uint8_t)(__builtin_popcount(v & 0x0Fu) & 1u);
 }
 
+static atomic_t s_xfer_count;
+
 static int api_transfer(const struct device *dev, uint8_t request,
 			uint32_t *data, uint8_t idle_cycles, uint8_t *response)
 {
@@ -256,6 +261,11 @@ static int api_transfer(const struct device *dev, uint8_t request,
 		swd_clock_idle_n(dev, turnaround);
 
 		ack = (uint8_t)swd_read_n(dev, 3);
+
+		if (atomic_inc(&s_xfer_count) < 8) {
+			LOG_INF("xfer req=0x%02x hdr=0x%02x ack=0x%x",
+				request, header, ack);
+		}
 
 		if (ack == 0x1u) {
 			if (is_read) {

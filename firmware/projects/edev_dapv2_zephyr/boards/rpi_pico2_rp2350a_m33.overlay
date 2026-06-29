@@ -33,10 +33,9 @@
 };
 
 /*
- * SWD Debug Port — PIO-driven (M3+). Sits as a child of pio1 (PIO0 is left
- * free for a future cyw43_arch-style sidecar; the upstream pico-sdk firmware
- * uses PIO1 for the same reason). Pin assignments match probe_pins.h in the
- * pico-sdk project: SWCLK = GPIO2, SWDIO = GPIO3.
+ * SWD Debug Port — PIO-driven. Sits as a child of pio1 (PIO0 left free).
+ * Pin assignments match probe_pins.h in the pico-sdk project: SWCLK=GP2,
+ * SWDIO=GP3.
  */
 &pio1 {
 	status = "okay";
