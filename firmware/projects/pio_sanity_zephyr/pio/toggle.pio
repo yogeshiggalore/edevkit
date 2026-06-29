@@ -1,0 +1,41 @@
+; SPDX-License-Identifier: MIT
+;
+; toggle.pio — minimum-viable PIO sanity test for Zephyr on RP2350.
+;
+; Drives one GPIO pin alternately HIGH and LOW via side-set, at a frequency
+; chosen so a Zephyr main-loop poll can observe the transitions without
+; needing any external instrument. Each phase is 32 PIO cycles (16 + 16),
+; total period = 64 PIO cycles. With sys_clk=150 MHz and clkdiv=65535 the
+; PIO ticks at ~2.29 kHz, giving a ~18 Hz toggle (~28 ms period).
+;
+; Use:
+;   poll the pad input (via Zephyr GPIO_GET or pico-sdk gpio_get) every
+;   ~5 ms; you should see the pin alternate HIGH/LOW with several reads
+;   per phase.
+
+.program toggle_test
+.side_set 1
+
+.wrap_target
+    nop  side 0 [15]
+    nop  side 0 [15]
+    nop  side 1 [15]
+    nop  side 1 [15]
+.wrap
+
+; --------------------------------------------------------------------
+; reader.pio — sample a GPIO via PIO `in pins`, push to RX FIFO.
+;
+; Used to validate the PIO INPUT path (which is where our SWD driver
+; suspects the bug). Runs at slow speed (clkdiv 65535) so the host can
+; drain the RX FIFO without overflow. Each iteration samples 1 bit and
+; pushes — host reads, expects to see the toggle pattern that the
+; toggle_test SM is driving on the same pin.
+; --------------------------------------------------------------------
+
+.program reader
+
+.wrap_target
+    in pins, 1 [31]
+    push noblock
+.wrap
