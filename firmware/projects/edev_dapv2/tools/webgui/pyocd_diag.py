@@ -409,8 +409,11 @@ def _full_dp_wake(session):
     except Exception:
         # SWJ_Sequence support is mandatory in CMSIS-DAP v1/v2 but be
         # defensive — if the probe truncates or refuses, we still want
-        # the standard dp.connect() fallback to run below.
-        return False
+        # the standard dp.connect() fallback to run below. (FIX: was
+        # `return False` here, which bypassed dp.connect() and left the
+        # caller's DP completely un-woken on probes whose swj_sequence
+        # path is finicky — including the Zephyr port.)
+        pass
 
     dp = session.board.target.dp
     try:
@@ -609,11 +612,22 @@ def _erase_ctrl_ap_sync(serial, frequency_hz):
 
         # Full DP wake (J-Link CORESIGHT_Configure equivalent). Required
         # to unstick chips that came up with a stale NVMC operation, a
-        # dormant DP, or sticky CTRL/STAT errors — otherwise CTRL-AP
-        # ERASEALL writes silently no-op and ERASEALLSTATUS sticks at
-        # busy. Without this, a previously-aborted erase makes the chip
-        # appear bricked from the host's perspective.
+        # dormant DP, or sticky CTRL/STAT errors.
         _full_dp_wake(sess)
+
+        # Belt-and-suspenders: also call pyocd's standard dp.connect() and
+        # power_up_debug() since the Zephyr probe's swj_sequence path used
+        # by _full_dp_wake is finicky and may silently leave the DP un-woken.
+        # This is what /api/info (via _run_diag_sync) does and reliably
+        # enumerates the nRF5340's AP#2 / AP#3 CTRL-APs.
+        try:
+            dp.connect()
+        except Exception:
+            pass
+        try:
+            dp.power_up_debug()
+        except Exception:
+            pass
 
         # Find every Nordic CTRL-AP. Remember the IDR for later family ID.
         ctrl_aps = []          # list of AP indices
