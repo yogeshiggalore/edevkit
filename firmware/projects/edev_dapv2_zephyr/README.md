@@ -18,11 +18,13 @@ The pico-sdk implementation we already shipped uses a **PIO-driven** SWD bit-ban
 
 | # | Goal | State |
 |---|------|-------|
-| **M1** | Board boots; USB CDC ACM console works; LED heartbeat at 1 Hz | ✅ builds, untested on HW |
-| M2 | DAP subsystem enabled with upstream `swdp_bitbang` placeholder; probe-rs lists the device | pending |
-| M3 | `swdp_pio_rpi_pico` driver shipped; SWD bit-bang via PIO | pending |
-| M4 | Diff vs pico-sdk dispatcher — patch in posted-AP-read pipeline + SWCLK keep-alive | pending |
-| M5 | Validate end-to-end against locked nRF5340 (Ring Pro) | pending |
+| **M1** | Board boots; USB CDC ACM console works; LED heartbeat at 1 Hz | ✅ builds |
+| **M2** | DAP subsystem enabled with upstream `swdp_bitbang` placeholder | ✅ builds |
+| **M3** | `swdp_pio_rpi_pico` driver shipped; SWD bit-bang via PIO at 25 MHz | ✅ builds |
+| **M4** | Diff vs pico-sdk dispatcher — see [NOTES.md](NOTES.md). Conclusion: upstream is sufficient; no patches needed. | ✅ |
+| **M5** | First-power-on procedure documented in [BRINGUP.md](BRINGUP.md). Hardware test pending. | 📋 needs hardware |
+| **M6** | Identity customised: VID=0x2E8A, PID=0x000C, MS OS 2.0 BOS with CMSIS-DAP v2 GUID, bcdDevice=0x0220 (probe-rs gate), hwinfo serial | ✅ |
+| **M7** | pioasm auto-runs at CMake configure time; checked-in header is now build-fallback only | ✅ |
 
 ## Build
 

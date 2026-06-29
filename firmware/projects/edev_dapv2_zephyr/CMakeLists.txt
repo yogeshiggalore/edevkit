@@ -17,6 +17,48 @@ project(edev_dapv2_zephyr LANGUAGES C)
 # wires the include directory.
 include(${ZEPHYR_BASE}/samples/subsys/usb/common/common.cmake)
 
+# --------------------------------------------------------------------------
+# pioasm — autogenerate probe_swd.pio.h from the .pio source at configure
+# time. The pico-sdk vendors pioasm; we use whichever we can find in this
+# order: (1) PIOASM env var, (2) system pioasm on PATH, (3) the pico-sdk
+# install at ~/.pico-sdk/tools/2.2.0/pioasm/pioasm. If none works, fall back
+# to the header that is checked into pio/ so a build is still possible on a
+# machine without pioasm.
+# --------------------------------------------------------------------------
+set(PIO_SRC ${CMAKE_CURRENT_SOURCE_DIR}/pio/probe_swd.pio)
+set(PIO_HDR ${CMAKE_CURRENT_BINARY_DIR}/zephyr/include/generated/probe_swd.pio.h)
+
+find_program(PIOASM_EXECUTABLE
+    NAMES pioasm
+    HINTS
+        $ENV{PIOASM}
+        $ENV{PICO_SDK_PATH}/tools/pioasm
+        $ENV{HOME}/.pico-sdk/tools/2.2.0/pioasm
+        $ENV{HOME}/.pico-sdk/tools/2.1.1/pioasm
+    DOC "Path to the pioasm executable from pico-sdk"
+)
+
+if(PIOASM_EXECUTABLE)
+    message(STATUS "pioasm: ${PIOASM_EXECUTABLE} (regenerate ${PIO_HDR} from .pio source)")
+    add_custom_command(
+        OUTPUT ${PIO_HDR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/zephyr/include/generated
+        COMMAND ${PIOASM_EXECUTABLE} -o c-sdk ${PIO_SRC} ${PIO_HDR}
+        DEPENDS ${PIO_SRC}
+        COMMENT "pioasm: ${PIO_SRC} -> probe_swd.pio.h"
+        VERBATIM
+    )
+    add_custom_target(probe_swd_pio_header DEPENDS ${PIO_HDR})
+    add_dependencies(app probe_swd_pio_header)
+    set(PIO_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/zephyr/include/generated)
+else()
+    message(WARNING
+        "pioasm not found — falling back to checked-in pio/probe_swd.pio.h. "
+        "Edits to probe_swd.pio will NOT be picked up automatically. "
+        "Set PIOASM env var or install pico-sdk to enable regeneration.")
+    set(PIO_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/pio)
+endif()
+
 target_sources(app PRIVATE
     src/main.c
     drivers/dp/swdp_pio_rpi_pico.c
@@ -24,5 +66,5 @@ target_sources(app PRIVATE
 
 target_include_directories(app PRIVATE
     src
-    pio
+    ${PIO_INCLUDE_DIR}
 )

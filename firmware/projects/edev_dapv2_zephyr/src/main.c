@@ -19,11 +19,26 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/usb/bos.h>
+#include <zephyr/usb/msos_desc.h>
 #include <zephyr/usb/usbd.h>
 
 #include <sample_usbd.h>
 
 LOG_MODULE_REGISTER(edev_dapv2, LOG_LEVEL_INF);
+
+/* MS OS 2.0 BOS — pulled in *after* LOG_MODULE_REGISTER because the static
+ * msosv2_to_host_cb in the header uses LOG_INF. The CMSIS-DAP v2 standard
+ * device interface GUID it advertises is what makes Windows auto-bind WINUSB
+ * (and what makes probe-rs / pyocd / OpenOCD discover the probe). */
+#include "msosv2.h"
+
+/* probe-rs gates CMSIS-DAP v2 discovery on bcdDevice >= 0x0220 — see the
+ * memory note reference_probe_rs_bcd_device_gate. The Zephyr USBD default
+ * uses Zephyr's kernel version; override at runtime to 0x0220 to satisfy the
+ * gate without forking the framework. */
+#define EDEV_DAPV2_BCD_DEVICE	0x0220
 
 #define LED_NODE	DT_ALIAS(led_status)
 #define HEARTBEAT_MS	1000
@@ -48,7 +63,19 @@ static int setup_usb(void)
 		return -ENODEV;
 	}
 
-	int ret = usbd_init(ctx);
+	int ret = usbd_add_descriptor(ctx, &bos_vreq_msosv2);
+	if (ret) {
+		LOG_ERR("Failed to add MS OS 2.0 BOS: %d", ret);
+		return ret;
+	}
+
+	ret = usbd_device_set_bcd_device(ctx, EDEV_DAPV2_BCD_DEVICE);
+	if (ret) {
+		LOG_WRN("Could not set bcdDevice: %d (probe-rs may not list)",
+			ret);
+	}
+
+	ret = usbd_init(ctx);
 	if (ret) {
 		LOG_ERR("usbd_init failed: %d", ret);
 		return ret;
