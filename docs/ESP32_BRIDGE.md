@@ -18,6 +18,53 @@ edevkit's app-side feature set.
 
 ---
 
+## Pico-side firmware status (read this first)
+
+The bridge talks to a Pico running the `edev_dapv2_zephyr` firmware. The
+currently-shipping release is **`v0.1-step5`** (`feat/edev_dapv2_zephyr`
+branch, tip `183833b`). Develop against this — both the test harness
+(`firmware/projects/edev_dapv2_zephyr/tools/test_nrf53_vendor_cmds.py`)
+and the wire-format expectations below assume v0.1-step5 semantics.
+
+**What works today on v0.1-step5:**
+
+- Full standard CMSIS-DAP v2 surface (DAP_Info, Connect, Transfer,
+  Block, SWJ_*, WriteAbort, …) — unchanged from upstream Zephyr
+- Vendor cmd `0x84` `NRF53_RECOVER` — full Nordic unlock
+- Vendor cmd `0x85` `NRF53_ERASE` — CTRL-AP ERASEALL
+- Vendor cmd `0x8A` `NRF53_UICR_PROGRAM_APP` — host-side App UICR
+- Vendor cmd `0x8B` `NRF53_UICR_PROGRAM_NET` — on-target Net stub UICR
+
+**Not yet implemented (return `ID_DAP_INVALID = 0xFF`):**
+
+- Vendor cmd `0x86` `NRF53_FLASH_WRITE_NET` — pending step 6
+- Vendor cmd `0x87` `NRF53_FLASH_WRITE_APP` — pending step 7
+- Vendor cmd `0x88` `NRF53_READ_MEM` (with VC_CORERESET fix) — pending step 8
+- Vendor cmd `0x89` `NRF53_TARGET_INFO` — pending
+- The pico-sdk **legacy** vendor commands described in older drafts
+  (CORTEX_M_HALT 0x80, CORTEX_M_DUMP 0x8A, VENDOR_NRF_RESET 0x83,
+  SWCLK_KEEPALIVE_ON/OFF 0x90/0x91) — **none of these are in the
+  Zephyr port**; the doc's older Appendix G.3 entries are historical.
+  See the corrected G.3 below.
+
+**Implication for the bridge:**
+
+- Phase 2 (probe + target info), Phase 4 (erase + recover): fully
+  doable today against v0.1-step5 using vendor cmds `0x84`/`0x85` +
+  standard DAP_Info / DAP_Transfer.
+- Phase 3 (flash read): doable today using standard DAP_Transfer +
+  DAP_TransferBlock, with the ESP32 owning the AHB-AP-13-op batching
+  workaround (§15.6). Migrates to vendor cmd `0x88` when step 8 ships.
+- Phase 5 (flash write): two paths — (a) wait for vendor cmds
+  `0x86`/`0x87`, or (b) drive a CMSIS Flash Algo RAM loader from the
+  ESP32 today using standard DAP_Transfer. The latter is more work
+  on the ESP32 side but works against v0.1-step5.
+
+The full release notes live at
+`firmware/projects/edev_dapv2_zephyr/releases/v0.1-step5/RELEASE.md`.
+
+---
+
 ## 0. Quick start (zero → BLE advertising in ~15 minutes)
 
 If you just want to get hands-on first and read the architecture later, do
@@ -901,21 +948,33 @@ having called `reply()` at least once.
 
 ## 12. New commands — edevkit Phase 2-5 additions
 
-The user's command list, mapped onto the protocol:
+The user's command list, mapped onto the protocol layers. The **BLE TLV
+RPC** is between phone-app and ESP32; the **Pico-side command** is the
+USB CMSIS-DAP packet(s) the ESP32 sends to the probe.
 
-| Phase | User asks for | Status | Implementation |
+| Phase | App-side request | ESP32 → Pico (today, against v0.1-step5) | Future shortcut |
 |---|---|---|---|
-| 2 | Read **edev_dap info** | ✅ reuse `RPC_DAP_INFO` (0x0010) | Returns the Pico 2 W's `DAP_Info` fields verbatim — fw version, product, serial, caps, packet size. App displays as the "probe identity" panel. |
-| 2 | Read **target MCU info** | ✅ reuse `RPC_TARGET_INFO` (0x0015) | Returns DPIDR + CPUID. App decodes vendor/part from these. Optionally extend later with FICR.INFO.PART for Nordic (see §12.5 below). |
-| 3 | **Partial flash read** (addr + length) | ✅ reuse `RPC_READ_MEM` (0x0020) | App calls `READ_MEM(addr, len)` directly in a loop, len ≤ 4096 each call. |
-| 3 | **Full flash read** | ⚠ new high-level command `RPC_FLASH_READ_FULL` | See §12.1 — auto-detects flash size from target identity, streams the whole thing back. |
-| 4 | **Partial flash erase** (range) | ⚠ new `RPC_FLASH_ERASE_RANGE` | See §12.2 — page-aligned erase over a range using the on-target RAM loader's ERASE entry point. |
-| 4 | **Full flash erase** | ⚠ new `RPC_FLASH_ERASE_FULL` | See §12.3 — uses `RPC_ERASE_RECOVER` on Nordic; on other vendors, loops over `FLASH_ERASE_RANGE`. |
-| 4 | **Target MCU recovery** | ✅ reuse `RPC_ERASE_RECOVER` (0x0037) + `RPC_RECOVER` (0x0006) | The two paths: unlock-and-wipe (ERASE_RECOVER, Nordic CTRL-AP) vs. just re-establish the SWD link (RECOVER). |
-| 5 | **Partial flash write** (addr + bytes) | ⚠ new `RPC_FLASH_WRITE_RANGE` | See §12.4 — chunked WRITE_MEM with on-target loader for actual flash writes. |
-| 5 | **Full flash write** (hex/bin upload) | ⚠ new `RPC_FLASH_WRITE_FULL` | See §12.4 — multi-chunk upload, staged to external flash, then programmed page by page. |
+| 2 | Read **edev_dap info** (`RPC_DAP_INFO` 0x0010) | Standard `DAP_Info` (0x00) — works today ✅ | n/a |
+| 2 | Read **target MCU info** (`RPC_TARGET_INFO` 0x0015) | Standard `DAP_Transfer` reading DPIDR + CPUID — works today ✅ | Vendor cmd `0x89` `NRF53_TARGET_INFO` (pending) adds FICR.PART per family in one call |
+| 3 | **Partial flash read** (`RPC_READ_MEM` 0x0020) | Standard `DAP_Transfer` / `DAP_TransferBlock` with the ESP32-side AHB-AP-13-op batching (§15.6) ⚠️ | Vendor cmd `0x88` `NRF53_READ_MEM` (pending step 8) — also fixes the App-readback-0xFF post-reset bug (6a) by clearing VC_CORERESET |
+| 3 | **Full flash read** (`RPC_FLASH_READ_FULL` 0x0050) | Loop the partial read on the ESP32 side ⚠️ | Same vendor cmd `0x88` once shipped, with progress packets (step 9) |
+| 4 | **Partial flash erase** (`RPC_FLASH_ERASE_RANGE` 0x0052) | Compose from RAM loader's ERASE entry via `DAP_Transfer` ⚠️ — only for non-Nordic targets; for Nordic, partial erase usually isn't needed because RECOVER (0x84) is whole-chip | n/a (full-chip flow is the Nordic path) |
+| 4 | **Full flash erase** (`RPC_FLASH_ERASE_FULL` 0x0053) | Vendor cmd `0x85` `NRF53_ERASE` — works today ✅ | n/a |
+| 4 | **Target MCU recovery** (`RPC_ERASE_RECOVER` 0x0037) | Vendor cmd `0x84` `NRF53_RECOVER` — works today ✅ (full unlock: ERASEALL both cores + App UICR + Net UICR via on-target stub, one call) | n/a — already the shortcut |
+| 5 | **Partial flash write** (`RPC_FLASH_WRITE_RANGE` 0x0054) | Compose from RAM loader + `WRITE_MEM` `DAP_Transfer` ⚠️ | Vendor cmd `0x87` `NRF53_FLASH_WRITE_APP` (step 7) for App core; Net core uses vendor `0x86` (step 6) |
+| 5 | **Full flash write** (`RPC_FLASH_WRITE_FULL` 0x0055) | Multi-chunk: upload to ESP32 staging flash, then per-page program via RAM loader + standard `WRITE_MEM` ⚠️ | Same vendor cmds `0x86`/`0x87` once shipped |
 
-The four ⚠ rows are new opcodes (~50–200 LOC of dispatcher logic each).
+**Legend**: ✅ = no extra ESP32 work, just send the right packet.
+⚠️ = today the ESP32 owns the orchestration; future Pico vendor cmds
+will subsume it as a 1-call shortcut.
+
+**Practical takeaway for the bridge author:** start with the ✅ rows
+(Phase 2, Phase 4 erase + recover) — these need ~zero new code on the
+ESP32 because the Pico does all the work. Phase 3 (read) and Phase 5
+(write) need ESP32-side orchestration today; both will become single
+vendor commands as step 6/7/8 ship. Don't gate the ESP32 release on
+those — the host-driven path is well-understood and works against
+v0.1-step5.
 
 ### 12.1 `RPC_FLASH_READ_FULL` — 0x0050
 
@@ -2073,27 +2132,53 @@ Background: `project_uh_dapv2_caps_byte.md`.
 
 ### G.3 Vendor commands (DAP `0x80–0x9F`) the Pico exposes
 
-These are non-standard but supported by our Pico firmware. They are
-**shortcuts** for multi-DAP-packet sequences — using them saves USB
-round-trips. The ESP32 may use them or fall back to the standard primitives.
+Definitive vendor command table for the **`edev_dapv2_zephyr`** firmware.
+This supersedes any older draft that listed pico-sdk legacy commands —
+those (CORTEX_M_HALT/DUMP/REG_READ/RESUME, NRF_RESET, SWCLK_KEEPALIVE)
+are **NOT** in the Zephyr port. The Zephyr port re-uses the 0x80–0x9F
+space for the Nordic recover/erase/write/read primitives.
 
-| DAP cmd | Name | What it does | When to use |
-|---|---|---|---|
-| `0x80` | `VENDOR_CORTEX_M_HALT` | Halt the Cortex-M core (writes DHCSR with the debug key + C_HALT) | Replaces a multi-step DAP_Transfer; ~3× faster |
-| `0x81` | `VENDOR_CORTEX_M_RESUME` | Resume from halt | Same |
-| `0x82` | `VENDOR_CORTEX_M_REG_READ` | Read a single CPU register (R0..R15, xPSR via DCRSR/DCRDR) | Standard DAP_Transfer needs 4 packets; this is 1 |
-| `0x83` | `VENDOR_NRF_RESET` | nRF reset equivalent to `nrfjprog --reset` (`RESET` register, then resume) | Use instead of synthesizing AIRCR.SYSRESETREQ via DAP_Transfer |
-| `0x8A` | `VENDOR_CORTEX_M_DUMP` | Dump the full CPU state (regs + DHCSR + DFSR + DEMCR + CFSR + ...) | Useful for crash analysis. ~30 registers in one packet vs ~30 transfers. |
-| `0x90` | `VENDOR_SWCLK_KEEPALIVE_ON` | Start the PIO SWCLK keep-alive (5 kHz idle) | **Disabled in Zephyr port** — see §15.11. May return UNKNOWN. |
-| `0x91` | `VENDOR_SWCLK_KEEPALIVE_OFF` | Stop keep-alive | Same |
+| Cmd | Name | Status (v0.1-step5) | What it does | Wire response (bytes) |
+|---|---|---|---|---|
+| `0x84` | `NRF53_RECOVER`            | ✅ shipped | Full Nordic unlock — composes ERASEALL both cores, App UICR program, Net UICR via on-target stub | `[0x84, status, ap_count, u32 app_approt, u32 app_secure, u32 net_marker, u32 net_approt]` (19) |
+| `0x85` | `NRF53_ERASE`              | ✅ shipped | CTRL-AP IDR scan + ERASEALL each Nordic CTRL-AP found | `[0x85, status, ap_count]` (3) |
+| `0x86` | `NRF53_FLASH_WRITE_NET`    | ⏳ step 6 (returns `0xFF`) | Probe-side Net flash programming (direct AP#1 + Net NVMC, inline verify) | future |
+| `0x87` | `NRF53_FLASH_WRITE_APP`    | ⏳ step 7 (returns `0xFF`) | Probe-side App flash programming via RAM-loaded CMSIS Flash Algorithm | future |
+| `0x88` | `NRF53_READ_MEM`           | ⏳ step 8 (returns `0xFF`) | Direct AHB-AP read with `DEMCR.VC_CORERESET` clear (fixes the App-readback-0xFF bug 6a) | future |
+| `0x89` | `NRF53_TARGET_INFO`        | ⏳ later (returns `0xFF`) | Chip identification — DPIDR + AP_IDR + FICR.PART per family | future |
+| `0x8A` | `NRF53_UICR_PROGRAM_APP`   | ✅ shipped | Host-side App UICR.APPROTECT + SECUREAPPROTECT writes (CSW=0x23000002) | `[0x8A, status, u32 approtect, u32 secureapprotect]` (10) |
+| `0x8B` | `NRF53_UICR_PROGRAM_NET`   | ✅ shipped | On-target Net stub: programs Net UICR.APPROTECT from Net CPU side after CTRL-AP#3 RESET | `[0x8B, status, u32 sram_marker, u32 net_approtect]` (10) |
+| `0x80–0x83`, `0x8C–0x9F` | unused | (returns `0xFF`) | Reserved space; not handled by the Zephyr port | `[0xFF]` (1) |
 
-> The Zephyr port may not implement all of these yet. Use standard primitives
-> as fallback; on `UNKNOWN_COMMAND` response (header byte = the cmd, status =
-> 0xFF), drop back to spec-compliant DAP_Transfers.
+**Status byte values** (mirror of `nrf53_status_t` in `nrf53.h`):
 
-Background: `project_nrfjprog_reset_impl_2026_06_19.md`,
-`project_cortex_m_dump_2026_06_19.md`,
-`project_swclk_keepalive_pio_2026_06_19.md`.
+| status | meaning |
+|---|---|
+| `0` | OK |
+| `1` | WAIT — SWD WAIT-ACK retry budget exhausted |
+| `2` | FAULT — SWD ACK=FAULT (sticky bit set) |
+| `3` | NO_ACK — line dead or target debug domain off |
+| `4` | PROTO — driver / parity / framing error |
+| `5` | TIMEOUT — poll loop timeout |
+| `6` | ARGS — caller passed bad arguments |
+| `7` | NO_DEV — SWDP device not bound |
+| `8` | STUB_FAIL — Net stub didn't write the success marker |
+
+All multi-byte fields are **little-endian**.
+
+**Expected values for the magic readbacks** (on success):
+- `app_approtect`, `app_secureapprotect`, `net_approtect` → `0x50FA50FA`
+- `net_marker` → `0xDEADC0DE` (success) or `0xBADF00D5` (stub fault — PC + xPSR logged probe-side)
+
+**Migration path:** the bridge can be written today against the ✅-shipped
+commands plus standard DAP_Transfer for everything else. As step 6/7/8/9
+ship over subsequent releases, the bridge can replace its DAP_Transfer
+loops with the higher-level vendor commands — each migration is a
+1-call substitution.
+
+Background: `project_edev_dapv2_zephyr_v01_step5_release_2026_06_30.md`
+(the release this table reflects), `docs/NRF5340_ALGORITHMS.md` (algorithm
+spec), and `releases/v0.1-step5/RELEASE.md` (release notes).
 
 ### G.4 Nordic FICR / chip-ID addresses per family
 
