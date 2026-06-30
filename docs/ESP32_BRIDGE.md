@@ -3019,21 +3019,342 @@ These primitives are sufficient to compose:
   via DHCSR)
 - **Target peripheral configuration** (any AHB-AP-reachable register)
 
-### K.10 What pieces of nRF52840 support are NOT in v0.1.1-step5
+### K.10 What pieces of nRF52840 support are still bridge-composed (v0.1.7)
 
-Honest list of "you have to compose this yourself" items the ESP32
-bridge will own until subsequent Pico-side releases ship:
+Updated 2026-06-30. Most of K.10's original items have been
+subsumed by vendor cmds shipped in v0.1.2 through v0.1.7. What
+remains:
 
-- **AHB-AP-13-op batching** — the bridge must split long flash reads
-  into batches of ≤ 12 AHB-AP transactions with CTRL-AP soft-reset
-  between (§15.6). Future vendor cmd `0x88` (step 8) will subsume.
-- **CMSIS Flash Algo orchestration** — load loader to RAM, set
-  regs, run, poll halt, read result. Standard CMSIS-DAP only; no
-  shortcut yet. Future vendor cmd `0x87` (step 7) will subsume.
-- **UICR write as a vendor command** — for now the bridge writes
-  the NVMC sequence itself.  Future vendor cmd `0x8A` for nRF52
-  family is unplanned (nRF52 UICR is a single register, so the
-  composition is short).
+- **nRF52840 UICR write** — still composed bridge-side from
+  `0x8C WRITE_MEM` + `0x88 READ_MEM` polling the NVMC.READY
+  register (~5 calls). A future `0x8D NRF52_UICR_PROGRAM` would
+  trim the RTT count but is not blocking; bridge does it today.
+- **Multi-batch flash reads >15 words** — `0x88 NRF53_READ_MEM`
+  reads up to 15 words/call (USB-FS 64 B packet limit). For
+  bulk flash dump the bridge loops over batches itself. The
+  AHB-AP-13-op transaction-counter wall ([[reference_ap_transaction_counter_wall]])
+  is handled inside `0x88` — the bridge does NOT need to insert
+  CTRL-AP soft-resets between batches.
+- **Multi-batch flash writes >13 words** — same loop pattern for
+  `0x87 NRF53_FLASH_WRITE_APP`. The probe re-initializes NVMC
+  state on each call; no cross-call invariants to maintain.
 
 None of these block ESP32 development; they're efficiency wins for
 future releases.
+
+---
+
+## Appendix L — Per-cmd timing budgets + bridge progress strategy (v0.1.7)
+
+This appendix closes out **Step 9 of the original 10-step plan** —
+the "progress packets / WAIT-ACK / USB timeout" item. After running
+v0.1.7 against bench nRF5340 DK and nRF52840 hardware, the
+conclusion is:
+
+> **The probe does not need to emit intermediate progress packets.**
+> All long-running ops complete inside the host's USB bulk transfer
+> deadline at the values below. The BLE-side progress feedback is
+> purely a bridge concern (own timer + state machine).
+
+This appendix gives the bridge author the timing data needed to
+(a) set sensible USB bulk transfer timeouts on the ESP32 side, and
+(b) drive a "still working… T+Ns" BLE notification stream from the
+bridge's own clock.
+
+### L.1 Probe-side timing characteristics (firmware-internal, v0.1.7)
+
+What the probe firmware already does to keep itself sane during
+long ops — none of this requires bridge attention, but knowing it
+helps when reading log output:
+
+| Mechanism | Constant | Where | Purpose |
+|---|---|---|---|
+| WAIT-ACK retry budget | `DP_WAIT_RETRIES = 8` | `nrf53_dp.c` | In-protocol retry on AHB-AP WAIT; ~1 µs per retry at 25 MHz SWD → ~8 µs total overhead. Effectively zero against USB deadline. |
+| CTRL-AP ERASEALL deadline | `10000 ms / AP` | `nrf53_erase_all` | Two APs (App + Net) → worst case 20 s total. Actual on DK silicon: ~3 – 6 s. |
+| NVMC READY poll interval | `500 µs` | `nrf53_nvmc.c` | Word-level NVMC.READY poll; per-word op completes in microseconds. |
+| NVMC per-word timeout | `100 ms` | `nrf53_flash_write.c` | Defense-in-depth; never exceeded in practice. |
+| Net stub per-stage timeout | `100 ms` | `nrf53_stubs.c` | Each marker transition during Net UICR programming. |
+| DP power-up poll | `100 ms` | `nrf53_dp_power_up` | CSYSPWRUPACK + CDBGPWRUPACK wait. |
+| `k_msleep` between polls | Various | All long-poll loops | Yields to other Zephyr threads → USB stack stays responsive, no watchdog starvation, no priority inversion against `cmsis_dap_thread`. |
+
+The key invariant: **every long-poll loop in the nrf53 ops code
+yields to the Zephyr scheduler via `k_msleep` or `k_usleep`**, so
+USB SOFs / NAKs continue to be processed during the wait. The host
+sees a normal USB session that just happens to have a slow IN
+response — well within libusb's default 5-second bulk timeout
+when the bridge bumps it as recommended below.
+
+### L.2 Observed wall-clock timing — bench measurements
+
+Bench measurements taken 2026-06-30 against nRF5340 DK (chip ID
+`FA6418C89BAB3D36`) running the bench test harness. nRF52840
+column is the matching v0.1.1-step5 run. All times are wall-clock
+from cmd-OUT to response-IN over USB-FS.
+
+| Vendor cmd | Typical | Worst observed | Recommended bridge USB timeout |
+|---|---:|---:|---:|
+| `0x84 RECOVER` (nRF5340 only) | ~7 s | ~10 s | **30 s** |
+| `0x85 ERASE` nRF5340 (2 APs) | ~5 s | ~8 s | **15 s** |
+| `0x85 ERASE` nRF52840 (1 AP) | ~3 s | ~5 s | **10 s** |
+| `0x86 FLASH_WRITE_NET` (14 W) | ~15 ms | ~50 ms | **2 s** |
+| `0x87 FLASH_WRITE_APP` (13 W) | ~15 ms | ~50 ms | **2 s** |
+| `0x88 READ_MEM` (15 W) | ~10 ms | ~50 ms | **2 s** |
+| `0x89 TARGET_INFO` | ~5 ms | ~20 ms | **1 s** |
+| `0x8A UICR_PROGRAM_APP` | ~50 ms | ~200 ms | **5 s** |
+| `0x8B UICR_PROGRAM_NET` (stub) | ~300 ms | ~600 ms | **5 s** |
+| `0x8C WRITE_MEM` (12 W) | ~10 ms | ~50 ms | **2 s** |
+| Standard `DAP_Transfer` (pkts) | < 1 ms | ~5 ms | **1 s** |
+
+Bench timings are with the probe and target on the same host;
+USB-FS round-trip is dominated by chip-side work, not USB
+transport. A 30 s budget for `RECOVER` is **4×** the worst
+observed value — leaves headroom for slow silicon or production
+units with longer ERASEALL cycles (Ring Pro 351 hasn't been bench
+tested yet; see Appendix M for the acceptance procedure).
+
+### L.3 Bridge-side timeout configuration
+
+Use distinct timeouts per cmd class on the USB host side. The
+ESP32 USB host stack has its own per-transfer timeout that lives
+above libusb's default — set it to the values in column 4 above.
+
+```c
+// in bridge_rpc.c
+static const struct {
+    uint8_t vendor_cmd;
+    uint32_t usb_timeout_ms;
+} g_cmd_timeouts[] = {
+    {0x84, 30000},  // NRF53_RECOVER
+    {0x85, 15000},  // NRF53_ERASE
+    {0x86, 2000},   // NRF53_FLASH_WRITE_NET
+    {0x87, 2000},   // NRF53_FLASH_WRITE_APP
+    {0x88, 2000},   // NRF53_READ_MEM
+    {0x89, 1000},   // NRF53_TARGET_INFO
+    {0x8A, 5000},   // NRF53_UICR_PROGRAM_APP
+    {0x8B, 5000},   // NRF53_UICR_PROGRAM_NET
+    {0x8C, 2000},   // NRF53_WRITE_MEM
+    // Standard CMSIS-DAP cmds (0x00..0x7F): 1000 ms
+};
+```
+
+### L.4 Bridge-side progress notifications over BLE
+
+Two patterns to choose from. **Pattern A is recommended** —
+simpler, sufficient for the v0.1.x release. Pattern B is an
+optional v0.2+ extension if the BLE client wants finer feedback.
+
+#### Pattern A — Timer-driven BLE notifications (recommended)
+
+The bridge runs a `xTimerCreate` periodic timer (250 ms is fine)
+that fires while a long-running RPC is in flight. The timer
+handler emits a `TLV_PROGRESS` notification on the BLE TX
+characteristic:
+
+```c
+// In the bridge's RPC dispatcher, when starting a long op
+void rpc_start_long_op(uint16_t rpc_id, uint16_t seq) {
+    g_long_op.start_tick = xTaskGetTickCount();
+    g_long_op.rpc_id    = rpc_id;
+    g_long_op.seq       = seq;
+    g_long_op.budget_ms = lookup_budget_ms(rpc_id);
+    xTimerStart(g_long_op.progress_timer, 0);
+    // dispatch the USB transfer (blocking, in its own task)
+}
+
+// Timer fires every 250 ms
+static void progress_timer_cb(TimerHandle_t t) {
+    uint32_t elapsed_ms = pdTICKS_TO_MS(
+        xTaskGetTickCount() - g_long_op.start_tick);
+    uint8_t percent = (elapsed_ms * 100U) / g_long_op.budget_ms;
+    if (percent > 99) percent = 99;
+    ble_tlv_send_progress(g_long_op.seq, percent, elapsed_ms);
+}
+
+// Final completion path stops the timer + sends real response
+void rpc_complete_long_op(uint8_t status, ...) {
+    xTimerStop(g_long_op.progress_timer, 0);
+    ble_tlv_send_response(g_long_op.seq, status, ...);
+}
+```
+
+The 99 % cap prevents the bar from sitting at 100 % while the
+real response races to arrive.
+
+Wire format of the progress notification (proposed addition to
+the TLV protocol):
+
+```
+type   = 0x0A  TLV_PROGRESS
+length = 6
+data   = [seq u16_le, percent u8, elapsed_ms u24_le]
+status = (none — informational only)
+```
+
+The BLE client treats this as a hint, not a state transition.
+The authoritative "operation complete" signal remains the
+TLV response packet matched by `seq`.
+
+#### Pattern B — Probe-side intermediate packets (NOT RECOMMENDED)
+
+In principle the probe could chunk a long op into N sub-ops and
+emit one response per chunk. This would require:
+
+1. A new "command in progress" packet type on the CMSIS-DAP bulk
+   IN endpoint (which would break compatibility with stock
+   CMSIS-DAP host tools — they'd see unexpected packets).
+2. Splitting the firmware's ops to be re-entrant / resumable
+   (today they're blocking single calls).
+3. A new bridge-side state machine to receive partial responses.
+
+The win would be real-time chip-side progress (e.g., "1.2 MB of
+1.5 MB written"). The cost is invasive firmware changes and
+incompatibility with `probe-rs`, `pyocd`, and other standard
+CMSIS-DAP clients. **Not worth it** for the v0.1.x release;
+Pattern A delivers good-enough UX without breaking anything.
+
+### L.5 What the bridge should NOT do
+
+| Anti-pattern | Why it's wrong |
+|---|---|
+| Set a single 30 s timeout for all USB transfers | One in-flight `0x85 ERASE` blocks the bridge from detecting an actually-wedged probe for 30 s on every cmd. |
+| Cancel an in-flight USB transfer to "speed up" | The probe has no way to abort; you'll lose response framing and need to re-enumerate. |
+| Send a second cmd before the first response | CMSIS-DAP is strict request/response; the probe doesn't queue, the second cmd will be dropped or merged with the response. Use the `seq` field's single-flight discipline (§10). |
+| Show a determinate progress bar (0–100 %) tied to real chip-side work | The probe doesn't report partial progress. Use elapsed-time-vs-budget as a proxy (Pattern A). |
+
+### L.6 Summary — what Step 9 ends up being
+
+The original Step 9 in the implementation plan was loosely
+"progress packets / WAIT-ACK / USB timeout."
+
+What actually ended up being needed:
+1. **WAIT-ACK** — handled probe-side; in-protocol DP retry budget
+   of 8 covers all observed cases. No bridge work needed.
+2. **USB timeout** — handled bridge-side; the per-cmd timeout
+   table in L.3 above. Doc-only deliverable.
+3. **Progress packets** — Pattern A (bridge-side timer-driven
+   notifications) is the recommended approach. No firmware
+   changes required; the bridge can implement at its own pace.
+
+**No probe firmware changes are required for Step 9.** The v0.1.7
+release is the final probe firmware for this phase of the plan.
+
+
+---
+
+## Appendix M — Ring Pro 351 acceptance procedure (Step 10)
+
+This appendix closes out the last item in the original 10-step
+plan: end-to-end acceptance against a Ultrahuman Ring Pro 351
+(nRF5340) production target. **Pending bench execution; document
+shipped so the procedure runs in one command when a Ring is on
+bench.**
+
+### M.1 What this proves
+
+When this acceptance passes against a production Ring, the
+v0.1.7 probe firmware is certified for production-Nordic-target
+debug + recover workflows. Everything tested on the bench
+nRF5340 DK (DK silicon, 11/11 PASS) is reproduced against a real
+sealed wearable. This is the bar for "release the probe firmware
+to production use."
+
+### M.2 Hardware required
+
+- **Pico running edev_dapv2_zephyr v0.1.7** (commit `31e3082` or later)
+- **Ring Pro 351** with:
+  - Charging puck connected (Ring's internal Li-ion alone is not
+    enough — ERASEALL pulls more current than the cell delivers
+    under SWD load; see
+    [[reference_ring_battery_defeats_power_cycle]])
+  - SWD pogo pins making solid contact (Ring's debug pads are
+    tiny; a loose contact mid-ERASEALL leaves the chip in a
+    half-erased state that takes a second RECOVER to clean up)
+- **Re-flashable firmware image for the Ring** — the procedure
+  fully wipes both cores; you'll need to re-flash production
+  firmware afterwards via the normal release tooling
+
+### M.3 Running the procedure
+
+```bash
+cd firmware/projects/edev_dapv2_zephyr/tools
+python3 ring_pro_351_acceptance.py
+```
+
+The script will:
+1. Prompt with `WIPE THE RING` confirmation (explicit, can't
+   accidentally type past it)
+2. Run 9 phases in order, each with a PASS / FAIL line
+3. Print a green banner on full pass, or red banner with the
+   failing phase on any failure
+
+Non-destructive identification-only mode (safe to run before
+committing to a wipe):
+
+```bash
+python3 ring_pro_351_acceptance.py --identify
+```
+
+This runs only the ping + TARGET_INFO phases — verifies SWD
+contact and reads back DPIDR / AP_IDR / CPUID.
+
+### M.4 Phase-by-phase expected output
+
+| # | Phase | What it tests | Budget |
+|---|---|---|---|
+| 1 | `Identify target` | TARGET_INFO returns nRF5340 DPIDR + M33 CPUID | 3 s |
+| 2 | `Mem roundtrip` | WRITE_MEM + READ_MEM bit-perfect against App SRAM | 6 s |
+| 3 | `ERASEALL both cores` | CTRL-AP ERASEALL on App + Net | 30 s |
+| 4 | `Verify erase` | flash[0] = 0xFFFFFFFF post-erase | 3 s |
+| 5 | `FLASH_WRITE_APP` | 13-word pattern → bit-perfect readback | 6 s |
+| 6 | `FLASH_WRITE_NET` | 14-word pattern → bit-perfect readback (Net flash) | 6 s |
+| 7a | `UICR_PROGRAM_APP` | App APPROTECT/SECUREAPPROTECT = 0x50FA50FA | 5 s |
+| 7b | `UICR_PROGRAM_NET` | Net UICR.APPROTECT = 0x50FA50FA via stub | 10 s |
+| 8 | `RECOVER` | Idempotent full-chain RECOVER (does ERASE + both UICRs) | 60 s |
+
+Total budget: ~130 s. Bench DK timing was ~30 s; production
+silicon may be slower so the budgets are 3× the bench worst-case.
+
+### M.5 Notes on the Net SRAM marker check (phase 7b)
+
+The Net stub writes `0xDEADC0DE` to SRAM `0x21000000` as a
+"stub completed" marker. On the bench nRF5340 DK silicon this
+write was NOT visible via Net AHB-AP (CPU bus vs debug bus
+asymmetry — see
+[[project_edev_dapv2_zephyr_v017_feature_complete_2026_06_30]] §2).
+
+**The Ring Pro 351 is expected to be production silicon where
+both buses are consistent.** If the marker reads `0xDEADC0DE`,
+that's the production-silicon behavior and the script logs a
+green NOTE confirming this. If the marker reads `0x00000000`
+(matching DK silicon), the script logs a yellow NOTE — this is
+NOT a failure; the UICR.APPROTECT readback is the actual
+success criterion either way.
+
+### M.6 If acceptance fails
+
+| Failure phase | Most likely cause | Next step |
+|---|---|---|
+| 1 (Identify) | SWD contact / wiring | Re-seat pogo pins, check Vtgt, retry `--identify` |
+| 2 (Mem roundtrip) | DP wedged from earlier work | Power-cycle Ring + Pico, retry |
+| 3 (ERASEALL) | Charging puck not connected, internal Li-ion drooping | Confirm puck is delivering, retry |
+| 4 (Verify erase) | Erase succeeded but readback returns stale value — likely AHB-AP cache | Try ERASE again; possible firmware bug if reproducible |
+| 5 / 6 (Flash write) | NVMC state from prior incomplete op | Run RECOVER first, then re-run acceptance |
+| 7a (UICR App) | NVMC config bug | Capture firmware log via Pico CDC, file issue |
+| 7b (UICR Net) | Net stub didn't fault, just didn't complete | Capture firmware log; verify Net VMC RAMBLOCK powerset reached the chip |
+| 8 (RECOVER) | Any of the above re-emerging on the second run | Should be impossible if phases 1-7 passed — file issue |
+
+### M.7 What "passed" obligates
+
+When this acceptance passes against a production Ring, update:
+
+1. `firmware/projects/edev_dapv2_zephyr/releases/v0.1.7/RELEASE.md`
+   — change the "Hardware acceptance" section from "11/11 PASS on
+   bench nRF5340 DK" to "11/11 PASS on bench nRF5340 DK + Ring
+   Pro 351 production silicon."
+2. `docs/ESP32_BRIDGE.md` — change v0.1.7 status callout from
+   "feature-complete (bench-validated)" to "released
+   (production-validated)."
+3. Memory note `project_edev_dapv2_zephyr_v017_feature_complete_2026_06_30.md`
+   — strike the "Step 10 pending" line.
+4. Tag the release as `v0.1.7-final` if not already tagged.
+
