@@ -438,6 +438,27 @@ nrf53_status_t nrf53_read_mem(uint8_t ap_index, uint32_t csw,
 			      uint32_t flags, uint8_t *out);
 
 /**
+ * @brief Write N contiguous 32-bit words to AHB-AP memory.
+ *
+ * Counterpart to nrf53_read_mem. Chip-agnostic — works on any ARM
+ * Cortex-M via the AHB-AP. Per-word TAR writes (no auto-increment) to
+ * avoid Nordic's 1-KB TAR-wrap quirk.
+ *
+ * The input buffer must be at least `word_count * 4` bytes, each word
+ * encoded little-endian.
+ *
+ * @param ap_index     AHB-AP index.
+ * @param csw          CSW for this AP.
+ * @param addr         Base address; must be 4-byte aligned.
+ * @param word_count   Number of 32-bit words to write.
+ * @param flags        Reserved for future use; pass 0.
+ * @param data         Source buffer (word_count * 4 bytes).
+ */
+nrf53_status_t nrf53_write_mem(uint8_t ap_index, uint32_t csw,
+			       uint32_t addr, uint32_t word_count,
+			       uint32_t flags, const uint8_t *data);
+
+/**
  * @brief Full recover flow: ERASE both cores + program App + Net UICR.
  *
  * Composes the lower-level operations from steps 2-4 into a single
@@ -478,6 +499,7 @@ nrf53_status_t nrf53_recover(struct nrf53_recover_info *info);
 #define NRF53_VENDOR_TARGET_INFO         0x89U  /* later */
 #define NRF53_VENDOR_UICR_PROGRAM_APP    0x8AU  /* step 3 */
 #define NRF53_VENDOR_UICR_PROGRAM_NET    0x8BU  /* step 4 */
+#define NRF53_VENDOR_WRITE_MEM           0x8CU  /* AHB-AP burst write */
 
 #ifdef __cplusplus
 }

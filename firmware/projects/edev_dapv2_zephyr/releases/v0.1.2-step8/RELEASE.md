@@ -1,5 +1,7 @@
 # edev_dapv2_zephyr v0.1.2-step8 — release notes
 
+> **⚠ Newer release available: [v0.1.3-step8](../v0.1.3-step8/RELEASE.md)** — superset; adds vendor cmd `0x8C NRF53_WRITE_MEM` (chip-agnostic AHB-AP burst write). v0.1.2-step8 still works but lacks `0x8C`.
+
 **Build:** 2026-06-30 15:30
 **Branch:** `feat/edev_dapv2_zephyr`
 **Tip commit:** `4167fdf feat(edev_dapv2_zephyr): step 8 — NRF53_READ_MEM + Net stub DP-wake fix`

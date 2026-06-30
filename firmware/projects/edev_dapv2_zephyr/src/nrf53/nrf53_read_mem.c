@@ -73,3 +73,31 @@ nrf53_status_t nrf53_read_mem(uint8_t ap_index, uint32_t csw,
 	}
 	return NRF53_OK;
 }
+
+/* ------------------------------------------------------------------ */
+nrf53_status_t nrf53_write_mem(uint8_t ap_index, uint32_t csw,
+			       uint32_t addr, uint32_t word_count,
+			       uint32_t flags, const uint8_t *data)
+{
+	ARG_UNUSED(flags);
+	if (data == NULL || word_count == 0 || (addr & 0x03U) != 0) {
+		return NRF53_ARGS;
+	}
+
+	(void)nrf53_dp_sticky_clear();
+
+	for (uint32_t i = 0; i < word_count; i++) {
+		uint32_t cur_addr = addr + (i * 4U);
+		uint32_t word = (uint32_t)data[i * 4U + 0U]
+			     | ((uint32_t)data[i * 4U + 1U] << 8)
+			     | ((uint32_t)data[i * 4U + 2U] << 16)
+			     | ((uint32_t)data[i * 4U + 3U] << 24);
+		nrf53_status_t st = nrf53_mem_write(ap_index, csw, cur_addr, word);
+		if (st != NRF53_OK) {
+			LOG_ERR("mem_write[%u] @ 0x%08x = 0x%08x failed: %s",
+				(unsigned int)i, cur_addr, word, nrf53_status_str(st));
+			return st;
+		}
+	}
+	return NRF53_OK;
+}

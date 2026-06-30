@@ -2837,6 +2837,66 @@ Every USB packet here is either a standard CMSIS-DAP command (DAP_*)
 or the single vendor command `0x85 NRF53_ERASE`. No other vendor
 command is needed for nRF52840 against v0.1.1-step5.
 
+### K.bonus — `0x88 NRF53_READ_MEM` + `0x8C NRF53_WRITE_MEM` (v0.1.2 + v0.1.3)
+
+Available since v0.1.2-step8 (READ) and v0.1.3-step8 (WRITE). Chip-
+agnostic — work against any AHB-AP. Replace multi-`DAP_Transfer`
+sequences with a single packet.
+
+**`0x88 READ_MEM`** — 13-byte request, up to ~60 B response (USB-FS
+packet size limit; bridge loops for bulk):
+```
+[0x88, flags, ap_index, u32_le csw, u32_le addr, u16_le word_count]
+   flags bit 0 = clear DEMCR.VC_CORERESET before read (nRF5340 fix 6a)
+→ [0x88, status, data[word_count*4]]   (LE words)
+```
+
+**`0x8C WRITE_MEM`** — ≥13-byte request, 2-byte response:
+```
+[0x8C, flags, ap_index, u32_le csw, u32_le addr, u16_le word_count,
+ data[word_count*4]]
+   flags = 0 (reserved)
+   word_count ≤ 12  (13 + 12*4 = 61 ≤ 64-byte USB-FS packet)
+→ [0x8C, status]
+```
+
+**Example: write nRF52 UICR.APPROTECT = 0x5A in one call:**
+```python
+# Step 1. NVMC.CONFIG = Wen
+WRITE_MEM(ap=0, csw=0x23000002, addr=0x4001E504, n=1, data=<u32 1>)
+# Step 2. poll NVMC.READY via READ_MEM
+while READ_MEM(0x4001E400, n=1)[0] & 1 != 1: pass
+# Step 3. UICR.APPROTECT ← 0x5A
+WRITE_MEM(ap=0, csw=0x23000002, addr=0x10001208, n=1, data=<u32 0x5A>)
+# Step 4. poll READY
+while READ_MEM(0x4001E400, n=1)[0] & 1 != 1: pass
+# Step 5. NVMC.CONFIG = Ren
+WRITE_MEM(ap=0, csw=0x23000002, addr=0x4001E504, n=1, data=<u32 0>)
+```
+
+5 vendor-cmd round-trips vs ~20+ `DAP_Transfer` round-trips composing
+the same sequence by hand. The wire-time saving on USB-FS is ~3×.
+
+**Example: halt a target (Cortex-M DHCSR write):**
+```python
+# DHCSR @ 0xE000EDF0 ← 0xA05F0003 (DBGKEY | C_DEBUGEN | C_HALT)
+WRITE_MEM(ap=0, csw=0x23000002, addr=0xE000EDF0, n=1, data=<u32 0xA05F0003>)
+```
+
+**Example: set CPU register via DCRSR/DCRDR before run:**
+```python
+# Write R0 = arg_value
+WRITE_MEM(ap=0, csw=0x23000002, addr=0xE000EDF8, n=1, data=<u32 arg_value>)  # DCRDR
+WRITE_MEM(ap=0, csw=0x23000002, addr=0xE000EDF4, n=1, data=<u32 0x10000|0>)   # DCRSR write R0
+```
+
+These primitives are sufficient to compose:
+- **App UICR programming** on nRF52840 (5 calls instead of 20+)
+- **RAM loader staging** for the CMSIS Flash Algorithm flash-write
+  pattern (loader bytes via WRITE_MEM, regs via DCRSR/DCRDR, resume
+  via DHCSR)
+- **Target peripheral configuration** (any AHB-AP-reachable register)
+
 ### K.10 What pieces of nRF52840 support are NOT in v0.1.1-step5
 
 Honest list of "you have to compose this yourself" items the ESP32

@@ -41,10 +41,12 @@ PID = 0x000C
 VENDOR_IFACE_CLASS = 0xFF
 
 # Vendor command bytes
-CMD_RECOVER  = 0x84
-CMD_ERASE    = 0x85
-CMD_UICR_APP = 0x8A
-CMD_UICR_NET = 0x8B
+CMD_RECOVER   = 0x84
+CMD_ERASE     = 0x85
+CMD_READ_MEM  = 0x88
+CMD_UICR_APP  = 0x8A
+CMD_UICR_NET  = 0x8B
+CMD_WRITE_MEM = 0x8C
 
 # nrf53_status_t mirror
 STATUS = {
@@ -331,6 +333,48 @@ def test_uicr_net(p, ctx):
     return True
 
 
+def test_mem_roundtrip(p, ctx):
+    """Vendor cmds 0x8C WRITE_MEM + 0x88 READ_MEM end-to-end round-trip.
+    Writes 4 sentinel words to target SRAM via AHB-AP and reads them back.
+    """
+    print("\n=== MEM_ROUNDTRIP — WRITE_MEM (0x8C) + READ_MEM (0x88) ===")
+    # Pick a SRAM address that's safely valid on both families:
+    #   nRF52840: App SRAM 0x20000000+
+    #   nRF5340 : App SRAM 0x20000000+, Net SRAM 0x21000000+
+    # Use App AHB-AP since it works on both families.
+    addr = 0x20000000
+    sentinels = [0xCAFEBABE, 0xDEADBEEF, 0x12345678, 0x87654321]
+    payload = struct.pack('<IIII', *sentinels)
+    req = (bytes([CMD_WRITE_MEM, 0x00, 0x00])
+           + struct.pack('<II', 0x23000002, addr)
+           + struct.pack('<H', 4)
+           + payload)
+    resp = p.transfer(req, timeout_ms=10000)
+    if not _validate_echo(resp, CMD_WRITE_MEM): return False
+    if len(resp) < 2 or resp[1] != 0:
+        print(f"FAIL: WRITE_MEM status={fmt_status(resp[1] if len(resp) > 1 else 0xFF)}")
+        return False
+    print(f"  WRITE_MEM 0x{addr:08x} ← {[hex(s) for s in sentinels]}: OK")
+
+    req = (bytes([CMD_READ_MEM, 0x00, 0x00])
+           + struct.pack('<II', 0x23000002, addr)
+           + struct.pack('<H', 4))
+    resp = p.transfer(req, timeout_ms=10000)
+    if not _validate_echo(resp, CMD_READ_MEM): return False
+    if len(resp) < 18 or resp[1] != 0:
+        print(f"FAIL: READ_MEM status={fmt_status(resp[1] if len(resp) > 1 else 0xFF)}")
+        return False
+    got = struct.unpack_from('<IIII', resp, 2)
+    if got != tuple(sentinels):
+        print(f"FAIL: readback mismatch")
+        print(f"  expected: {[hex(s) for s in sentinels]}")
+        print(f"  got     : {[hex(x) for x in got]}")
+        return False
+    print(f"  READ_MEM  0x{addr:08x} → bit-perfect match")
+    print("PASS  WRITE_MEM/READ_MEM round-trip")
+    return True
+
+
 def test_recover(p, ctx):
     print("\n=== NRF53_RECOVER (0x84) — full unlock flow ===")
     if ctx.get('family') == 'nrf52':
@@ -359,12 +403,13 @@ def test_recover(p, ctx):
 
 
 TESTS = {
-    "ping":          test_ping,
-    "erase":         test_erase,
-    "verify-erase":  test_verify_erase,
-    "uicr-app":      test_uicr_app,
-    "uicr-net":      test_uicr_net,
-    "recover":       test_recover,
+    "ping":            test_ping,
+    "erase":           test_erase,
+    "verify-erase":    test_verify_erase,
+    "mem-roundtrip":   test_mem_roundtrip,
+    "uicr-app":        test_uicr_app,
+    "uicr-net":        test_uicr_net,
+    "recover":         test_recover,
 }
 
 
@@ -394,11 +439,12 @@ def main():
             #   uicr-net    — same gating
             #   re-erase + recover — only on nRF5340
             results = [
-                ("ping",         test_ping(p, ctx)),
-                ("erase",        test_erase(p, ctx)),
-                ("verify-erase", test_verify_erase(p, ctx)),
-                ("uicr-app",     test_uicr_app(p, ctx)),
-                ("uicr-net",     test_uicr_net(p, ctx)),
+                ("ping",           test_ping(p, ctx)),
+                ("erase",          test_erase(p, ctx)),
+                ("verify-erase",   test_verify_erase(p, ctx)),
+                ("mem-roundtrip",  test_mem_roundtrip(p, ctx)),
+                ("uicr-app",       test_uicr_app(p, ctx)),
+                ("uicr-net",       test_uicr_net(p, ctx)),
             ]
             if ctx.get('family') == 'nrf5340':
                 print("\n--- re-erase before RECOVER ---")
