@@ -170,6 +170,11 @@ nrf53_status_t nrf53_uicr_program_net(uint32_t *out_marker,
 	}
 	LOG_INF("Net stub written (%u bytes)", (unsigned int)sizeof(nrf53_net_stub));
 
+	/* Net flash page 0 now contains the 224-byte UICR-disable stub.
+	 * Any subsequent user flash write to that page needs an erase
+	 * step (NVMC can only flip 1→0). Tell the flash writer. */
+	nrf53_net_page0_mark_dirty();
+
 	/* Stage 6 — Pulse CTRL-AP#3 RESET to launch the Net stub. */
 	(void)nrf53_dp_sticky_clear();   /* bug 6b */
 

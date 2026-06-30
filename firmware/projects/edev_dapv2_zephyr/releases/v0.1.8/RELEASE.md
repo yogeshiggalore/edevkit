@@ -1,5 +1,12 @@
 # edev_dapv2_zephyr v0.1.8 — release notes
 
+> **⚠ Superseded by [v0.1.9](../v0.1.9/RELEASE.md)** — fixes the
+> Net flash 0x01000000 boot-region write corruption documented in
+> this release's K.bonus.1 note. The bridge author no longer needs
+> any workaround for the boot region. **Re-flash v0.1.8 probes to
+> v0.1.9 if you intend to write Net flash images that include data
+> at 0x01000000+.**
+
 **Build:** 2026-06-30 (docs+tools-only release)
 **Branch:** `feat/edev_dapv2_zephyr`
 **Board:** `rpi_pico2/rp2350a/m33`

@@ -188,6 +188,11 @@ nrf53_status_t nrf53_erase_all(size_t *found_ap_count)
 	(void)nrf53_dp_sticky_clear();
 	(void)nrf53_dp_power_up(100);
 
+	/* After chip-wide ERASEALL, Net flash page 0 is wiped — clear
+	 * the dirty flag so the flash writer doesn't trigger a redundant
+	 * page erase on the next write to that page. */
+	nrf53_net_page0_mark_clean();
+
 	if (found_ap_count) {
 		*found_ap_count = count;
 	}

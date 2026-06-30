@@ -24,6 +24,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <zephyr/device.h>
 
 #ifdef __cplusplus
@@ -520,6 +521,24 @@ nrf53_status_t nrf53_write_mem(uint8_t ap_index, uint32_t csw,
 nrf53_status_t nrf53_flash_write_net(uint32_t addr, uint32_t word_count,
 				     const uint8_t *data,
 				     uint32_t *out_words_written);
+
+/**
+ * @brief Mark Net flash page 0 as containing the UICR-disable stub
+ *        residue. Called by `nrf53_uicr_program_net()` after the
+ *        stub is programmed. Subsequent `nrf53_flash_write_net()`
+ *        calls targeting page 0 will erase first.
+ */
+void nrf53_net_page0_mark_dirty(void);
+
+/**
+ * @brief Mark Net flash page 0 as erased (clean). Called by the
+ *        ERASE path after CTRL-AP ERASEALL completes, and by
+ *        flash_write_net() itself after a successful auto-erase.
+ */
+void nrf53_net_page0_mark_clean(void);
+
+/** @brief Query the page-0 dirty flag. */
+bool nrf53_net_page0_is_dirty(void);
 
 /**
  * @brief Program N contiguous 32-bit words to App flash.

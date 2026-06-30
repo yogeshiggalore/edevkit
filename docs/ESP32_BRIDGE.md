@@ -21,30 +21,34 @@ edevkit's app-side feature set.
 ## Pico-side firmware status (read this first)
 
 The bridge talks to a Pico running the `edev_dapv2_zephyr` firmware. The
-currently-shipping release is **`v0.1.8`** (`feat/edev_dapv2_zephyr`
+currently-shipping release is **`v0.1.9`** (`feat/edev_dapv2_zephyr`
 branch, 2026-06-30). Develop against this — the test harness
 (`firmware/projects/edev_dapv2_zephyr/tools/test_nrf53_vendor_cmds.py`)
-and the wire-format expectations below all assume v0.1.8 semantics.
+and the wire-format expectations below all assume v0.1.9 semantics.
 
-> **v0.1.8 is a docs + tools release** — firmware binaries are
-> byte-identical to v0.1.7. A v0.1.7 probe IS a v0.1.8 probe; you
-> don't need to re-flash. v0.1.8 ships this doc (Appendices L + M,
-> the Net flash @ 0x01000000 gotcha) and two new bench tools
-> (`ring_pro_351_acceptance.py`, `_flash_ops_sequence.py`).
-> See `releases/v0.1.8/RELEASE.md` for the full change log.
+> **v0.1.9 fixes the Net flash 0x01000000 boot-region corruption.**
+> The probe now auto-erases Net flash page 0 on the first
+> `0x86 FLASH_WRITE_NET` call after RECOVER (the page contains the
+> UICR-disable stub residue; without erase, NVMC writes get
+> bitwise-AND'd with that residue). Bench-verified by flashing two
+> Ring Pro 351 production hex files (718 KB each) — both whole-image
+> SHA-256 match expected, all 28 segments bit-perfect. **You MUST
+> re-flash a v0.1.8 (or earlier) probe to v0.1.9** to get this fix;
+> binary is NOT compatible. The v0.1.8 behavior (boot region
+> corrupts) is the bug this release fixes.
 
 Bench-validated:
 - **nRF52840** (Cortex-M4, DPv1): 5/5 PASS via v0.1.1-step5
-- **nRF5340 DK** (Cortex-M33, DPv2): 11/11 PASS + 5/5 PASS on
-  info→read→erase→recover→write sequence via v0.1.8 — full RECOVER +
-  flash write + UICR programming all work end-to-end
+- **nRF5340 DK** (Cortex-M33, DPv2): 11/11 PASS regression + 2/2 PASS
+  on production Ring Pro 351 hex files (v5241951 + v5242051, each
+  ~718 KB, whole-image SHA-256 match) via v0.1.9.
 
 Older releases (`v0.1-step5` had `nrf53_dp_full_wake` bugs that wedged
 nRF52840 — fixed in v0.1.1; subsequent point releases add features but
 v0.1.1 still works fine for nRF52840). Don't flash anything older than
 v0.1.1 on the bridge's companion Pico.
 
-### Per-chip support — vendor commands shipped in v0.1.8 (complete; unchanged from v0.1.7)
+### Per-chip support — vendor commands shipped in v0.1.9 (complete)
 
 | Cmd | Op | nRF52840 | nRF5340 |
 |---|---|---|---|
@@ -2933,49 +2937,36 @@ family-specific knob.
 - `NVMC.CONFIG = Ren` is restored even on mid-loop failure; flash is
   never left write-enabled.
 
-> **⚠ Net flash boot region (0x01000000..~0x01004110) — multi-batch
-> writes corrupt; bench-verified 2026-06-30 on nRF5340 DK with two
-> Ring Pro 351 production hex images:**
+> **✅ Net flash boot region (0x01000000+) — auto-erase in v0.1.9.**
 >
-> A single 14-word `0x86 FLASH_WRITE_NET` call to `0x01000000`
-> writes + reads back bit-perfect. **But sustained multi-batch
-> writes covering the Net core's boot/vector region (the first
-> ~16 KB, addresses up to roughly `0x01004110`) result in readback
-> that doesn't match what was written.** All individual batches
-> return `status=OK, words_written=14/14` — the corruption only
-> shows up on readback verification.
+> Previously (v0.1.7 / v0.1.8) the first Net flash page contained
+> the UICR-disable stub residue programmed by RECOVER; user writes
+> to `0x01000000` were bitwise-AND'd with that residue, corrupting
+> the first ~16 KB. **v0.1.9 fixes this automatically — no bridge
+> workaround needed.**
 >
-> **Likely root cause:** the Net core is alive while we're writing
-> its boot region. Each completed batch publishes new MSP / reset
-> vector / handler values. The Net core fault-loops on partial /
-> invalid early data, generating AHB-AP bus contention that
-> interferes with subsequent flash writes. The corruption is
-> deterministic — programming the same image twice yields the
-> same wrong content at the same addresses.
+> The probe firmware now tracks whether Net flash page 0 contains
+> RECOVER's UICR stub residue. On the first `0x86 FLASH_WRITE_NET`
+> call targeting page 0 after RECOVER, the probe issues an NVMC
+> page-erase (CONFIG=Een + write `0xFFFFFFFF` to page address —
+> the working method per Nordic's nrfx HAL fallback) before
+> programming. The first call to page 0 takes ~105 ms instead of
+> the usual ~30 ms; subsequent calls are normal speed.
 >
-> **Empirical evidence (bench DK, 2026-06-30):** flashing both
-> `uh_ringpro351_v5241951_merged.hex` and `uh_ringpro351_v5242051_merged.hex`,
-> 13 of 14 segments verified bit-perfect (~700 KB of 718 KB) but
-> the first Net segment (`0x01000000..0x0100410c`, 16,652 bytes)
-> mismatched on both files with identical expected/got hashes.
+> The bridge can write the Net image in natural address order
+> (segment 9 starts at `0x01000000`, then segments 10+ follow).
+> No special boot-region ordering. No retry path. No chunking.
 >
-> **Workarounds (pick one):**
-> 1. **Bridge-side:** write the Net boot region (≤16 KB starting at
->    `0x01000000`) LAST, after all other Net flash is written. The
->    Net core can't fault-loop on data it hasn't seen yet.
-> 2. **Bridge-side:** write the Net boot region in small chunks
->    (1–2 batches per call) with brief pauses — gives the Net core
->    less time to react between writes.
-> 3. **Probe firmware:** future `0x86 FLASH_WRITE_NET` could halt
->    Net CPU before writes touching `0x01000000..0x01004110`. This
->    requires Net core DHCSR access (which works on nRF5340) — not
->    shipped in v0.1.8, would be a v0.1.9 feature.
+> **Bench-verified 2026-06-30:** flashing both
+> `uh_ringpro351_v5241951_merged.hex` and
+> `uh_ringpro351_v5242051_merged.hex`, all 14 segments per file
+> verify bit-perfect; whole-image SHA-256 matches expected on
+> both files.
 >
-> Until then, **bridge verification step must check the Net boot
-> region last and have a retry path** that re-writes the boot
-> region as the final step of a full-image flash. The rest of Net
-> flash (`0x01004110` and above) writes reliably with single-pass
-> programming.
+> **Bridge implication:** none. Just write the image in order.
+> The 105 ms one-shot erase on first boot-region write is invisible
+> over BLE (well under the per-cmd USB timeout budget from
+> Appendix L.3).
 
 **Bridge workflow for a full image (1 MB App, 256 KB Net):**
 
@@ -3072,7 +3063,7 @@ These primitives are sufficient to compose:
   via DHCSR)
 - **Target peripheral configuration** (any AHB-AP-reachable register)
 
-### K.10 What pieces of nRF52840 support are still bridge-composed (v0.1.8)
+### K.10 What pieces of nRF52840 support are still bridge-composed (v0.1.9)
 
 Updated 2026-06-30. Most of K.10's original items have been
 subsumed by vendor cmds shipped in v0.1.2 through v0.1.7. What
@@ -3097,7 +3088,7 @@ future releases.
 
 ---
 
-## Appendix L — Per-cmd timing budgets + bridge progress strategy (v0.1.8)
+## Appendix L — Per-cmd timing budgets + bridge progress strategy (v0.1.9)
 
 This appendix closes out **Step 9 of the original 10-step plan** —
 the "progress packets / WAIT-ACK / USB timeout" item. After running
@@ -3288,9 +3279,10 @@ What actually ended up being needed:
    notifications) is the recommended approach. No firmware
    changes required; the bridge can implement at its own pace.
 
-**No probe firmware changes are required for Step 9.** The v0.1.8
-release ships the same firmware binary as v0.1.7 — both are the
-final probe firmware for this phase of the plan.
+**No probe firmware changes are required for Step 9.** The v0.1.9
+release adds the Net flash auto-erase fix (production Ring images
+now write bit-perfect) — that's the only meaningful firmware
+change since v0.1.7 needed to ship the original plan.
 
 
 ---
@@ -3306,16 +3298,18 @@ bench.**
 ### M.1 What this proves
 
 When this acceptance passes against a production Ring, the
-v0.1.8 probe firmware (== v0.1.7 binary) is certified for
-production-Nordic-target debug + recover workflows. Everything tested on the bench
+v0.1.9 probe firmware is certified for production-Nordic-target
+debug + recover + flash-program workflows. Validated against two
+real Ring Pro 351 production hex images on bench DK silicon. Everything tested on the bench
 nRF5340 DK (DK silicon, 11/11 PASS) is reproduced against a real
 sealed wearable. This is the bar for "release the probe firmware
 to production use."
 
 ### M.2 Hardware required
 
-- **Pico running edev_dapv2_zephyr v0.1.8** (commit `c26fbfa` or later;
-  v0.1.7 firmware binary works identically)
+- **Pico running edev_dapv2_zephyr v0.1.9** — required for Net flash
+  boot region (0x01000000) auto-erase. v0.1.8 and earlier corrupt
+  this region.
 - **Ring Pro 351** with:
   - Charging puck connected (Ring's internal Li-ion alone is not
     enough — ERASEALL pulls more current than the cell delivers
@@ -3402,14 +3396,13 @@ success criterion either way.
 
 When this acceptance passes against a production Ring, update:
 
-1. `firmware/projects/edev_dapv2_zephyr/releases/v0.1.8/RELEASE.md`
-   — change the "Hardware acceptance" section from "11/11 PASS on
-   bench nRF5340 DK" to "11/11 PASS on bench nRF5340 DK + Ring
-   Pro 351 production silicon."
-2. `docs/ESP32_BRIDGE.md` — change v0.1.8 status callout from
-   "feature-complete (bench-validated)" to "released
-   (production-validated)."
-3. Memory note `project_edev_dapv2_zephyr_v017_feature_complete_2026_06_30.md`
-   — strike the "Step 10 pending" line.
-4. Tag the release as `v0.1.8-final` if not already tagged.
+1. `firmware/projects/edev_dapv2_zephyr/releases/v0.1.9/RELEASE.md`
+   — change the "Hardware acceptance" section to include Ring
+   Pro 351 production-silicon validation alongside the bench DK
+   acceptance.
+2. `docs/ESP32_BRIDGE.md` — change v0.1.9 status callout from
+   "production-image-validated" to "production-silicon-validated".
+3. Memory note for v0.1.9 — strike the "Ring Pro 351 acceptance
+   pending" line.
+4. Tag the release as `v0.1.9-final` if not already tagged.
 

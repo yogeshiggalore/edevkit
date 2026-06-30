@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edev_dapv2 — webtest</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+         max-width: 1100px; margin: 1.5rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1rem; margin: 1.25rem 0 0.5rem; color: #888; font-weight: 600;
+       text-transform: uppercase; letter-spacing: 0.05em; }
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
+  .card { background: rgba(127,127,127,0.08); padding: 0.75rem 1rem;
+          border-radius: 0.5rem; min-width: 240px; flex: 1; }
+  button { font: inherit; padding: 0.4rem 0.9rem; border-radius: 0.35rem;
+           border: 1px solid #888; background: rgba(127,127,127,0.1); cursor: pointer; }
+  button:hover { background: rgba(127,127,127,0.2); }
+  button:disabled { opacity: 0.4; cursor: wait; }
+  button.danger { border-color: #c33; color: #c33; }
+  button.danger:hover { background: rgba(204,51,51,0.15); }
+  input[type=text], input[type=number] { font: inherit; padding: 0.3rem 0.5rem;
+           border-radius: 0.3rem; border: 1px solid #888; background: transparent;
+           width: 9rem; color: inherit; }
+  pre.log { background: #0c0c0c; color: #d6d6d6; padding: 0.75rem;
+            border-radius: 0.4rem; height: 22rem; overflow: auto; font-size: 0.85rem;
+            white-space: pre-wrap; word-break: break-all; }
+  .ok    { color: #4caf50; }
+  .fail  { color: #f44336; }
+  .muted { color: #888; }
+  table.kv { border-collapse: collapse; }
+  table.kv td { padding: 0.15rem 0.6rem 0.15rem 0; }
+  table.kv td:first-child { color: #888; font-size: 0.85rem; }
+  table.kv td:last-child  { font-family: ui-monospace, Menlo, monospace; }
+  .small { font-size: 0.85rem; color: #888; }
+  .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+</style>
+</head>
+<body>
+
+<h1>edev_dapv2 — Web Test</h1>
+<div class="small">Talks to the connected probe on USB. Serialized — one operation at a time.</div>
+
+<h2>Target</h2>
+<div class="row">
+  <div class="card">
+    <div class="controls">
+      <button id="btn-info">Identify Target</button>
+      <button id="btn-usb-reset" title="Hard-reset USB if probe seems wedged">USB reset</button>
+      <span id="info-status" class="small muted"></span>
+    </div>
+    <table class="kv" id="info-table"></table>
+  </div>
+</div>
+
+<h2>Chip Operations</h2>
+<div class="row">
+  <div class="card">
+    <div class="controls">
+      <button id="btn-erase"   class="danger">ERASE (ERASEALL)</button>
+      <button id="btn-recover" class="danger">RECOVER</button>
+      <span id="op-status" class="small muted"></span>
+    </div>
+    <div id="op-result" class="small" style="margin-top:0.5rem"></div>
+  </div>
+</div>
+
+<h2>Flash &amp; Verify</h2>
+<div class="row">
+  <div class="card" style="flex: 1 1 100%">
+    <div class="controls">
+      <input type="file" id="hex-file" accept=".hex">
+      <button id="btn-flash" class="danger" disabled>WIPE &amp; FLASH + VERIFY</button>
+      <span id="flash-status" class="small muted"></span>
+    </div>
+    <pre id="flash-log" class="log"></pre>
+  </div>
+</div>
+
+<h2>Read Memory</h2>
+<div class="row">
+  <div class="card">
+    <div class="controls">
+      <label class="small">addr <input type="text" id="read-addr" value="0x01000000"></label>
+      <label class="small">bytes <input type="number" id="read-len" value="256" min="4" max="1048576"></label>
+      <button id="btn-read">Read &amp; hexdump</button>
+      <button id="btn-read-bin">Download .bin</button>
+    </div>
+    <pre id="read-out" class="log" style="height:16rem;"></pre>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+async function jsonCall(method, url) {
+  const r = await fetch(url, { method });
+  if (!r.ok) throw new Error(`${r.status}: ${(await r.text()).slice(0,200)}`);
+  return r.json();
+}
+
+// ── Identify ────────────────────────────────────────────────────────
+$('btn-info').onclick = async () => {
+  $('info-status').textContent = '…';
+  try {
+    const d = await jsonCall('GET', '/api/info');
+    const rows = [
+      ['DPIDR', d.dpidr],
+      ['AP[0].IDR', d.ap0_idr],
+      ['CPUID', d.cpuid],
+      ['DP version', d.version],
+      ['Designer', d.designer],
+      ['Core', d.core],
+      ['Family', d.family],
+    ];
+    $('info-table').innerHTML = rows.map(
+      ([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+    $('info-status').innerHTML = '<span class="ok">✓ connected</span>';
+  } catch (e) {
+    $('info-status').innerHTML = `<span class="fail">${e.message}</span>`;
+  }
+};
+
+// ── USB reset ──────────────────────────────────────────────────────
+$('btn-usb-reset').onclick = async () => {
+  $('info-status').textContent = 'resetting…';
+  try {
+    await jsonCall('POST', '/api/usb_reset');
+    $('info-status').innerHTML = '<span class="ok">✓ USB reset</span>';
+  } catch (e) {
+    $('info-status').innerHTML = `<span class="fail">${e.message}</span>`;
+  }
+};
+
+// ── Erase / Recover ─────────────────────────────────────────────────
+async function runDestructive(label, url) {
+  if (!confirm(`${label}\n\nThis will WIPE the connected target. Continue?`)) return;
+  $('op-status').textContent = `${label}…`;
+  $('op-result').textContent = '';
+  for (const id of ['btn-erase', 'btn-recover']) $(id).disabled = true;
+  try {
+    const d = await jsonCall('POST', url);
+    $('op-status').innerHTML = `<span class="ok">✓ ${label} OK (${d.elapsed_s}s)</span>`;
+    $('op-result').textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    $('op-status').innerHTML = `<span class="fail">${e.message}</span>`;
+  } finally {
+    for (const id of ['btn-erase', 'btn-recover']) $(id).disabled = false;
+  }
+}
+$('btn-erase').onclick   = () => runDestructive('ERASE',   '/api/erase');
+$('btn-recover').onclick = () => runDestructive('RECOVER', '/api/recover');
+
+// ── Flash + Verify (SSE stream) ─────────────────────────────────────
+$('hex-file').onchange = (e) => {
+  $('btn-flash').disabled = !e.target.files.length;
+};
+
+$('btn-flash').onclick = async () => {
+  const f = $('hex-file').files[0];
+  if (!f) return;
+  if (!confirm(`Flash ${f.name} (${f.size.toLocaleString()} bytes)?\n\nThis WIPES the target and writes the new image. Cannot be undone.`)) return;
+  $('flash-status').textContent = '…';
+  $('flash-log').textContent = '';
+  $('btn-flash').disabled = true;
+
+  // POST via fetch (SSE library doesn't support multipart cleanly)
+  const fd = new FormData();
+  fd.append('file', f);
+  let res;
+  try {
+    res = await fetch('/api/flash', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0,200)}`);
+  } catch (e) {
+    $('flash-status').innerHTML = `<span class="fail">${e.message}</span>`;
+    $('btn-flash').disabled = false;
+    return;
+  }
+
+  // Read SSE stream manually from response body
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const events = buf.split('\n\n');
+    buf = events.pop();
+    for (const ev of events) {
+      const eMatch = ev.match(/^event: (\S+)/m);
+      const dMatch = ev.match(/^data: (.*)$/m);
+      if (!dMatch) continue;
+      const event = eMatch ? eMatch[1] : 'message';
+      const data  = dMatch[1];
+      if (event === 'log') {
+        $('flash-log').textContent += data + '\n';
+        $('flash-log').scrollTop = $('flash-log').scrollHeight;
+      } else if (event === 'done') {
+        const klass = data === 'PASS' ? 'ok' : 'fail';
+        $('flash-status').innerHTML = `<span class="${klass}">${data}</span>`;
+      }
+    }
+  }
+  $('btn-flash').disabled = false;
+};
+
+// ── Read Memory ─────────────────────────────────────────────────────
+function parseAddr(s) {
+  s = s.trim();
+  return s.startsWith('0x') ? parseInt(s.slice(2), 16) : parseInt(s, 10);
+}
+
+$('btn-read').onclick = async () => {
+  $('read-out').textContent = '…';
+  try {
+    const addr = parseAddr($('read-addr').value);
+    const len  = parseInt($('read-len').value, 10);
+    const r = await fetch(`/api/read?addr=${addr}&length=${len}&fmt=hex`);
+    if (!r.ok) throw new Error(`${r.status}: ${(await r.text()).slice(0,200)}`);
+    const d = await r.json();
+    $('read-out').textContent = `# ${d.addr}  (${d.length} bytes)\n` +
+      `# sha256 ${d.sha256}\n\n` + d.hexdump.join('\n');
+  } catch (e) {
+    $('read-out').textContent = `error: ${e.message}`;
+  }
+};
+
+$('btn-read-bin').onclick = async () => {
+  const addr = parseAddr($('read-addr').value);
+  const len  = parseInt($('read-len').value, 10);
+  window.location = `/api/read?addr=${addr}&length=${len}&fmt=bin`;
+};
+
+// Auto-identify on first load.
+$('btn-info').click();
+</script>
+
+</body>
+</html>
