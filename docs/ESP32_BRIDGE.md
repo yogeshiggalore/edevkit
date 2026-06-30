@@ -21,46 +21,50 @@ edevkit's app-side feature set.
 ## Pico-side firmware status (read this first)
 
 The bridge talks to a Pico running the `edev_dapv2_zephyr` firmware. The
-currently-shipping release is **`v0.1.1-step5`** (`feat/edev_dapv2_zephyr`
-branch, tip `c32eba8`, 2026-06-30). Develop against this — both the test
+currently-shipping release is **`v0.1.6-step7`** (`feat/edev_dapv2_zephyr`
+branch, tip `dcf721c`, 2026-06-30). Develop against this — the test
 harness (`firmware/projects/edev_dapv2_zephyr/tools/test_nrf53_vendor_cmds.py`)
-and the wire-format expectations below assume v0.1.1-step5 semantics.
+and the wire-format expectations below all assume v0.1.6-step7 semantics.
 
-> **v0.1-step5 is superseded** — it had three `nrf53_dp_full_wake` bugs
-> (missing `swdp_port_on`, malformed dormant-wake alert, missing idle
-> cycles after line reset) that wedged nRF52840. v0.1.1-step5 fixes
-> them. Don't flash anything older than v0.1.1-step5 on the bridge's
-> companion Pico.
+Bench-validated:
+- **nRF52840** (Cortex-M4, DPv1): 5/5 PASS via v0.1.1-step5
+- **nRF5340 DK** (Cortex-M33, DPv2): 10/10 PASS via v0.1.6-step7 — full RECOVER works end-to-end
 
-### Per-chip support (validated against real hardware)
+Older releases (`v0.1-step5` had `nrf53_dp_full_wake` bugs that wedged
+nRF52840 — fixed in v0.1.1; subsequent point releases add features but
+v0.1.1 still works fine for nRF52840). Don't flash anything older than
+v0.1.1 on the bridge's companion Pico.
 
-| Op | Vendor cmd | **nRF52840** (Cortex-M4, DPv1) | nRF5340 (Cortex-M33, DPv2) |
+### Per-chip support — vendor commands shipped in v0.1.6-step7
+
+| Cmd | Op | nRF52840 | nRF5340 |
 |---|---|---|---|
-| Probe info | std `DAP_Info` | ✅ | ✅ |
-| Target identify | std `DAP_Transfer` (DPIDR + AP_IDR) | ✅ DPIDR=0x2ba01477 confirmed | ✅ algorithm spec |
-| Flash read | std `DAP_Transfer` AHB-AP | ✅ confirmed | ✅ algorithm spec |
-| Chip wipe | `0x85 NRF53_ERASE` | ✅ confirmed (1 CTRL-AP) | ✅ algorithm spec (2 CTRL-APs) |
-| Verify erase | std `DAP_Transfer` read flash | ✅ flash[0]=0xFFFFFFFF confirmed | (TBD on hw) |
-| Recover (unlock) | `0x84` (nRF53), `0x85` on nRF52 | ✅ **`0x85 ERASE` IS the recovery** — one call unlocks nRF52 | ✅ `0x84` algorithm spec |
-| App UICR program | `0x8A NRF53_UICR_PROGRAM_APP` | ✗ nRF5340 addresses; compose via std `DAP_Transfer` | ✅ algorithm spec |
-| Net UICR program | `0x8B NRF53_UICR_PROGRAM_NET` | n/a (no Net core) | ✅ algorithm spec |
-| Flash write | std `DAP_Transfer` + RAM loader | ✅ (host-driven) | ✅ (host-driven; vendor `0x86`/`0x87` future) |
+| `0x84` | `NRF53_RECOVER` (full unlock) | n/a (use `0x85`) | ✅ HW |
+| `0x85` | `NRF53_ERASE` (CTRL-AP ERASEALL) | ✅ HW | ✅ HW |
+| `0x86` | `NRF53_FLASH_WRITE_NET` | n/a (no Net) | ✅ HW |
+| `0x87` | `NRF53_FLASH_WRITE_APP` (family-aware via NVMC base param) | algo | ✅ HW |
+| `0x88` | `NRF53_READ_MEM` (chip-agnostic AHB-AP read) | ✅ HW | ✅ HW |
+| `0x8A` | `NRF53_UICR_PROGRAM_APP` | n/a (nRF52 UICR differs) | ✅ HW |
+| `0x8B` | `NRF53_UICR_PROGRAM_NET` (on-target stub) | n/a | ✅ HW |
+| `0x8C` | `NRF53_WRITE_MEM` (chip-agnostic AHB-AP write) | ✅ HW | ✅ HW |
+| `0x89` | `NRF53_TARGET_INFO` (chip identification convenience) | ⏳ pending | ⏳ pending |
 
-**nRF52840 is fully validated** end-to-end. nRF5340 is algorithm-
-complete but hasn't been smoke-tested against real Ring Pro 351 / DK
-hardware this cycle.
+`HW` = bench-validated against real silicon. `algo` = code is the same
+path as the HW-validated case (only NVMC base differs).
 
 **For nRF52 UICR.APPROTECT specifically** (when the bridge needs to
 unlock-then-flash on nRF52): the address is `0x10001208` (single
 register, not two like nRF5340's APPROTECT + SECUREAPPROTECT). Write
 sequence: `NVMC.CONFIG=Wen` (0x4001E504 ← 1, then poll READY at
 0x4001E400) → write the UICR word → `NVMC.CONFIG=Ren`. The bridge
-composes this from standard `DAP_Transfer` calls today; a dedicated
-vendor command for nRF52 is future work.
+composes this from `0x8C WRITE_MEM` + `0x88 READ_MEM` calls today;
+~5 round-trips total. A dedicated nRF52-family vendor command is
+deferred (the composed path is fast enough).
 
 **For full nRF52840 development recipes** (all six edevkit operations
 mapped onto concrete address tables + DAP_Transfer sequences), see
-**Appendix K** below — the dedicated nRF52840 cookbook.
+**Appendix K** below — the dedicated nRF52840 cookbook (now updated
+with `0x86`/`0x87`).
 
 **What works today on v0.1-step5:**
 
@@ -997,20 +1001,21 @@ USB CMSIS-DAP packet(s) the ESP32 sends to the probe.
 | 4 | **Partial flash erase** (`RPC_FLASH_ERASE_RANGE` 0x0052) | Compose from RAM loader's ERASE entry via `DAP_Transfer` ⚠️ — only for non-Nordic targets; for Nordic, partial erase usually isn't needed because RECOVER (0x84) is whole-chip | n/a (full-chip flow is the Nordic path) |
 | 4 | **Full flash erase** (`RPC_FLASH_ERASE_FULL` 0x0053) | Vendor cmd `0x85` `NRF53_ERASE` — works today ✅ | n/a |
 | 4 | **Target MCU recovery** (`RPC_ERASE_RECOVER` 0x0037) | Vendor cmd `0x84` `NRF53_RECOVER` — works today ✅ (full unlock: ERASEALL both cores + App UICR + Net UICR via on-target stub, one call) | n/a — already the shortcut |
-| 5 | **Partial flash write** (`RPC_FLASH_WRITE_RANGE` 0x0054) | Compose from RAM loader + `WRITE_MEM` `DAP_Transfer` ⚠️ | Vendor cmd `0x87` `NRF53_FLASH_WRITE_APP` (step 7) for App core; Net core uses vendor `0x86` (step 6) |
-| 5 | **Full flash write** (`RPC_FLASH_WRITE_FULL` 0x0055) | Multi-chunk: upload to ESP32 staging flash, then per-page program via RAM loader + standard `WRITE_MEM` ⚠️ | Same vendor cmds `0x86`/`0x87` once shipped |
+| 5 | **Partial flash write** (`RPC_FLASH_WRITE_RANGE` 0x0054) | App: vendor `0x87 NRF53_FLASH_WRITE_APP` (one call per 13-word batch) ✅; Net (nRF5340 only): vendor `0x86 NRF53_FLASH_WRITE_NET` ✅ | (already shipped) |
+| 5 | **Full flash write** (`RPC_FLASH_WRITE_FULL` 0x0055) | Multi-chunk: upload to ESP32 staging flash, then loop `0x86`/`0x87` over the image ~30× faster than DAP_Transfer composition ✅ | (already shipped) |
 
 **Legend**: ✅ = no extra ESP32 work, just send the right packet.
 ⚠️ = today the ESP32 owns the orchestration; future Pico vendor cmds
 will subsume it as a 1-call shortcut.
 
-**Practical takeaway for the bridge author:** start with the ✅ rows
-(Phase 2, Phase 4 erase + recover) — these need ~zero new code on the
-ESP32 because the Pico does all the work. Phase 3 (read) and Phase 5
-(write) need ESP32-side orchestration today; both will become single
-vendor commands as step 6/7/8 ship. Don't gate the ESP32 release on
-those — the host-driven path is well-understood and works against
-v0.1-step5.
+**Practical takeaway for the bridge author (v0.1.6-step7 reality):**
+Almost everything is a single vendor command now. Phase 2 (probe +
+target info), Phase 3 (flash read via `0x88`), Phase 4 (erase via
+`0x85`, recover via `0x84`), Phase 5 (App flash write via `0x87`, Net
+via `0x86`) — all need only ~zero ESP32-side orchestration code.
+Loop the vendor command, push BLE notifications for progress, done.
+The ESP32 doesn't need to know about NVMC sequencing, CTRL-AP magic,
+or the AHB-AP-13-op wall — those all live probe-side now.
 
 ### 12.1 `RPC_FLASH_READ_FULL` — 0x0050
 
@@ -2837,7 +2842,81 @@ Every USB packet here is either a standard CMSIS-DAP command (DAP_*)
 or the single vendor command `0x85 NRF53_ERASE`. No other vendor
 command is needed for nRF52840 against v0.1.1-step5.
 
-### K.bonus — `0x88 NRF53_READ_MEM` + `0x8C NRF53_WRITE_MEM` (v0.1.2 + v0.1.3)
+### K.bonus.1 — `0x86 NRF53_FLASH_WRITE_NET` (v0.1.5) + `0x87 NRF53_FLASH_WRITE_APP` (v0.1.6)
+
+Probe-side **batched flash programming** — wraps the Nordic NVMC
+sequence (Wen → per-word write+READY → Ren) in a single packet so the
+bridge avoids per-word USB round-trips.
+
+**`0x86 NRF53_FLASH_WRITE_NET`** — Net flash write (nRF5340 only):
+```
+[0x86, u32_le addr, u16_le word_count, data[word_count*4]]
+   addr        — Net flash destination (4-byte aligned, typ 0x01000000..0x0103FFFF)
+   word_count  — ≤ 14 (7-byte hdr + 14*4 = 63 ≤ 64-B USB-FS packet)
+→ [0x86, status, u16_le words_written]
+```
+ap=1, csw=0x03800042 (Net AHB-AP), NVMC at 0x41080000 are all
+hardcoded inside the probe.
+
+**`0x87 NRF53_FLASH_WRITE_APP`** — App flash write (nRF52 + nRF5340 App):
+```
+[0x87, u32_le nvmc_base, u32_le addr, u16_le word_count, data[word_count*4]]
+   nvmc_base   — 0x4001E000 nRF52 family; 0x50039000 nRF5340 App
+   addr        — App flash destination (4-byte aligned, typ 0x00000000..0x000FFFFF)
+   word_count  — ≤ 13 (11-byte hdr + 13*4 = 63)
+→ [0x87, status, u16_le words_written]
+```
+ap=0, csw=0x23000002 (App AHB-AP) hardcoded; NVMC base is the only
+family-specific knob.
+
+**Behaviour for both:**
+- Caller pre-erases via `0x85 NRF53_ERASE` (NVMC can't reprogram
+  non-erased flash; would WAIT-loop forever otherwise).
+- Words equal to `0xFFFFFFFF` are **skipped** — NVMC can't reprogram
+  erased flash anyway, and skipping saves USB time on sparse images
+  (e.g., a hex image where unused pages stay 0xFF).
+- `words_written` reports the count programmed before any mid-batch
+  failure — the bridge can resume from `addr + words_written*4` on
+  retry.
+- `NVMC.CONFIG = Ren` is restored even on mid-loop failure; flash is
+  never left write-enabled.
+
+**Bridge workflow for a full image (1 MB App, 256 KB Net):**
+
+```python
+# 1. Erase (one call wipes everything)
+TX([0x85])
+
+# 2. Stream pages from BLE staging to flash, 13 (App) or 14 (Net) words per call
+for batch_start in range(0, image_len, batch_words * 4):
+    batch = image[batch_start : batch_start + batch_words * 4]
+    if family == "nrf5340" and target == "net":
+        cmd = bytes([0x86]) + u32(0x01000000 + batch_start) + u16(batch_words) + batch
+    else:  # App
+        cmd = bytes([0x87]) + u32(NVMC_BASE) + u32(batch_start) + u16(batch_words) + batch
+    resp = TX(cmd)
+    # response: [echo, status, u16 words_written]
+    assert resp[1] == 0
+    assert struct.unpack('<H', resp[2:4])[0] == batch_words
+
+# 3. (nRF5340 only) program UICR.APPROTECT permanently if desired — done by 0x84 RECOVER
+# 4. (Both) verify by reading back via 0x88 READ_MEM in 15-word chunks
+```
+
+**Speedup math** (USB-FS, ~1 ms RTT):
+
+| Image | Path | USB calls | Wall clock |
+|---|---|---|---|
+| 1 MB App, compose via 0x8C+0x88 poll | 3 per word | ~750,000 | ~12 minutes |
+| 1 MB App, vendor `0x87` (13 words/call) | 1 per 13 words | ~20,000 | ~25 seconds |
+| 256 KB Net, compose via 0x8C+0x88 poll | 3 per word | ~200,000 | ~3 minutes |
+| 256 KB Net, vendor `0x86` (14 words/call) | 1 per 14 words | ~4,700 | ~6 seconds |
+
+~35× fewer USB calls; ~30× wall-clock speedup on USB-FS.
+
+---
+
+### K.bonus.2 — `0x88 NRF53_READ_MEM` + `0x8C NRF53_WRITE_MEM` (v0.1.2 + v0.1.3)
 
 Available since v0.1.2-step8 (READ) and v0.1.3-step8 (WRITE). Chip-
 agnostic — work against any AHB-AP. Replace multi-`DAP_Transfer`

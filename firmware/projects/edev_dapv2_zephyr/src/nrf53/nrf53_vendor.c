@@ -31,6 +31,23 @@ LOG_MODULE_REGISTER(nrf53_vendor, CONFIG_EDEV_NRF53_OPS_LOG_LEVEL);
  * it here, but the function signature must match the upstream weak. */
 struct dap_link_context;
 
+/* The full vendor command surface as of v0.1.6-step7:
+ *
+ *   0x84  NRF53_RECOVER           full unlock (ERASE + UICR App + UICR Net)
+ *   0x85  NRF53_ERASE             CTRL-AP ERASEALL all Nordic CTRL-APs
+ *   0x86  NRF53_FLASH_WRITE_NET   batched Net flash write (AP#1 + Net NVMC)
+ *   0x87  NRF53_FLASH_WRITE_APP   batched App flash write (AP#0 + family NVMC)
+ *   0x88  NRF53_READ_MEM          chip-agnostic AHB-AP burst read
+ *   0x8A  NRF53_UICR_PROGRAM_APP  host-side App UICR write (nRF5340)
+ *   0x8B  NRF53_UICR_PROGRAM_NET  on-target Net stub + UICR write (nRF5340)
+ *   0x8C  NRF53_WRITE_MEM         chip-agnostic AHB-AP burst write
+ *
+ *   0x80..0x83, 0x89, 0x8D..0x9F  reserved / ID_DAP_INVALID
+ *
+ * Wire formats: see the per-handler comments below. Status byte mirrors
+ * the nrf53_status_t enum in nrf53.h.
+ */
+
 /* ------------------------------------------------------------------ */
 /* Wire-encoding helper                                               */
 /* ------------------------------------------------------------------ */
