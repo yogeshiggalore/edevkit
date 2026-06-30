@@ -75,6 +75,7 @@ target_sources(app PRIVATE
     $<$<BOOL:${CONFIG_EDEV_NRF53_OPS}>:src/nrf53/nrf53_nvmc.c>
     $<$<BOOL:${CONFIG_EDEV_NRF53_OPS}>:src/nrf53/nrf53_uicr.c>
     $<$<BOOL:${CONFIG_EDEV_NRF53_OPS}>:src/nrf53/nrf53_stubs.c>
+    $<$<BOOL:${CONFIG_EDEV_NRF53_OPS}>:src/nrf53/nrf53_recover.c>
     $<$<BOOL:${CONFIG_EDEV_NRF53_OPS}>:src/nrf53/nrf53_vendor.c>
 )
 

@@ -32,8 +32,48 @@ LOG_MODULE_REGISTER(nrf53_vendor, CONFIG_EDEV_NRF53_OPS_LOG_LEVEL);
 struct dap_link_context;
 
 /* ------------------------------------------------------------------ */
+/* Wire-encoding helper                                               */
+/* ------------------------------------------------------------------ */
+static inline void put_u32_le(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)(v & 0xFFU);
+	p[1] = (uint8_t)((v >> 8) & 0xFFU);
+	p[2] = (uint8_t)((v >> 16) & 0xFFU);
+	p[3] = (uint8_t)((v >> 24) & 0xFFU);
+}
+
+/* ------------------------------------------------------------------ */
 /* Per-command handlers                                               */
 /* ------------------------------------------------------------------ */
+
+/* NRF53_RECOVER (0x84)
+ *   Request:  []
+ *   Response: [u8 status, u8 ap_count,
+ *              u32_le app_approtect, u32_le app_secureapprotect,
+ *              u32_le net_marker, u32_le net_approtect]
+ *             = 20 bytes total (echo + status + count + 4×u32)
+ *
+ * On success: ap_count = 2 (nRF5340) or 1 (nRF52), all four u32s set:
+ *   app_approtect, app_secureapprotect, net_approtect → 0x50FA50FA
+ *   net_marker → 0xDEADC0DE
+ */
+static uint16_t do_recover(uint8_t *const response)
+{
+	struct nrf53_recover_info info;
+	nrf53_status_t st = nrf53_recover(&info);
+	LOG_INF("NRF53_RECOVER → %s (aps=%u app=0x%08x/0x%08x net=0x%08x/0x%08x)",
+		nrf53_status_str(st), info.ap_count,
+		info.app_approtect, info.app_secureapprotect,
+		info.net_marker, info.net_approtect);
+
+	response[1] = (uint8_t)st;
+	response[2] = info.ap_count;
+	put_u32_le(&response[3],  info.app_approtect);
+	put_u32_le(&response[7],  info.app_secureapprotect);
+	put_u32_le(&response[11], info.net_marker);
+	put_u32_le(&response[15], info.net_approtect);
+	return 19U;
+}
 
 /* NRF53_ERASE (0x85)
  *   Request:  []
@@ -49,15 +89,6 @@ static uint16_t do_erase(uint8_t *const response)
 	response[1] = (uint8_t)st;
 	response[2] = (uint8_t)count;
 	return 3U;
-}
-
-/* Helper — emit a u32 LE into response[off..off+3]. */
-static inline void put_u32_le(uint8_t *p, uint32_t v)
-{
-	p[0] = (uint8_t)(v & 0xFFU);
-	p[1] = (uint8_t)((v >> 8) & 0xFFU);
-	p[2] = (uint8_t)((v >> 16) & 0xFFU);
-	p[3] = (uint8_t)((v >> 24) & 0xFFU);
 }
 
 /* NRF53_UICR_PROGRAM_APP (0x8A)
@@ -122,6 +153,10 @@ uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
 	LOG_DBG("vendor cmd 0x%02x", cmd);
 
 	switch (cmd) {
+	case NRF53_VENDOR_RECOVER:
+		response[0] = cmd;
+		return do_recover(response);
+
 	case NRF53_VENDOR_ERASE:
 		response[0] = cmd;
 		return do_erase(response);
@@ -134,8 +169,8 @@ uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
 		response[0] = cmd;
 		return do_uicr_program_net(response);
 
-	/* Handlers for 0x84 / 0x86..0x89 land in subsequent steps. They
-	 * fall through to ID_DAP_INVALID until then. */
+	/* Handlers for 0x86..0x89 land in subsequent steps. They fall
+	 * through to ID_DAP_INVALID until then. */
 
 	default:
 		response[0] = ID_DAP_INVALID;

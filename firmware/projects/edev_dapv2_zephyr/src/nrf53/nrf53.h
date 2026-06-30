@@ -382,6 +382,46 @@ extern const uint16_t nrf53_net_stub_size;
 extern const uint8_t  nrf53_net_stub[];
 
 /* ------------------------------------------------------------------ */
+/* RECOVER — full 8-stage unlock + UICR programming                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Diagnostic info collected during a recover run.
+ *
+ * Filled regardless of overall success/failure so the host can see how
+ * far the recover got and what state the chip ended up in. Fields not
+ * yet observed default to 0xFFFFFFFF (or 0 for ap_count).
+ */
+struct nrf53_recover_info {
+	uint8_t  ap_count;         /* Number of CTRL-APs found by the IDR scan. */
+	uint32_t app_approtect;    /* App UICR.APPROTECT readback. */
+	uint32_t app_secureapprotect;
+	uint32_t net_marker;       /* Net SRAM[0x21000000] readback. */
+	uint32_t net_approtect;    /* Net UICR.APPROTECT readback. */
+};
+
+/**
+ * @brief Full recover flow: ERASE both cores + program App + Net UICR.
+ *
+ * Composes the lower-level operations from steps 2-4 into a single
+ * end-to-end unlock sequence, matching the Python reference's
+ * `_recover_sync()`. Per docs/NRF5340_ALGORITHMS.md §4.
+ *
+ * Sequence:
+ *   1. nrf53_erase_all      — CTRL-AP IDR scan + ERASEALL each
+ *                             (also does dp_full_wake at start)
+ *   2. nrf53_uicr_program_app
+ *   3. nrf53_uicr_program_net
+ *
+ * Acceptance: post-recover, both cores' UICR.APPROTECT readbacks
+ * = 0x50FA50FA and the Net SRAM marker = 0xDEADC0DE.
+ *
+ * @param info  Out-param (optional). Always filled — even on failure
+ *              so the host can see partial state.
+ */
+nrf53_status_t nrf53_recover(struct nrf53_recover_info *info);
+
+/* ------------------------------------------------------------------ */
 /* CMSIS-DAP vendor command IDs (0x80..0x9F)                          */
 /* ------------------------------------------------------------------ */
 
