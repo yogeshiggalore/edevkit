@@ -41,7 +41,7 @@ and the wire-format expectations below assume v0.1.1-step5 semantics.
 | Flash read | std `DAP_Transfer` AHB-AP | ✅ confirmed | ✅ algorithm spec |
 | Chip wipe | `0x85 NRF53_ERASE` | ✅ confirmed (1 CTRL-AP) | ✅ algorithm spec (2 CTRL-APs) |
 | Verify erase | std `DAP_Transfer` read flash | ✅ flash[0]=0xFFFFFFFF confirmed | (TBD on hw) |
-| Recover (unlock) | `0x84 NRF53_RECOVER` | ✗ nRF5340-only | ✅ algorithm spec |
+| Recover (unlock) | `0x84` (nRF53), `0x85` on nRF52 | ✅ **`0x85 ERASE` IS the recovery** — one call unlocks nRF52 | ✅ `0x84` algorithm spec |
 | App UICR program | `0x8A NRF53_UICR_PROGRAM_APP` | ✗ nRF5340 addresses; compose via std `DAP_Transfer` | ✅ algorithm spec |
 | Net UICR program | `0x8B NRF53_UICR_PROGRAM_NET` | n/a (no Net core) | ✅ algorithm spec |
 | Flash write | std `DAP_Transfer` + RAM loader | ✅ (host-driven) | ✅ (host-driven; vendor `0x86`/`0x87` future) |
@@ -57,6 +57,10 @@ sequence: `NVMC.CONFIG=Wen` (0x4001E504 ← 1, then poll READY at
 0x4001E400) → write the UICR word → `NVMC.CONFIG=Ren`. The bridge
 composes this from standard `DAP_Transfer` calls today; a dedicated
 vendor command for nRF52 is future work.
+
+**For full nRF52840 development recipes** (all six edevkit operations
+mapped onto concrete address tables + DAP_Transfer sequences), see
+**Appendix K** below — the dedicated nRF52840 cookbook.
 
 **What works today on v0.1-step5:**
 
@@ -2522,3 +2526,332 @@ engineer building this from zero, with this doc + access to the reference
 implementation, has everything they need. If a new finding emerges during
 implementation, add it both to project memory AND back to this doc (the
 two are intended to stay in sync).
+
+---
+
+## Appendix K — nRF52840 cookbook (all 6 ops, concrete recipes)
+
+Self-contained reference for building the six edevkit operations
+(probe-info, target-info, flash-read, flash-erase, flash-write,
+recover) against an nRF52840 target through the v0.1.1-step5 probe
+firmware. Hardware-validated. Where v0.1.1-step5's vendor commands
+help, the recipe says so; where the ESP32 has to compose from
+standard `DAP_Transfer`, the exact byte sequence is given.
+
+### K.1 nRF52840 address & constant reference
+
+| Region | Address | Notes |
+|---|---|---|
+| Flash | `0x00000000` – `0x000FFFFF` | 1 MB, 256 pages × 4 KB |
+| SRAM | `0x20000000` – `0x2003FFFF` | 256 KB |
+| FICR base | `0x10000000` | Read-only chip identification |
+| FICR.CODEPAGESIZE | `0x10000010` | 4096 on nRF52840 |
+| FICR.CODESIZE | `0x10000014` | Page count (256 on nRF52840) |
+| FICR.INFO.PART | `0x10000100` | e.g. `0x00052840` for nRF52840 |
+| FICR.INFO.VARIANT | `0x10000104` | ASCII variant, e.g. `0x41414230` ("AAB0") |
+| FICR.INFO.PACKAGE | `0x10000108` | `0x00002000` = QIAA, etc. |
+| FICR.INFO.RAM | `0x1000010C` | KB of RAM (256) |
+| FICR.INFO.FLASH | `0x10000110` | KB of flash (1024) |
+| FICR.DEVICEID[0/1] | `0x10000060`/`0x10000064` | 64-bit unique device ID |
+| UICR base | `0x10001000` | Read/erase as part of a page |
+| UICR.APPROTECT | `0x10001208` | Single word, magic `0x5A` in low byte = HwDisabled |
+| UICR.NRFFW[15] | `0x10001014..0x10001050` | Reserved for Nordic FW |
+| NVMC base | `0x4001E000` | Non-Volatile Memory Controller |
+| NVMC.READY | `0x4001E400` | bit 0 = 1 when idle |
+| NVMC.CONFIG | `0x4001E504` | 0=Ren, 1=Wen, 2=Een |
+| NVMC.ERASEPAGE | `0x4001E508` | Write page address to erase one page |
+| NVMC.ERASEALL | `0x4001E50C` | Write 1 to erase chip + UICR (slower than CTRL-AP) |
+| NVMC.ERASEUICR | `0x4001E514` | Write 1 to erase UICR only |
+| Cortex-M4 CPUID | `0xE000ED00` | Should read `0x410FC241` on nRF52840 |
+| Cortex-M4 DHCSR | `0xE000EDF0` | Debug Halting Control/Status |
+| Cortex-M4 DEMCR | `0xE000EDFC` | bit 0 = VC_CORERESET (halt on reset) |
+| Cortex-M4 AIRCR | `0xE000ED0C` | bit 2 = SYSRESETREQ |
+| ARM ROM table | `0xE00FE000` | Standard ROM table; walk for component IDs |
+
+CTRL-AP (Nordic-specific debug port, AP=1 on nRF52840):
+
+| CTRL-AP reg | Offset | Use |
+|---|---|---|
+| RESET | `0x00` | Write 1 to assert; 0 to release |
+| ERASEALL | `0x04` | Write 1 to start mass erase |
+| ERASEALLSTATUS | `0x08` | Read 0 when idle, 1 when busy |
+| APPROTECTSTATUS | `0x0C` | Read APPROTECT state (bit 0 = locked) |
+| IDR | `0xFC` | Identifies CTRL-AP (`0x02880000` or `0x12880000`) |
+
+CSW value for nRF52840 App AHB-AP: `0x23000002` (HPROT=secure/priv,
+32-bit, no auto-increment).
+
+### K.2 Op 1 — Read edev_dap info (probe identity)
+
+Standard `DAP_Info` (cmd 0x00). The ESP32 bridge reads multiple IDs to
+build its probe-info display.
+
+```
+Send:    [0x00, 0xF0]                       # CAPABILITIES
+Receive: [0x00, len, caps...]
+Send:    [0x00, 0xFF]                       # PACKET_SIZE (u16 LE)
+Receive: [0x00, 0x02, lo, hi]
+Send:    [0x00, 0x04]                       # FW_VERSION (string)
+Receive: [0x00, len, "2.1.0" ...]
+Send:    [0x00, 0x01]                       # VENDOR (string)
+Send:    [0x00, 0x02]                       # PRODUCT
+Send:    [0x00, 0x03]                       # SERIAL
+```
+
+Expected from v0.1.1-step5: caps=`0x11`, packet_size=512, fw_version
+`"2.1.0"`, vendor `"Edevkit"`, product `"edev_dapv2 CMSIS-DAP"`, serial
+= RP2350 chip unique 64-bit ID as hex.
+
+### K.3 Op 2 — Read target MCU info (full ARM identification)
+
+DPIDR + AP_IDR + CPUID + FICR — full chip identification recipe:
+
+```
+1. dap_connect_and_reset(probe)           # DAP_Connect + SWJ_Sequence + idle
+2. read DPIDR (DP reg 0x00)               # MUST be first xact after line reset
+3. write CTRL/STAT (DP reg 0x04) = 0x50000000   # power up debug + system
+4. read CTRL/STAT, verify (val & 0xA0000000) == 0xA0000000
+5. read AHB-AP[0].IDR (AP=0, bank=0xF, reg 0xFC)
+6. read mem 0xE000ED00 (CPUID) via AHB-AP[0]   # ARM core identification
+7. read mem 0x10000100 (FICR.INFO.PART)        # 0x00052840 = nRF52840
+8. read mem 0x10000104 (FICR.INFO.VARIANT)     # silicon revision
+9. read mem 0x10000060 (FICR.DEVICEID[0])      # unique ID
+10. read mem 0x10000064 (FICR.DEVICEID[1])
+```
+
+Expected on nRF52840:
+- DPIDR = `0x2ba01477`  (ARM=0x23B, partno=0xba, version=1=DPv1)
+- AHB-AP[0].IDR = `0x24770011`  (ARM AHB-AP rev 1)
+- CPUID = `0x410FC241`  (Cortex-M4, r0p1, ARM)
+- FICR.INFO.PART = `0x00052840`
+- FICR.DEVICEID = unique 64-bit per chip
+
+Bridge response can pack this into the existing `RPC_TARGET_INFO`
+TLV format (§11), or use a richer per-vendor format. For the
+**all-ARM-supported-details** ask: CPUID gives implementer + arch +
+part + revision; ROM table walk at `0xE00FE000` enumerates components
+(ITM, DWT, FPB, etc.) if needed.
+
+### K.4 Op 3 — Partial + full flash read
+
+Standard AHB-AP memory read. Use auto-increment for bulk reads (set
+CSW bit 4); set TAR once per 1 KB boundary (Nordic's TAR wraps at 1
+KB with auto-inc):
+
+```
+Per-1-KB-block:
+  write AP.CSW = 0x23000012      # HPROT=secure/priv, 32-bit, +AddrInc=on
+  write AP.TAR = block_base
+  for offset in 0..1023, step 4:
+    read AP.DRW   (posted)        # data appears on the NEXT AP read or DP.RDBUFF
+    accumulate result
+  read DP.RDBUFF                  # flush final word
+```
+
+Or per-word (safer, ~5% slower):
+```
+For each word:
+  write AP.CSW = 0x23000002      # no auto-inc
+  write AP.TAR = addr
+  read AP.DRW                    # posted
+  read DP.RDBUFF                 # actual data
+```
+
+**Address range for nRF52840 flash**: `0x00000000` to `0x000FFFFF`
+(1 MB). Reading **flash only** = read `0x00000000` to `0x000FFFFF`.
+Reading UICR additionally = read `0x10001000` to `0x10001FFF`. FICR
+is read-only and accessible at any time (no halt required).
+
+**Watch the AHB-AP-13-op wall on running firmware** (§15.6). For
+nRF52840 with sleepy firmware (any battery-saving Nordic app), batch
+≤ 12 AP transactions then issue a CTRL-AP soft-reset:
+
+```
+Between batches of ≤ 12 AHB-AP reads:
+  write CTRL-AP[1].RESET = 1
+  sleep ≥ 2 ms
+  write CTRL-AP[1].RESET = 0
+  # then re-arm DP: write DP.ABORT = 0x1E (sticky clear)
+  #                write DP.CTRL/STAT = 0x50000000 (re-power)
+```
+
+### K.5 Op 4 — Partial + full flash erase
+
+**Full chip erase** — use the vendor command:
+
+```
+Send:    [0x85]                          # NRF53_ERASE
+Receive: [0x85, 0x00, 0x01]              # status=OK, ap_count=1
+```
+
+Erases all flash + UICR via CTRL-AP ERASEALL. ~1 s on nRF52840. After
+this the chip is unlocked (APPROTECT = 0xFFFFFFFF) and ready for flash
+write.
+
+**Partial erase** (per-page, 4 KB granularity) — host-driven via NVMC:
+
+```
+1. halt the core (write DHCSR @ 0xE000EDF0 = 0xA05F0003)
+2. wait NVMC.READY (read 0x4001E400 bit 0 == 1)
+3. write NVMC.CONFIG (0x4001E504) = 2     # Een = erase enabled
+4. wait NVMC.READY
+5. write NVMC.ERASEPAGE (0x4001E508) = page_addr (must be 4-KB aligned)
+6. wait NVMC.READY   (page erase takes ~85 ms on nRF52840)
+7. write NVMC.CONFIG = 0                  # Ren = back to read-only
+```
+
+Boundary validation: `page_addr & 0xFFF == 0` AND `page_addr < 0x100000`.
+
+### K.6 Op 5 — Partial + full flash write
+
+**Two approaches, pick one:**
+
+**A. Direct NVMC writes** (slow but simple) — write each word through
+the NVMC. Each write takes ~40 µs on nRF52 + the SWD round-trip
+(~200 µs at 1 MHz). About **40 KB/s typical** for full-flash write.
+
+```
+1. halt the core
+2. erase the target page(s) via §K.5 partial erase first
+3. wait NVMC.READY, write NVMC.CONFIG = 1 (Wen)
+4. for each word:
+     wait NVMC.READY
+     write the word directly to flash address  (NVMC handles the program op)
+5. wait NVMC.READY, write NVMC.CONFIG = 0 (Ren)
+6. verify by reading back
+```
+
+Validation per write: `addr & 3 == 0`, `addr < 0x100000`, the page
+containing `addr` must already be erased (NVMC will fault on writes
+to non-erased flash).
+
+**B. CMSIS Flash Algorithm RAM loader** (fast, recommended) — load a
+small Thumb-2 program into RAM, set its register args, run it on the
+target's own core. The target CPU does the NVMC dance at native speed:
+**~150 KB/s typical** on nRF52.
+
+```
+1. halt core (DHCSR write)
+2. write the loader binary to RAM (e.g. 0x20000000), ≤ 256 B for a
+   minimal erase/program/verify routine
+3. write source data to RAM (e.g. 0x20000400), one page at a time
+4. set CPU registers via DAP_Transfer to DCRSR/DCRDR:
+     R0 = function selector (1=ERASE, 2=PROGRAM)
+     R1 = arg1 (page addr / source RAM addr)
+     R2 = arg2 (length / page addr)
+     PC = loader entry
+     LR = BKPT trap address
+     SP = top of staging RAM
+5. write DHCSR = 0xA05F0001  (release halt, run)
+6. poll DHCSR bit 17 (S_HALT) until target hits BKPT
+7. read R0 via DCRSR/DCRDR → return code
+8. repeat per page
+```
+
+A reference Thumb-2 loader for nRF52 is at
+`firmware/projects/edev_dapv2/loader/nrf_flash_loader.S` in the
+pico-sdk reference branch (algorithm-only; port if needed). pyocd
+and probe-rs ship the same pattern as a `.FLM` Cortex Flash Magic
+file — either is a valid starting point.
+
+**Hex / bin file upload to the bridge:** stage in ESP32 external
+flash (4 MB FAT partition per §13.2 of this doc), then drive the
+flash write op page-by-page from the staged file.
+
+### K.7 Op 6 — nRF52840 recovery (chip unlock)
+
+**Use vendor cmd 0x85.** On nRF52, "recovery" = ERASEALL = unlock.
+There's no separate UICR-unlock step like nRF5340 needs. One call:
+
+```
+Send:    [0x85]                          # NRF53_ERASE
+Receive: [0x85, 0x00, 0x01]              # status=OK, ap_count=1
+```
+
+Post-recovery state of the chip:
+- All flash = `0xFFFFFFFF`
+- All UICR = `0xFFFFFFFF` (including UICR.APPROTECT — the chip is now unlocked)
+- CTRL-AP.APPROTECTSTATUS = 1 (locked from chip's POV until next reset)
+- Need to pulse a reset (or just attach again) for the unlocked state to take effect
+
+After recovery, the bridge typically flashes new firmware (§K.6) which
+includes either UICR.APPROTECT=0x5A (HwDisabled) at offset 0x208 in the
+UICR page, or just leaves UICR alone (chip stays unlocked because
+nothing wrote 0x00 to APPROTECT).
+
+**Do NOT call `0x84 NRF53_RECOVER` on nRF52** — that command composes
+nRF5340-specific UICR programming and will fail mid-flow with the chip
+in a partial state.
+
+### K.8 Halt / reset / resume primitives
+
+Standard Cortex-M debug, no vendor commands needed:
+
+| Op | Sequence |
+|---|---|
+| Halt core | write `DHCSR` (`0xE000EDF0`) = `0xA05F0003` (DBGKEY \| C_DEBUGEN \| C_HALT) |
+| Resume | write `DHCSR` = `0xA05F0001` (DBGKEY \| C_DEBUGEN, clear C_HALT) |
+| Single step | write `DHCSR` = `0xA05F000D` (DBGKEY \| C_DEBUGEN \| C_HALT \| C_STEP) |
+| System reset | write `AIRCR` (`0xE000ED0C`) = `0x05FA0004` (VECTKEY \| SYSRESETREQ) |
+| Reset + halt | DEMCR.VC_CORERESET=1 → SYSRESETREQ → core halts at reset vector |
+| Read register | write `DCRSR` (`0xE000EDF4`) = `reg_id`, then read `DCRDR` (`0xE000EDF8`) |
+| Write register | write `DCRDR` = value, then write `DCRSR` = `reg_id \| 0x10000` |
+
+Register IDs for DCRSR: R0..R12 = 0..12, SP = 13, LR = 14, PC = 15,
+xPSR = 16, MSP = 17, PSP = 18, CONTROL+FAULTMASK+BASEPRI+PRIMASK = 20.
+
+### K.9 What a complete ESP32 BLE session looks like on nRF52840
+
+End-to-end flow for the phone-app `RPC_FLASH_WRITE_FULL` operation
+(per §12), mapped onto nRF52840:
+
+```
+Phone → ESP32   (BLE TLV)               ESP32 → Pico   (USB CMSIS-DAP)
+─────────────                            ──────────────────────────────
+RPC_USB_STATUS                           [0x00, 0xF0] DAP_Info(caps)
+                                         [0x02, 0x01] DAP_Connect(SWD)
+                                         [0x12, 72,  …]  SWJ_Sequence (line reset)
+                                         [0x12, 64,  …]  SWJ_Sequence (line reset + idle)
+                                         [0x05, …] DAP_Transfer (DPIDR read)
+
+RPC_TARGET_INFO                          DAP_Transfer chain reading CPUID + FICR.INFO.PART
+                                         → identify nRF52840, flash_size=1MB, page=4KB
+
+RPC_FLASH_WRITE_FULL  (start, total)     stage to ESP32 ext flash, ack
+
+RPC_FLASH_WRITE_FULL_CHUNK × N           each chunk → ext flash, ack
+
+RPC_FLASH_WRITE_FULL_COMMIT              [0x85] NRF53_ERASE  (full wipe + unlock)
+                                         DAP_Transfer halt core
+                                         DAP_Transfer write loader to 0x20000000
+                                         DAP_Transfer set R0..PC/LR, resume, poll halt
+                                          (loop per 4 KB page)
+                                         DAP_Transfer read back to verify
+                                         DAP_Transfer reset target
+
+RPC_FLASH_WRITE_FULL_PROGRESS (every page)
+…final response with verify md5
+```
+
+Every USB packet here is either a standard CMSIS-DAP command (DAP_*)
+or the single vendor command `0x85 NRF53_ERASE`. No other vendor
+command is needed for nRF52840 against v0.1.1-step5.
+
+### K.10 What pieces of nRF52840 support are NOT in v0.1.1-step5
+
+Honest list of "you have to compose this yourself" items the ESP32
+bridge will own until subsequent Pico-side releases ship:
+
+- **AHB-AP-13-op batching** — the bridge must split long flash reads
+  into batches of ≤ 12 AHB-AP transactions with CTRL-AP soft-reset
+  between (§15.6). Future vendor cmd `0x88` (step 8) will subsume.
+- **CMSIS Flash Algo orchestration** — load loader to RAM, set
+  regs, run, poll halt, read result. Standard CMSIS-DAP only; no
+  shortcut yet. Future vendor cmd `0x87` (step 7) will subsume.
+- **UICR write as a vendor command** — for now the bridge writes
+  the NVMC sequence itself.  Future vendor cmd `0x8A` for nRF52
+  family is unplanned (nRF52 UICR is a single register, so the
+  composition is short).
+
+None of these block ESP32 development; they're efficiency wins for
+future releases.
