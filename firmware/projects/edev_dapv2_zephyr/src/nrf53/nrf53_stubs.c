@@ -203,10 +203,20 @@ nrf53_status_t nrf53_uicr_program_net(uint32_t *out_marker,
 	k_msleep(CTRL_AP3_RESET_RELEASE_MS);
 	LOG_INF("CTRL-AP#3 reset pulsed — Net stub running");
 
-	/* Bug 6b mitigation — sticky clear after CTRL-AP RESET, before
-	 * reading Net SRAM. */
-	(void)nrf53_dp_sticky_clear();
-	(void)nrf53_dp_power_up(50);
+	/* After CTRL-AP#3 RESET, the DP/AP state may be torn down — the
+	 * Net core reset can ripple through the debug arbitration. The
+	 * Python reference does a FULL DP wake at this boundary, not
+	 * just sticky_clear + power_up. Without this, subsequent Net
+	 * AHB-AP reads return 0x00000000 (the bus arbitration is in a
+	 * weird state and reads don't actually reach Net SRAM).
+	 *
+	 * Empirically: nRF5340 + stub-not-running symptom was marker
+	 * reading 0x00000000 (not 0xFFFFFFFF erased, not 0xDEADC0DE
+	 * done, not 0xBADF00D5 fault) — that's the signature of a Net
+	 * AHB-AP read returning literal zeros because the AP path is
+	 * disrupted, not because the stub didn't run. Re-issuing
+	 * full_wake restores the bus state. */
+	(void)nrf53_dp_full_wake(NULL);
 
 	/* Stage 7 — Poll Net SRAM marker for completion. */
 	uint32_t marker = 0;

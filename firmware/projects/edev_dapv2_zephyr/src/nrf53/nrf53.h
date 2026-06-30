@@ -400,6 +400,43 @@ struct nrf53_recover_info {
 	uint32_t net_approtect;    /* Net UICR.APPROTECT readback. */
 };
 
+/* ------------------------------------------------------------------ */
+/* Memory read — chip-agnostic AHB-AP burst read                      */
+/* ------------------------------------------------------------------ */
+
+/* Flags for nrf53_read_mem.flags */
+#define NRF53_READ_FLAG_VC_CORERESET_CLEAR  0x01U
+   /* Clear DEMCR.VC_CORERESET (bit 0) + sleep 50 ms BEFORE the read.
+    * Fix for Bug 6a (App readback 0xFF post-reset on nRF5340). Pass
+    * this flag when reading nRF5340 App flash right after a CTRL-AP
+    * RESET; ignore on nRF52 (DEMCR is the same on all Cortex-M cores
+    * so the write is harmless, but the post-reset condition only
+    * applies to nRF5340). */
+
+/**
+ * @brief Read N contiguous 32-bit words from AHB-AP memory.
+ *
+ * Chip-agnostic — works on any ARM Cortex-M via the AHB-AP. The
+ * caller provides the AP index, CSW value, base address, and word
+ * count; the function uses per-word TAR writes (no auto-increment)
+ * to avoid Nordic's 1-KB TAR-wrap quirk.
+ *
+ * The output buffer must be at least `word_count * 4` bytes. Each
+ * word is packed little-endian into the output buffer.
+ *
+ * @param ap_index     AHB-AP index (0 for App on nRF52/nRF5340).
+ * @param csw          CSW for this AP (NRF53_CSW_APP / _NET, or
+ *                     vendor-specific). For nRF52840 use
+ *                     NRF53_CSW_APP (0x23000002).
+ * @param addr         Base address; must be 4-byte aligned.
+ * @param word_count   Number of 32-bit words to read.
+ * @param flags        NRF53_READ_FLAG_* bitmask.
+ * @param out          Output buffer (word_count * 4 bytes).
+ */
+nrf53_status_t nrf53_read_mem(uint8_t ap_index, uint32_t csw,
+			      uint32_t addr, uint32_t word_count,
+			      uint32_t flags, uint8_t *out);
+
 /**
  * @brief Full recover flow: ERASE both cores + program App + Net UICR.
  *

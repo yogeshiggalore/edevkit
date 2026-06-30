@@ -91,6 +91,50 @@ static uint16_t do_erase(uint8_t *const response)
 	return 3U;
 }
 
+/* NRF53_READ_MEM (0x88) — chip-agnostic AHB-AP burst read
+ *
+ *   Request (13 bytes): [0x88, u8 flags, u8 ap_index,
+ *                        u32_le csw, u32_le addr, u16_le word_count]
+ *     flags bit 0 = clear DEMCR.VC_CORERESET before read (nRF5340 fix 6a)
+ *   Response on success: [0x88, status, data[word_count*4]]  little-endian words
+ *   Response on error:   [0x88, status]
+ *
+ * Caller must cap word_count so 2 + word_count*4 ≤ DAP packet size
+ * (512 bytes minimum → 127 words max).
+ */
+#define NRF53_VENDOR_READ_MEM_MAX_WORDS  127U
+
+static uint16_t do_read_mem(const uint8_t *const request, uint8_t *const response)
+{
+	uint8_t flags = request[1];
+	uint8_t ap_index = request[2];
+	uint32_t csw  = (uint32_t)request[3]
+		     | ((uint32_t)request[4] << 8)
+		     | ((uint32_t)request[5] << 16)
+		     | ((uint32_t)request[6] << 24);
+	uint32_t addr = (uint32_t)request[7]
+		     | ((uint32_t)request[8] << 8)
+		     | ((uint32_t)request[9] << 16)
+		     | ((uint32_t)request[10] << 24);
+	uint16_t word_count = (uint16_t)request[11] | ((uint16_t)request[12] << 8);
+
+	if (word_count == 0 || word_count > NRF53_VENDOR_READ_MEM_MAX_WORDS) {
+		LOG_WRN("READ_MEM: word_count=%u out of range", word_count);
+		response[1] = (uint8_t)NRF53_ARGS;
+		return 2U;
+	}
+
+	nrf53_status_t st = nrf53_read_mem(ap_index, csw, addr, word_count,
+					   flags, &response[2]);
+	response[1] = (uint8_t)st;
+	if (st != NRF53_OK) {
+		LOG_INF("NRF53_READ_MEM ap=%u addr=0x%08x n=%u → %s",
+			ap_index, addr, word_count, nrf53_status_str(st));
+		return 2U;
+	}
+	return (uint16_t)(2U + (uint32_t)word_count * 4U);
+}
+
 /* NRF53_UICR_PROGRAM_APP (0x8A)
  *   Request:  []
  *   Response: [u8 status, u32 approtect_readback, u32 secureapprotect_readback]
@@ -161,6 +205,10 @@ uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
 		response[0] = cmd;
 		return do_erase(response);
 
+	case NRF53_VENDOR_READ_MEM:
+		response[0] = cmd;
+		return do_read_mem(request, response);
+
 	case NRF53_VENDOR_UICR_PROGRAM_APP:
 		response[0] = cmd;
 		return do_uicr_program_app(response);
@@ -169,8 +217,8 @@ uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
 		response[0] = cmd;
 		return do_uicr_program_net(response);
 
-	/* Handlers for 0x86..0x89 land in subsequent steps. They fall
-	 * through to ID_DAP_INVALID until then. */
+	/* Handlers for 0x86 / 0x87 / 0x89 land in subsequent steps. They
+	 * fall through to ID_DAP_INVALID until then. */
 
 	default:
 		response[0] = ID_DAP_INVALID;
