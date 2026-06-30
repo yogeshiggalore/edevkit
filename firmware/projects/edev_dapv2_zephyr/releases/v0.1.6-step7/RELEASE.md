@@ -1,5 +1,7 @@
 # edev_dapv2_zephyr v0.1.6-step7 — release notes
 
+> **⚠ Newer release available: [v0.1.7](../v0.1.7/RELEASE.md)** — adds `0x89 NRF53_TARGET_INFO` (single-call DPIDR + AP_IDR + CPUID). Probe firmware feature-complete for the original 10-step plan after v0.1.7.
+
 **Build:** 2026-06-30 17:30
 **Branch:** `feat/edev_dapv2_zephyr`
 **Board:** `rpi_pico2/rp2350a/m33`

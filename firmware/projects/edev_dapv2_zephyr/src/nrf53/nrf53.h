@@ -382,6 +382,41 @@ extern const uint16_t nrf53_net_stub_size;
 extern const uint8_t  nrf53_net_stub[];
 
 /* ------------------------------------------------------------------ */
+/* Target identification — one-call chip ID for the bridge            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Universal ARM identification fields from a single TARGET_INFO call.
+ *
+ * Returns the three Cortex-M / ADIv5 registers that are reliably
+ * present on every chip we care about, in one packet. Chip-family-
+ * specific FICR fields (PART / VARIANT / DEVICEID) are NOT in this
+ * struct — those addresses differ per chip and aren't always readable
+ * via the App AHB-AP on every silicon variant (observed: nRF5340 DK
+ * silicon returns 0xFFFFFFFF for FICR.INFO.PART at +0x140). The bridge
+ * can compose family-specific FICR reads via `0x88 NRF53_READ_MEM`
+ * after inferring family from DPIDR.VERSION.
+ */
+struct nrf53_target_info {
+	uint32_t dpidr;          /* DP.DPIDR — designer + partno + version + revision */
+	uint32_t ap0_idr;        /* AHB-AP[0].IDR */
+	uint32_t cpuid;          /* Cortex-M CPUID at 0xE000ED00 (via App AHB-AP) */
+};
+
+/**
+ * @brief Read DPIDR + AP[0].IDR + CPUID in one probe-side call.
+ *
+ * Replaces three separate DAP_Transfer / READ_MEM round-trips with one.
+ * On success, the bridge can:
+ *   - Identify family from DPIDR.VERSION: 1=nRF52 (DPv1), 2=nRF5340 (DPv2)
+ *   - Identify ARM core from CPUID — Cortex-M4 0x410FC241, Cortex-M33 0x410FD2xx
+ *   - Decide which AHB-AP CSW + NVMC base to use for subsequent ops
+ *
+ * @param out  Filled with the three fields on success.
+ */
+nrf53_status_t nrf53_target_info(struct nrf53_target_info *out);
+
+/* ------------------------------------------------------------------ */
 /* RECOVER — full 8-stage unlock + UICR programming                   */
 /* ------------------------------------------------------------------ */
 
@@ -548,7 +583,7 @@ nrf53_status_t nrf53_recover(struct nrf53_recover_info *info);
 #define NRF53_VENDOR_FLASH_WRITE_NET     0x86U  /* step 6 — Net flash write */
 #define NRF53_VENDOR_FLASH_WRITE_APP     0x87U  /* step 7 — App flash write */
 #define NRF53_VENDOR_READ_MEM            0x88U  /* step 8 */
-#define NRF53_VENDOR_TARGET_INFO         0x89U  /* later */
+#define NRF53_VENDOR_TARGET_INFO         0x89U  /* one-call chip identification */
 #define NRF53_VENDOR_UICR_PROGRAM_APP    0x8AU  /* step 3 */
 #define NRF53_VENDOR_UICR_PROGRAM_NET    0x8BU  /* step 4 */
 #define NRF53_VENDOR_WRITE_MEM           0x8CU  /* AHB-AP burst write */

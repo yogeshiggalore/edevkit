@@ -45,6 +45,7 @@ CMD_RECOVER            = 0x84
 CMD_ERASE              = 0x85
 CMD_FLASH_WRITE_NET    = 0x86
 CMD_FLASH_WRITE_APP    = 0x87
+CMD_TARGET_INFO        = 0x89
 CMD_READ_MEM           = 0x88
 CMD_UICR_APP           = 0x8A
 CMD_UICR_NET           = 0x8B
@@ -446,6 +447,34 @@ def test_flash_write_net(p, ctx):
     return True
 
 
+def test_target_info(p, ctx):
+    """Vendor cmd 0x89 NRF53_TARGET_INFO — universal ARM identification
+    in one packet (DPIDR + AP[0].IDR + CPUID)."""
+    print("\n=== NRF53_TARGET_INFO (0x89) ===")
+    resp = p.transfer([CMD_TARGET_INFO], timeout_ms=10000)
+    if not _validate_echo(resp, CMD_TARGET_INFO): return False
+    if len(resp) < 14:
+        print(f"FAIL: response too short ({len(resp)} bytes, expected 14)")
+        return False
+    status = resp[1]
+    dpidr, ap_idr, cpuid = struct.unpack_from('<III', resp, 2)
+    print(f"  status     = {fmt_status(status)}")
+    print(f"  DPIDR      = 0x{dpidr:08x}  (designer 0x{(dpidr>>1)&0x7FF:03x}, "
+          f"partno 0x{(dpidr>>20)&0xFF:02x}, version {(dpidr>>12)&0xF})")
+    print(f"  AHB-AP[0]  = 0x{ap_idr:08x}")
+    print(f"  CPUID      = 0x{cpuid:08x}  (impl 0x{(cpuid>>24)&0xFF:02x}, "
+          f"part 0x{(cpuid>>4)&0xFFF:03x})")
+    if status != 0:
+        return False
+    # Cross-check vs ctx['family'] from ping
+    fam_expect = {1: 'nrf52', 2: 'nrf5340'}.get((dpidr >> 12) & 0xF)
+    if fam_expect and ctx.get('family') and fam_expect != ctx['family']:
+        print(f"WARN: family mismatch — DPIDR.version says {fam_expect}, "
+              f"ping detected {ctx['family']}")
+    print(f"PASS  one-call ID (target family: {fam_expect or '?'})")
+    return True
+
+
 def test_flash_write_app(p, ctx):
     """Vendor cmd 0x87 NRF53_FLASH_WRITE_APP — App flash batch write.
     Family-aware NVMC base:
@@ -544,6 +573,7 @@ def test_recover(p, ctx):
 
 TESTS = {
     "ping":              test_ping,
+    "target-info":       test_target_info,
     "erase":             test_erase,
     "verify-erase":      test_verify_erase,
     "mem-roundtrip":     test_mem_roundtrip,
@@ -582,6 +612,7 @@ def main():
             #   re-erase + recover — only on nRF5340
             results = [
                 ("ping",            test_ping(p, ctx)),
+                ("target-info",     test_target_info(p, ctx)),
                 ("erase",           test_erase(p, ctx)),
                 ("verify-erase",    test_verify_erase(p, ctx)),
                 ("mem-roundtrip",   test_mem_roundtrip(p, ctx)),

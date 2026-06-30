@@ -208,6 +208,37 @@ static uint16_t do_flash_write_app(const uint8_t *const request, uint8_t *const 
 	return 4U;
 }
 
+/* NRF53_TARGET_INFO (0x89) — universal ARM identification in one call
+ *
+ *   Request:  [0x89]                    (1 byte, no payload)
+ *   Response: [0x89, status,
+ *              u32_le dpidr,
+ *              u32_le ap0_idr,
+ *              u32_le cpuid]
+ *             = 14 bytes
+ *
+ * Replaces three DAP_Transfer (or READ_MEM) round-trips with one.
+ * Chip-family-specific FICR fields are NOT included — they're not
+ * reliably readable via the App AHB-AP on every silicon variant
+ * (observed: nRF5340 DK returns 0xFFFFFFFF at FICR+0x140). The bridge
+ * can compose its own FICR reads via 0x88 READ_MEM at chip-specific
+ * addresses after inferring family from DPIDR.VERSION + CPUID.
+ */
+static uint16_t do_target_info(uint8_t *const response)
+{
+	struct nrf53_target_info info;
+	nrf53_status_t st = nrf53_target_info(&info);
+
+	response[1] = (uint8_t)st;
+	put_u32_le(&response[2],  info.dpidr);
+	put_u32_le(&response[6],  info.ap0_idr);
+	put_u32_le(&response[10], info.cpuid);
+
+	LOG_INF("NRF53_TARGET_INFO → %s DPIDR=0x%08x AP_IDR=0x%08x CPUID=0x%08x",
+		nrf53_status_str(st), info.dpidr, info.ap0_idr, info.cpuid);
+	return 14U;
+}
+
 /* NRF53_READ_MEM (0x88) — chip-agnostic AHB-AP burst read
  *
  *   Request (13 bytes): [0x88, u8 flags, u8 ap_index,
@@ -378,6 +409,10 @@ uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
 		response[0] = cmd;
 		return do_read_mem(request, response);
 
+	case NRF53_VENDOR_TARGET_INFO:
+		response[0] = cmd;
+		return do_target_info(response);
+
 	case NRF53_VENDOR_UICR_PROGRAM_APP:
 		response[0] = cmd;
 		return do_uicr_program_app(response);
@@ -390,8 +425,8 @@ uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
 		response[0] = cmd;
 		return do_write_mem(request, response);
 
-	/* Handlers for 0x89 land in subsequent steps. They fall through
-	 * to ID_DAP_INVALID until then. */
+	/* All planned handlers shipped. 0x80..0x83 and 0x8D..0x9F are
+	 * intentionally unused and return ID_DAP_INVALID. */
 
 	default:
 		response[0] = ID_DAP_INVALID;
