@@ -2933,24 +2933,49 @@ family-specific knob.
 - `NVMC.CONFIG = Ren` is restored even on mid-loop failure; flash is
   never left write-enabled.
 
-> **⚠ Net flash base-address gotcha (verified 2026-06-30 against
-> bench nRF5340 DK):** writes to the very first word of Net flash
-> (`0x01000000`) silently succeed at the NVMC level — the probe
-> reports `14/14 words_written, status=OK` — but the value does
-> NOT actually appear on readback. The data at `0x01000000` after
-> a `0x86 FLASH_WRITE_NET` call ends up looking like remnants of
-> the Net stub vector table (MSP, reset vector, …) regardless of
-> what was written. This is a hardware behavior, not a probe bug
-> (the canonical pico-sdk reference exhibits the same behavior).
+> **⚠ Net flash boot region (0x01000000..~0x01004110) — multi-batch
+> writes corrupt; bench-verified 2026-06-30 on nRF5340 DK with two
+> Ring Pro 351 production hex images:**
 >
-> **Workaround:** When programming a Net image, start writes at
-> `0x01000800` or later, and write the first 2 KB last (or skip
-> them entirely if your image doesn't need them). The
-> `test_nrf53_vendor_cmds.py` Net flash-write test uses
-> `0x01000800` for exactly this reason. If your bridge needs to
-> place data at the start of Net flash, file an issue and we'll
-> investigate further — until then, treat the first ~2 KB of Net
-> flash as not-bridge-writable.
+> A single 14-word `0x86 FLASH_WRITE_NET` call to `0x01000000`
+> writes + reads back bit-perfect. **But sustained multi-batch
+> writes covering the Net core's boot/vector region (the first
+> ~16 KB, addresses up to roughly `0x01004110`) result in readback
+> that doesn't match what was written.** All individual batches
+> return `status=OK, words_written=14/14` — the corruption only
+> shows up on readback verification.
+>
+> **Likely root cause:** the Net core is alive while we're writing
+> its boot region. Each completed batch publishes new MSP / reset
+> vector / handler values. The Net core fault-loops on partial /
+> invalid early data, generating AHB-AP bus contention that
+> interferes with subsequent flash writes. The corruption is
+> deterministic — programming the same image twice yields the
+> same wrong content at the same addresses.
+>
+> **Empirical evidence (bench DK, 2026-06-30):** flashing both
+> `uh_ringpro351_v5241951_merged.hex` and `uh_ringpro351_v5242051_merged.hex`,
+> 13 of 14 segments verified bit-perfect (~700 KB of 718 KB) but
+> the first Net segment (`0x01000000..0x0100410c`, 16,652 bytes)
+> mismatched on both files with identical expected/got hashes.
+>
+> **Workarounds (pick one):**
+> 1. **Bridge-side:** write the Net boot region (≤16 KB starting at
+>    `0x01000000`) LAST, after all other Net flash is written. The
+>    Net core can't fault-loop on data it hasn't seen yet.
+> 2. **Bridge-side:** write the Net boot region in small chunks
+>    (1–2 batches per call) with brief pauses — gives the Net core
+>    less time to react between writes.
+> 3. **Probe firmware:** future `0x86 FLASH_WRITE_NET` could halt
+>    Net CPU before writes touching `0x01000000..0x01004110`. This
+>    requires Net core DHCSR access (which works on nRF5340) — not
+>    shipped in v0.1.8, would be a v0.1.9 feature.
+>
+> Until then, **bridge verification step must check the Net boot
+> region last and have a retry path** that re-writes the boot
+> region as the final step of a full-image flash. The rest of Net
+> flash (`0x01004110` and above) writes reliably with single-pass
+> programming.
 
 **Bridge workflow for a full image (1 MB App, 256 KB Net):**
 
