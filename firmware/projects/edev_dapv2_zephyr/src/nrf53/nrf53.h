@@ -290,6 +290,65 @@ nrf53_status_t nrf53_ctrl_ap_eraseall(uint8_t ap_index, uint32_t timeout_ms);
 nrf53_status_t nrf53_erase_all(size_t *found_ap_count);
 
 /* ------------------------------------------------------------------ */
+/* NVMC helpers — shared between App + Net contexts                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Poll NVMC.READY (bit 0) until set, with timeout.
+ *
+ * @param ap_index    AHB-AP index for the core whose NVMC we're polling.
+ * @param csw         CSW value to use for this AP (NRF53_CSW_APP / _NET).
+ * @param nvmc_base   NVMC peripheral base — see NRF53_APP/NET_NVMC_READY.
+ *                    Pass the READY register address directly (already
+ *                    base + 0x400) for clarity at callsite.
+ * @param timeout_ms  Max time to wait.
+ */
+nrf53_status_t nrf53_nvmc_wait_ready(uint8_t ap_index, uint32_t csw,
+				     uint32_t nvmc_ready_addr,
+				     uint32_t timeout_ms);
+
+/**
+ * @brief Write NVMC.CONFIG and wait for READY.
+ *
+ * @param ap_index    AHB-AP index.
+ * @param csw         CSW value for this AP.
+ * @param nvmc_ready_addr  NVMC.READY address (App/Net).
+ * @param nvmc_config_addr NVMC.CONFIG address (App/Net).
+ * @param mode        NRF53_NVMC_CONFIG_REN / _WEN / _EEN / _PEEN.
+ * @param timeout_ms  Wait timeout after the write.
+ */
+nrf53_status_t nrf53_nvmc_set_config(uint8_t ap_index, uint32_t csw,
+				     uint32_t nvmc_ready_addr,
+				     uint32_t nvmc_config_addr,
+				     uint32_t mode,
+				     uint32_t timeout_ms);
+
+/* ------------------------------------------------------------------ */
+/* UICR programming — App core (host-side NVMC writes, no stub)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Program App UICR.APPROTECT + SECUREAPPROTECT = 0x50FA50FA.
+ *
+ * Per docs/NRF5340_ALGORITHMS.md §4 Stage 3. Uses App AHB-AP + App
+ * NVMC; no on-target stub needed (the App core's secure context lets
+ * the host write its secure UICR directly). For Net UICR, use the
+ * on-target stub flow at nrf53_uicr_program_net() instead.
+ *
+ * Preconditions:
+ *   - DP is alive (host has at least called dap_connect + line reset)
+ *   - Caller has cleared sticky bits / powered up the DP recently
+ *   - Target App core is reachable (CTRL-AP RESET has been released)
+ *
+ * @param out_approtect       (optional) Readback of UICR.APPROTECT
+ *                            after programming.
+ * @param out_secureapprotect (optional) Readback of UICR.SECUREAPPROTECT
+ *                            after programming.
+ */
+nrf53_status_t nrf53_uicr_program_app(uint32_t *out_approtect,
+				      uint32_t *out_secureapprotect);
+
+/* ------------------------------------------------------------------ */
 /* CMSIS-DAP vendor command IDs (0x80..0x9F)                          */
 /* ------------------------------------------------------------------ */
 
