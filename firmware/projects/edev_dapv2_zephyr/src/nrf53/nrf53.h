@@ -349,6 +349,39 @@ nrf53_status_t nrf53_uicr_program_app(uint32_t *out_approtect,
 				      uint32_t *out_secureapprotect);
 
 /* ------------------------------------------------------------------ */
+/* UICR programming — Net core (on-target stub)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Program Net UICR.APPROTECT = 0x50FA50FA via on-target stub.
+ *
+ * Sequence (per docs/NRF5340_ALGORITHMS.md §4 Stages 4–8):
+ *   1. dp_sticky_clear + dp_power_up (fix for bug 6b — Net AHB-AP
+ *      fault mid-flow)
+ *   2. Release Net core: App-side write of 0 to RESET.NETWORK.FORCEOFF
+ *   3. Write the embedded stub (~196 B) into Net flash[0x01000000]
+ *      via Net AHB-AP + Net NVMC (Wen → per-word write → Ren).
+ *   4. Pulse CTRL-AP#3 RESET to boot the Net core into the stub.
+ *   5. Wait for the stub's 0xDEADC0DE SRAM marker at 0x21000000.
+ *   6. Read back Net UICR.APPROTECT for verification.
+ *
+ * Preconditions:
+ *   - CTRL-AP#3 ERASEALL has run recently (Net AHB-AP unlocked)
+ *   - Caller has cleared sticky bits / powered up the DP
+ *   - App core already accessible (we need it to release FORCEOFF)
+ *
+ * @param out_marker     (optional) Final value at SRAM[0x21000000].
+ *                       Expect 0xDEADC0DE on success.
+ * @param out_approtect  (optional) Net UICR.APPROTECT readback.
+ */
+nrf53_status_t nrf53_uicr_program_net(uint32_t *out_marker,
+				      uint32_t *out_approtect);
+
+/* Size of the embedded Net stub blob (bytes). */
+extern const uint16_t nrf53_net_stub_size;
+extern const uint8_t  nrf53_net_stub[];
+
+/* ------------------------------------------------------------------ */
 /* CMSIS-DAP vendor command IDs (0x80..0x9F)                          */
 /* ------------------------------------------------------------------ */
 

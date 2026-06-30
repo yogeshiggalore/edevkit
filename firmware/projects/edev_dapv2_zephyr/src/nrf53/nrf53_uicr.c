@@ -16,7 +16,6 @@
  */
 
 #include "nrf53.h"
-#include "nrf53_priv.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
