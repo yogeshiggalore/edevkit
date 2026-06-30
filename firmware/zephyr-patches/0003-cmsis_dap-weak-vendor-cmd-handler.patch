@@ -1,0 +1,40 @@
+From: edevkit
+Subject: [PATCH 3/3] subsys/dap: make dap_process_vendor_cmd weakly overridable
+
+Applications that need to expose custom CMSIS-DAP vendor commands
+(0x80..0x9F) currently have no path: dap_process_vendor_cmd() is a
+static function inside cmsis_dap.c that returns ID_DAP_INVALID for
+every vendor command. There's no Kconfig hook or callback registry
+either.
+
+Make it weakly defined so applications can provide a strong override
+in their own .c files. The default behavior (return INVALID) is
+unchanged — apps that don't override see exactly today's surface.
+
+The change is two lines: drop `static` (widen linkage from internal
+to external) and add `__weak` so the default is overridable. The
+function signature stays the same; the call site in dap_process_cmd
+is unchanged.
+
+Use case: edevkit's nRF5340 recover/erase/write/read ops are exposed
+as vendor commands 0x84..0x8B. With this patch, the app file
+firmware/projects/edev_dapv2_zephyr/src/nrf53/nrf53_vendor.c can
+provide its own dap_process_vendor_cmd that dispatches to those
+handlers. No upstream commits depend on the function being static.
+
+diff --git a/subsys/dap/cmsis_dap.c b/subsys/dap/cmsis_dap.c
+index ce26e8a30f3..9c221553c50 100644
+--- a/subsys/dap/cmsis_dap.c
++++ b/subsys/dap/cmsis_dap.c
+@@ -819,8 +819,9 @@ static uint16_t dap_writeabort(struct dap_link_context *const ctx,
+ 	return retval;
+ }
+ 
+-/* Process DAP Vendor command request */
+-static uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
++/* Process DAP Vendor command request — weakly defined so applications
++ * can override it with their own vendor command set (0x80..0x9F). */
++__weak uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
+ 				       const uint8_t *const request,
+ 				       uint8_t *const response)
+ {

@@ -238,6 +238,78 @@ nrf53_status_t nrf53_mem_read(uint8_t ap_index, uint32_t csw,
 nrf53_status_t nrf53_mem_write(uint8_t ap_index, uint32_t csw,
 			       uint32_t addr, uint32_t val);
 
+/* ------------------------------------------------------------------ */
+/* CTRL-AP layer — Nordic-specific erase/reset/recovery primitives    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Scan AP indices 0..7 for Nordic CTRL-APs.
+ *
+ * Walks each AP, reads bank 0xF's IDR, and records the index if the IDR
+ * matches a known Nordic CTRL-AP value (0x02880000 or 0x12880000).
+ *
+ * On nRF5340 expect to find indices {2, 3} (App + Net).
+ * On nRF52840 expect to find index {1}.
+ *
+ * @param ap_indices  Output array; filled with the found AP indices.
+ * @param max         Capacity of ap_indices.
+ * @param count       Out-param: number of CTRL-APs found.
+ */
+nrf53_status_t nrf53_ctrl_ap_scan(uint8_t *ap_indices, size_t max, size_t *count);
+
+/**
+ * @brief Defensive RESET pulse on one CTRL-AP — write 1, sleep, write 0.
+ *
+ * Clears any stuck CTRL-AP state before ERASEALL or other operations.
+ * Per docs/NRF5340_ALGORITHMS.md §3.
+ */
+nrf53_status_t nrf53_ctrl_ap_reset_pulse(uint8_t ap_index);
+
+/**
+ * @brief Issue ERASEALL on one CTRL-AP and poll for completion.
+ *
+ * @param ap_index     The CTRL-AP index (from nrf53_ctrl_ap_scan).
+ * @param timeout_ms   Max time to wait for ERASEALLSTATUS to clear.
+ */
+nrf53_status_t nrf53_ctrl_ap_eraseall(uint8_t ap_index, uint32_t timeout_ms);
+
+/**
+ * @brief High-level: erase every Nordic CTRL-AP found on the bus.
+ *
+ * Sequence (per docs/NRF5340_ALGORITHMS.md §3):
+ *   1. full DP wake
+ *   2. CTRL-AP IDR scan
+ *   3. For each found CTRL-AP: RESET pulse → ERASEALL → poll
+ *   4. DP sticky-clear + power-up at end
+ *
+ * Acceptance: subsequent reads of UICR via the corresponding AHB-AP
+ * should return 0xFFFFFFFF.
+ *
+ * @param found_ap_count  Out-param (optional). Number of CTRL-APs erased.
+ */
+nrf53_status_t nrf53_erase_all(size_t *found_ap_count);
+
+/* ------------------------------------------------------------------ */
+/* CMSIS-DAP vendor command IDs (0x80..0x9F)                          */
+/* ------------------------------------------------------------------ */
+
+/* Reserved / not implemented yet on Zephyr (some are pico-sdk legacy) */
+#define NRF53_VENDOR_CORTEX_M_HALT       0x80U  /* (reserved) */
+#define NRF53_VENDOR_CORTEX_M_RESUME     0x81U  /* (reserved) */
+#define NRF53_VENDOR_CORTEX_M_REG_READ   0x82U  /* (reserved) */
+#define NRF53_VENDOR_NRF_RESET           0x83U  /* (reserved) */
+
+/* Edevkit nRF5340 multi-step ops (implemented incrementally; see
+ * docs/NRF5340_ALGORITHMS.md §9 implementation checklist) */
+#define NRF53_VENDOR_RECOVER             0x84U  /* step 5 — full unlock + UICR */
+#define NRF53_VENDOR_ERASE               0x85U  /* step 2 — CTRL-AP ERASEALL */
+#define NRF53_VENDOR_FLASH_WRITE_NET     0x86U  /* step 6 */
+#define NRF53_VENDOR_FLASH_WRITE_APP     0x87U  /* step 7 */
+#define NRF53_VENDOR_READ_MEM            0x88U  /* step 8 */
+#define NRF53_VENDOR_TARGET_INFO         0x89U  /* later */
+#define NRF53_VENDOR_UICR_PROGRAM_APP    0x8AU  /* step 3 */
+#define NRF53_VENDOR_UICR_PROGRAM_NET    0x8BU  /* step 4 */
+
 #ifdef __cplusplus
 }
 #endif

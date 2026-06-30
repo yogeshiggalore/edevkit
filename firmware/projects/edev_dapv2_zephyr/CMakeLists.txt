@@ -71,6 +71,8 @@ target_sources(app PRIVATE
 target_sources(app PRIVATE
     $<$<BOOL:${CONFIG_EDEV_NRF53_OPS}>:src/nrf53/nrf53_dp.c>
     $<$<BOOL:${CONFIG_EDEV_NRF53_OPS}>:src/nrf53/nrf53_ap.c>
+    $<$<BOOL:${CONFIG_EDEV_NRF53_OPS}>:src/nrf53/nrf53_ctrl_ap.c>
+    $<$<BOOL:${CONFIG_EDEV_NRF53_OPS}>:src/nrf53/nrf53_vendor.c>
 )
 
 target_include_directories(app PRIVATE

@@ -28,6 +28,10 @@
 
 #include <pico/bootrom.h>
 
+#if defined(CONFIG_EDEV_NRF53_OPS)
+#include "nrf53/nrf53.h"
+#endif
+
 LOG_MODULE_REGISTER(edev_dapv2, LOG_LEVEL_INF);
 
 /* MS OS 2.0 BOS — pulled in *after* LOG_MODULE_REGISTER because the static
@@ -174,6 +178,19 @@ int main(void)
 	if (ret) {
 		return ret;
 	}
+
+#if defined(CONFIG_EDEV_NRF53_OPS)
+	/* Bind the SWDP device our nRF5340 ops use. Same device as the DAP
+	 * context — we just need our own handle to it because we call the
+	 * driver directly (bypassing the DAP dispatcher) when handling our
+	 * custom vendor commands (0x84..0x8B). Safe because dispatching is
+	 * single-flight: one DAP packet processes at a time. */
+	nrf53_status_t ns = nrf53_bind_swdp(DEVICE_DT_GET_ONE(zephyr_swdp_gpio));
+	if (ns != NRF53_OK) {
+		LOG_WRN("nrf53 ops disabled — SWDP bind failed: %s",
+			nrf53_status_str(ns));
+	}
+#endif /* CONFIG_EDEV_NRF53_OPS */
 
 	ret = setup_usb();
 	if (ret) {
