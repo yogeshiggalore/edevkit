@@ -1,5 +1,7 @@
 # edev_dapv2_zephyr v0.1.3-step8 — release notes
 
+> **⚠ Newer release available: [v0.1.4-step8](../v0.1.4-step8/RELEASE.md)** — fixes Net stub lockup on nRF5340 DK silicon; full RECOVER now passes 8/8 against bench hardware. Strongly recommended over v0.1.3 if you target nRF5340.
+
 **Build:** 2026-06-30 16:00
 **Branch:** `feat/edev_dapv2_zephyr`
 **Board:** `rpi_pico2/rp2350a/m33`

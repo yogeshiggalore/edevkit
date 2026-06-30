@@ -86,15 +86,35 @@ fault_handler:
 1:  b    1b
 
 /* ─── reset_handler — program Net UICR.APPROTECT ──────────────────────── */
+.equ NET_VMC_RAMBLOCK_PSET, 0x41081604   /* first RAMBLOCK POWERSET; 0x10 stride */
 .equ NET_NVMC_READY,    0x41080400
 .equ NET_NVMC_CONFIG,   0x41080504
 .equ NET_UICR_APPROT,   0x01FF8000
 .equ UNLOCK_MAGIC,      0x50FA50FA
 .equ DONE_MAGIC,        0xDEADC0DE
 .equ STATE_SRAM,        0x21000000
+.equ FFFF,              0xFFFFFFFF
 
 reset_handler:
-    /* marker: "entered" */
+    /* Power on all 8 Net VMC RAMBLOCKs BEFORE any SRAM access. Per
+     * nrfjprog stub disassembly (reference_nrfjprog_stub_disassembly_
+     * 2026_06_26) the App stub does the same with App VMC at
+     * 0x50081604; missing this prologue caused S_LOCKUP=1 on bench
+     * nRF5340 DK silicon — first `str r1, [r0]` to STATE_SRAM faulted
+     * (RAM block 0 not powered), fault_handler re-faulted on its own
+     * store, double-fault → lockup. Verified 2026-06-30. */
+    ldr  r0, =NET_VMC_RAMBLOCK_PSET
+    ldr  r1, =FFFF
+    str  r1, [r0, #0x00]
+    str  r1, [r0, #0x10]
+    str  r1, [r0, #0x20]
+    str  r1, [r0, #0x30]
+    str  r1, [r0, #0x40]
+    str  r1, [r0, #0x50]
+    str  r1, [r0, #0x60]
+    str  r1, [r0, #0x70]
+
+    /* marker: "entered" — now SRAM is accessible */
     ldr  r0, =STATE_SRAM
     ldr  r1, =0x11111111
     str  r1, [r0]
@@ -150,4 +170,14 @@ reset_handler:
 
     .pool
 
-    .equ _stack_top, 0x21010000     /* top of Net SRAM (64 KB) */
+    /* On bench nRF5340 DK silicon (verified 2026-06-30), only Net
+     * SRAM RAMBLOCK[0] is powered by default after CTRL-AP RESET —
+     * 0x2100FFFC (top of 64 KB Net SRAM) reads FAULT from the host
+     * AHB-AP. Setting MSP to 0x21010000 (top of full SRAM) causes the
+     * Net CPU's first exception-entry PUSH to fault on unpowered
+     * RAMBLOCK[7] → double fault → lockup (DHCSR S_LOCKUP=1).
+     *
+     * Fix: keep the stack inside RAMBLOCK[0] (lower 4 KB of Net SRAM).
+     * 0x21001000 = 4 KB in, gives the stub ~3.95 KB of stack which
+     * is overkill — actual usage is one exception frame at most. */
+    .equ _stack_top, 0x21001000     /* top of RAMBLOCK[0] = 4 KB into Net SRAM */
