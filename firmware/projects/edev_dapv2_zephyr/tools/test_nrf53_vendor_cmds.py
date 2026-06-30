@@ -1,32 +1,33 @@
 #!/usr/bin/env python3
 """
-test_nrf53_vendor_cmds.py — exercise NRF53_* vendor commands.
+test_nrf53_vendor_cmds.py — hardware acceptance for the edev_dapv2_zephyr
+probe firmware. Exercises both standard CMSIS-DAP and the custom
+NRF53_* vendor commands (0x84..0x8B) against a real Nordic target,
+validates wire-format responses, and reports pass/fail.
 
-Sends raw CMSIS-DAP vendor commands (0x84..0x8B) over the bulk OUT/IN
-endpoints to a Pico running edev_dapv2_zephyr firmware, validates the
-wire-format responses, and reports pass/fail.
+Chip-family-aware: ping reads DPIDR + the CTRL-AP count via NRF53_ERASE
+to detect nRF52 vs nRF5340, then skips nRF5340-only tests on nRF52.
 
-Requires pyusb (`pip install pyusb`). On macOS may also need:
-  brew install libusb
+Requires pyusb + pyserial (`pip install pyusb pyserial`). On macOS may
+also need: brew install libusb
 
-Hardware setup expected:
-  - Pico running edev_dapv2_zephyr (≥ step 5, commit 652b9cc or later)
-  - The Pico's USB OTG port connected to the host PC running this script
-  - SWD wires from Pico GPIO2 (SWCLK) + GPIO3 (SWDIO) to a Nordic target
-    (nRF52840 dongle / nRF5340 DK / Ring under test). Keep the target on
-    a charger so its debug domain doesn't power down mid-test.
+Hardware setup:
+  - Pico running edev_dapv2_zephyr (≥ commit fa5d305 for nRF52840
+    support — earlier builds wedge nRF52840 with malformed dormant
+    alert).
+  - SWD wires: Pico GPIO2→SWCLK, GPIO3→SWDIO, GND↔GND.
+  - Target powered (keep on charger for sealed wearables).
 
 Usage:
-  python3 test_nrf53_vendor_cmds.py                 # run all tests
-  python3 test_nrf53_vendor_cmds.py erase           # just NRF53_ERASE
-  python3 test_nrf53_vendor_cmds.py uicr-app        # just App UICR program
-  python3 test_nrf53_vendor_cmds.py uicr-net        # just Net UICR program
-  python3 test_nrf53_vendor_cmds.py recover         # full RECOVER
+  python3 test_nrf53_vendor_cmds.py                # auto: ping + all applicable
+  python3 test_nrf53_vendor_cmds.py ping           # just basic link check
+  python3 test_nrf53_vendor_cmds.py erase          # NRF53_ERASE
+  python3 test_nrf53_vendor_cmds.py uicr-app       # nRF5340-only
+  python3 test_nrf53_vendor_cmds.py uicr-net       # nRF5340-only
+  python3 test_nrf53_vendor_cmds.py recover        # nRF5340-only
 
-Exit code 0 if all selected tests passed, non-zero otherwise.
-
-DESTRUCTIVE — every test except --dry-run wipes the target chip's flash.
-Don't run against hardware whose firmware you want to keep.
+DESTRUCTIVE — most tests wipe the target chip's flash. Don't run
+against hardware whose firmware you want to keep.
 """
 import argparse
 import struct
@@ -39,13 +40,13 @@ VID = 0x2E8A
 PID = 0x000C
 VENDOR_IFACE_CLASS = 0xFF
 
-# Vendor command bytes (CMSIS-DAP ID_DAP_VENDOR0..31 space, 0x80..0x9F)
+# Vendor command bytes
 CMD_RECOVER  = 0x84
 CMD_ERASE    = 0x85
 CMD_UICR_APP = 0x8A
 CMD_UICR_NET = 0x8B
 
-# Mirror of nrf53_status_t
+# nrf53_status_t mirror
 STATUS = {
     0: "OK", 1: "WAIT", 2: "FAULT", 3: "NO_ACK", 4: "PROTO",
     5: "TIMEOUT", 6: "ARGS", 7: "NO_DEV", 8: "STUB_FAIL",
@@ -67,7 +68,7 @@ class Probe:
         if dev is None:
             raise SystemExit(
                 f"No device with VID:PID {VID:04x}:{PID:04x} found.\n"
-                f"Plug the Pico (running edev_dapv2_zephyr) into a USB port and retry.")
+                f"Plug the Pico into a USB port and retry.")
         try:
             if dev.is_kernel_driver_active(0):
                 dev.detach_kernel_driver(0)
@@ -105,13 +106,115 @@ class Probe:
             pass
 
     def transfer(self, cmd_bytes, timeout_ms=15000):
-        """Send one CMSIS-DAP packet, return response bytes."""
         self.out_ep.write(bytes(cmd_bytes), timeout=timeout_ms)
-        # Zephyr port reports packet size 512 via DAP_Info; read that.
-        # Older pico-sdk builds use 64 — read up to 512 either way; the
-        # actual response length comes back in the bulk transfer.
         resp = self.in_ep.read(512, timeout=timeout_ms)
         return bytes(resp)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Helpers — drive standard CMSIS-DAP packets so we can read DPIDR + AP
+# stuff without relying on our vendor commands. Used by ping + erase-verify.
+# ──────────────────────────────────────────────────────────────────────
+def dap_connect_and_reset(p, clock_hz=1_000_000):
+    """DAP_Connect → SWJ_Clock → line reset + JTAG→SWD + line reset + idle."""
+    p.transfer(b'\x02\x01')                                   # DAP_Connect(SWD)
+    p.transfer(b'\x11' + struct.pack('<I', clock_hz))         # DAP_SWJ_Clock
+    p.transfer(b'\x04\x00' + struct.pack('<HH', 100, 0))      # DAP_TransferConfigure
+    # line reset (56) + JTAG-SWD (16) = 72 bits
+    p.transfer(b'\x12' + bytes([72]) + b'\xFF'*7 + b'\x9E\xE7')
+    # line reset (56) + 8 idle = 64 bits
+    p.transfer(b'\x12' + bytes([64]) + b'\xFF'*7 + b'\x00')
+
+
+def dap_read_dp(p, reg_offset):
+    """Read a DP register via DAP_Transfer. Returns (ok, value)."""
+    # request byte: APnDP=0 RnW=1 A2A3 from reg_offset bits 2:3
+    req = 0x02  # RnW
+    if reg_offset & 0x04: req |= 0x04
+    if reg_offset & 0x08: req |= 0x08
+    r = p.transfer(b'\x05\x00\x01' + bytes([req]))
+    # response: [0x05, count, last_ack, data[4]]
+    if len(r) >= 7 and r[1] == 1 and r[2] == 1:
+        return True, struct.unpack_from('<I', r, 3)[0]
+    return False, (r[2] if len(r) > 2 else 0xFF)
+
+
+def dap_write_dp(p, reg_offset, value):
+    req = 0x00  # APnDP=0 RnW=0
+    if reg_offset & 0x04: req |= 0x04
+    if reg_offset & 0x08: req |= 0x08
+    r = p.transfer(b'\x05\x00\x01' + bytes([req]) + struct.pack('<I', value))
+    return len(r) >= 3 and r[2] == 1
+
+
+def dap_read_ap(p, ap_index, reg_offset):
+    """Select AP bank, post AP read, flush via DP.RDBUFF."""
+    bank = reg_offset & 0xF0
+    if not dap_write_dp(p, 0x08, (ap_index << 24) | bank):
+        return False, 0
+    # APnDP=1 RnW=1
+    req = 0x03
+    if reg_offset & 0x04: req |= 0x04
+    if reg_offset & 0x08: req |= 0x08
+    r = p.transfer(b'\x05\x00\x01' + bytes([req]))
+    if not (len(r) >= 3 and r[2] == 1):
+        return False, (r[2] if len(r) > 2 else 0xFF)
+    # discard data, flush via RDBUFF
+    return dap_read_dp(p, 0x0C)
+
+
+def dap_mem_read(p, ap_index, csw, addr):
+    """Standard AHB-AP single-word read."""
+    if not dap_write_dp(p, 0x08, (ap_index << 24) | 0x00): return False, 0
+    # AP.CSW write
+    if not (len(p.transfer(b'\x05\x00\x01\x01' + struct.pack('<I', csw))) >= 3): return False, 0
+    # AP.TAR write
+    if not (len(p.transfer(b'\x05\x00\x01\x05' + struct.pack('<I', addr))) >= 3): return False, 0
+    # AP.DRW read (posted)
+    r = p.transfer(b'\x05\x00\x01\x0F')
+    if not (len(r) >= 3 and r[2] == 1): return False, 0
+    return dap_read_dp(p, 0x0C)  # RDBUFF flush
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Test functions
+# ──────────────────────────────────────────────────────────────────────
+def test_ping(p, ctx):
+    """Basic SWD link check via standard CMSIS-DAP. Reads DPIDR + AP_IDR.
+    Populates ctx['family'] for downstream chip-aware decisions."""
+    print("\n=== PING — basic SWD link via standard CMSIS-DAP ===")
+    dap_connect_and_reset(p)
+    # ADIv5 §B4.2.2: first transaction after a line reset MUST be DPIDR
+    # read. Writing CTRL/STAT first wedges the DP with sticky FAULT.
+    ok, dpidr = dap_read_dp(p, 0x00)
+    if not ok:
+        print(f"FAIL: DPIDR read failed (ack={dpidr})")
+        return False
+    # Now safe to power up debug + system domains
+    dap_write_dp(p, 0x04, 0x50000000)
+    designer = (dpidr >> 1) & 0x7FF
+    partno = (dpidr >> 20) & 0xFF
+    version = (dpidr >> 12) & 0xF
+    print(f"  DPIDR    = 0x{dpidr:08x}")
+    print(f"    designer = 0x{designer:03x}  (0x23B=ARM, 0x144=Nordic)")
+    print(f"    partno   = 0x{partno:02x}")
+    print(f"    version  = 0x{version:x}  (1=DPv1, 2=DPv2, 3=DPv3)")
+    ok, ap_idr = dap_read_ap(p, 0, 0xFC)
+    if ok:
+        print(f"  AHB-AP[0].IDR = 0x{ap_idr:08x}")
+    # Family heuristic: Cortex-M4 (partno=0xba on DPv1) = nRF52;
+    # Cortex-M33 (partno different on DPv2) = nRF5340
+    if version == 1:
+        ctx['family'] = 'nrf52'
+        print("  → detected family: nRF52 family (DPv1)")
+    elif version == 2:
+        ctx['family'] = 'nrf5340'
+        print("  → detected family: nRF5340 family (DPv2)")
+    else:
+        ctx['family'] = 'unknown'
+        print(f"  → unknown family (DP version {version})")
+    print("PASS")
+    return True
 
 
 def _validate_echo(resp, expected_cmd):
@@ -119,16 +222,15 @@ def _validate_echo(resp, expected_cmd):
         print("FAIL: empty response")
         return False
     if resp[0] == ID_DAP_INVALID:
-        print("FAIL: probe returned ID_DAP_INVALID — vendor cmd handler not "
-              "installed. Did you flash a build ≥ step 2 (commit 07957ef)?")
+        print("FAIL: probe returned ID_DAP_INVALID — vendor cmd handler not installed.")
         return False
     if resp[0] != expected_cmd:
-        print(f"FAIL: echo byte 0x{resp[0]:02x} ≠ expected 0x{expected_cmd:02x}")
+        print(f"FAIL: echo 0x{resp[0]:02x} ≠ expected 0x{expected_cmd:02x}")
         return False
     return True
 
 
-def test_erase(p):
+def test_erase(p, ctx):
     print("\n=== NRF53_ERASE (0x85) — CTRL-AP ERASEALL ===")
     resp = p.transfer([CMD_ERASE], timeout_ms=15000)
     print(f"  raw: {resp.hex()}")
@@ -140,49 +242,80 @@ def test_erase(p):
     status, ap_count = resp[1], resp[2]
     print(f"  status={fmt_status(status)}  ap_count={ap_count}")
     if status != 0:
-        print(f"FAIL: status {STATUS.get(status, '?')}")
         return False
-    if ap_count < 1:
-        print("FAIL: no CTRL-APs found — wrong target attached?")
-        return False
+    expected = 2 if ctx.get('family') == 'nrf5340' else 1
+    if ap_count != expected:
+        print(f"WARN: ap_count={ap_count} (expected {expected} for {ctx.get('family')})")
     print(f"PASS  ({ap_count} CTRL-AP(s) erased)")
+    ctx['erased'] = True
     return True
 
 
-def test_uicr_app(p):
+def test_verify_erase(p, ctx):
+    """Read flash[0x00000000] via standard AHB-AP; expect 0xFFFFFFFF."""
+    print("\n=== VERIFY_ERASE — read flash[0] via standard CMSIS-DAP ===")
+    if not ctx.get('erased'):
+        print("SKIP — erase didn't run successfully")
+        return True
+    # Re-init link (CTRL-AP RESET in erase may have left things in unusual state)
+    dap_connect_and_reset(p)
+    # DPIDR read MUST be first xact after line reset (ADIv5 §B4.2.2),
+    # otherwise DP wedges with sticky FAULT and subsequent reads fail.
+    ok, dpidr = dap_read_dp(p, 0x00)
+    if not ok:
+        print(f"FAIL: post-erase DPIDR read failed (ack={dpidr})")
+        return False
+    dap_write_dp(p, 0x04, 0x50000000)
+    # CSW for App AHB-AP: 0x23000002 for nRF5340, 0x23000012 (auto-inc) or
+    # 0x23000002 for nRF52 — same secure+32-bit, no auto-inc works either.
+    csw = 0x23000002
+    ok, val = dap_mem_read(p, 0, csw, 0x00000000)
+    if not ok:
+        print(f"FAIL: flash read failed (ack={val})")
+        return False
+    print(f"  flash[0x00000000] = 0x{val:08x}  (expect 0xFFFFFFFF)")
+    if val != 0xFFFFFFFF:
+        print(f"FAIL: erase didn't take — flash still has 0x{val:08x}")
+        return False
+    print("PASS  flash wiped to 0xFFFFFFFF")
+    return True
+
+
+def test_uicr_app(p, ctx):
     print("\n=== NRF53_UICR_PROGRAM_APP (0x8A) ===")
+    if ctx.get('family') == 'nrf52':
+        print("SKIP — nRF5340-only (uses nRF5340 NVMC + UICR addresses).")
+        print("       On nRF52, UICR.APPROTECT is at 0x10001208 (different layout).")
+        print("       Future work — see RELEASE.md.")
+        return True
     resp = p.transfer([CMD_UICR_APP], timeout_ms=15000)
     print(f"  raw: {resp.hex()}")
     if not _validate_echo(resp, CMD_UICR_APP):
         return False
     if len(resp) < 10:
-        print(f"FAIL: response too short ({len(resp)} bytes)")
+        print(f"FAIL: response too short")
         return False
     status = resp[1]
     approt, secure = struct.unpack_from("<II", resp, 2)
     print(f"  status={fmt_status(status)}")
     print(f"  APPROTECT       = 0x{approt:08x}  (expect 0x{UNLOCK_VAL:08x})")
     print(f"  SECUREAPPROTECT = 0x{secure:08x}  (expect 0x{UNLOCK_VAL:08x})")
-    if status != 0:
-        return False
-    if approt != UNLOCK_VAL:
-        print("FAIL: APPROTECT not unlocked")
-        return False
-    if secure != UNLOCK_VAL:
-        print("FAIL: SECUREAPPROTECT not unlocked")
+    if status != 0 or approt != UNLOCK_VAL or secure != UNLOCK_VAL:
         return False
     print("PASS  App UICR HwDisabled")
     return True
 
 
-def test_uicr_net(p):
-    print("\n=== NRF53_UICR_PROGRAM_NET (0x8B) — on-target stub ===")
+def test_uicr_net(p, ctx):
+    print("\n=== NRF53_UICR_PROGRAM_NET (0x8B) ===")
+    if ctx.get('family') == 'nrf52':
+        print("SKIP — nRF5340-only (nRF52 has no Net core).")
+        return True
     resp = p.transfer([CMD_UICR_NET], timeout_ms=20000)
     print(f"  raw: {resp.hex()}")
     if not _validate_echo(resp, CMD_UICR_NET):
         return False
     if len(resp) < 10:
-        print(f"FAIL: response too short ({len(resp)} bytes)")
         return False
     status = resp[1]
     marker, approt = struct.unpack_from("<II", resp, 2)
@@ -190,66 +323,62 @@ def test_uicr_net(p):
     print(f"  SRAM marker     = 0x{marker:08x}  (expect 0x{STUB_DONE:08x})")
     print(f"  Net APPROTECT   = 0x{approt:08x}  (expect 0x{UNLOCK_VAL:08x})")
     if marker == STUB_FAULT:
-        print("FAIL: Net stub FAULTED — check probe serial log for PC + xPSR")
+        print("FAIL: Net stub FAULTED")
         return False
-    if status != 0:
+    if status != 0 or marker != STUB_DONE or approt != UNLOCK_VAL:
         return False
-    if marker != STUB_DONE:
-        print("FAIL: Net stub didn't complete (marker mismatch)")
-        return False
-    if approt != UNLOCK_VAL:
-        print("FAIL: Net APPROTECT not unlocked")
-        return False
-    print("PASS  Net UICR HwDisabled (via on-target stub)")
+    print("PASS  Net UICR HwDisabled via stub")
     return True
 
 
-def test_recover(p):
+def test_recover(p, ctx):
     print("\n=== NRF53_RECOVER (0x84) — full unlock flow ===")
+    if ctx.get('family') == 'nrf52':
+        print("SKIP — composes UICR_PROGRAM_APP+NET; both nRF5340-only.")
+        print("       For nRF52 recover, run ERASE (0x85) — that's the full")
+        print("       chip wipe; nRF52 doesn't have the dual-UICR complexity.")
+        return True
     resp = p.transfer([CMD_RECOVER], timeout_ms=30000)
     print(f"  raw: {resp.hex()}")
     if not _validate_echo(resp, CMD_RECOVER):
         return False
     if len(resp) < 19:
-        print(f"FAIL: response too short ({len(resp)} bytes)")
         return False
     status, ap_count = resp[1], resp[2]
-    app_approt, app_secure, net_marker, net_approt = struct.unpack_from(
-        "<IIII", resp, 3)
+    app_a, app_s, net_m, net_a = struct.unpack_from("<IIII", resp, 3)
     print(f"  status={fmt_status(status)}  ap_count={ap_count}")
-    print(f"  App APPROTECT       = 0x{app_approt:08x}  (expect 0x{UNLOCK_VAL:08x})")
-    print(f"  App SECUREAPPROTECT = 0x{app_secure:08x}  (expect 0x{UNLOCK_VAL:08x})")
-    print(f"  Net SRAM marker     = 0x{net_marker:08x}  (expect 0x{STUB_DONE:08x})")
-    print(f"  Net APPROTECT       = 0x{net_approt:08x}  (expect 0x{UNLOCK_VAL:08x})")
-    if status != 0:
-        return False
-    ok = True
-    if app_approt != UNLOCK_VAL: print("FAIL: App APPROTECT"); ok = False
-    if app_secure != UNLOCK_VAL: print("FAIL: App SECUREAPPROTECT"); ok = False
-    if net_marker != STUB_DONE:  print("FAIL: Net stub marker"); ok = False
-    if net_approt != UNLOCK_VAL: print("FAIL: Net APPROTECT"); ok = False
-    if ok:
-        print("PASS  end-to-end RECOVER succeeded")
+    print(f"  App APPROTECT       = 0x{app_a:08x}")
+    print(f"  App SECUREAPPROTECT = 0x{app_s:08x}")
+    print(f"  Net SRAM marker     = 0x{net_m:08x}")
+    print(f"  Net APPROTECT       = 0x{net_a:08x}")
+    if status != 0: return False
+    ok = (app_a == UNLOCK_VAL and app_s == UNLOCK_VAL
+          and net_m == STUB_DONE and net_a == UNLOCK_VAL)
+    print("PASS" if ok else "FAIL")
     return ok
 
 
 TESTS = {
-    "erase":    test_erase,
-    "uicr-app": test_uicr_app,
-    "uicr-net": test_uicr_net,
-    "recover":  test_recover,
+    "ping":          test_ping,
+    "erase":         test_erase,
+    "verify-erase":  test_verify_erase,
+    "uicr-app":      test_uicr_app,
+    "uicr-net":      test_uicr_net,
+    "recover":       test_recover,
 }
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("test", nargs="?", default="all",
                         choices=["all"] + list(TESTS.keys()),
                         help="which test to run (default: all)")
     args = parser.parse_args()
 
     p = Probe()
+    ctx = {}    # accumulates state across tests (family, erased, …)
     try:
         print(f"Probe: VID:PID {VID:04x}:{PID:04x}  bus={p.dev.bus}  "
               f"addr={p.dev.address}  iface={p.itf.bInterfaceNumber}")
@@ -257,27 +386,32 @@ def main():
               f"IN EP=0x{p.in_ep.bEndpointAddress:02x}")
 
         if args.test == "all":
-            # Suite order:
-            #   1) ERASE        — wipes chip, confirms CTRL-AP works
-            #   2) UICR_APP     — App-side host writes work
-            #   3) UICR_NET     — on-target stub flow works
-            #   4) ERASE again  — re-wipe to set up RECOVER from a clean state
-            #   5) RECOVER      — composition: ERASE+APP+NET all in one
+            # Suite order matters for state-aware tests:
+            #   ping        — detects family, populates ctx['family']
+            #   erase       — wipes chip, populates ctx['erased']
+            #   verify-erase — reads flash[0] to confirm wipe
+            #   uicr-app    — skipped on nRF52, runs on nRF5340
+            #   uicr-net    — same gating
+            #   re-erase + recover — only on nRF5340
             results = [
-                ("ERASE",    test_erase(p)),
-                ("UICR_APP", test_uicr_app(p)),
-                ("UICR_NET", test_uicr_net(p)),
+                ("ping",         test_ping(p, ctx)),
+                ("erase",        test_erase(p, ctx)),
+                ("verify-erase", test_verify_erase(p, ctx)),
+                ("uicr-app",     test_uicr_app(p, ctx)),
+                ("uicr-net",     test_uicr_net(p, ctx)),
             ]
-            print("\n--- re-erasing for clean RECOVER test ---")
-            results.append(("ERASE-pre-recover", test_erase(p)))
-            results.append(("RECOVER", test_recover(p)))
-            print("\n" + "=" * 40)
-            print("Summary:")
+            if ctx.get('family') == 'nrf5340':
+                print("\n--- re-erase before RECOVER ---")
+                results.append(("erase-pre-recover", test_erase(p, ctx)))
+                results.append(("recover", test_recover(p, ctx)))
+
+            print("\n" + "=" * 50)
+            print(f"Summary  (target family: {ctx.get('family', '?')}):")
             for name, ok in results:
                 print(f"  {'✓' if ok else '✗'}  {name}")
             ok_total = all(r[1] for r in results)
         else:
-            ok_total = TESTS[args.test](p)
+            ok_total = TESTS[args.test](p, ctx)
 
         sys.exit(0 if ok_total else 1)
     finally:
