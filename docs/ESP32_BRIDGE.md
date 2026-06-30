@@ -21,21 +21,30 @@ edevkit's app-side feature set.
 ## Pico-side firmware status (read this first)
 
 The bridge talks to a Pico running the `edev_dapv2_zephyr` firmware. The
-currently-shipping release is **`v0.1.7`** (`feat/edev_dapv2_zephyr`
-branch, tip `31e3082`, 2026-06-30). Develop against this — the test
-harness (`firmware/projects/edev_dapv2_zephyr/tools/test_nrf53_vendor_cmds.py`)
-and the wire-format expectations below all assume v0.1.7 semantics.
+currently-shipping release is **`v0.1.8`** (`feat/edev_dapv2_zephyr`
+branch, 2026-06-30). Develop against this — the test harness
+(`firmware/projects/edev_dapv2_zephyr/tools/test_nrf53_vendor_cmds.py`)
+and the wire-format expectations below all assume v0.1.8 semantics.
+
+> **v0.1.8 is a docs + tools release** — firmware binaries are
+> byte-identical to v0.1.7. A v0.1.7 probe IS a v0.1.8 probe; you
+> don't need to re-flash. v0.1.8 ships this doc (Appendices L + M,
+> the Net flash @ 0x01000000 gotcha) and two new bench tools
+> (`ring_pro_351_acceptance.py`, `_flash_ops_sequence.py`).
+> See `releases/v0.1.8/RELEASE.md` for the full change log.
 
 Bench-validated:
 - **nRF52840** (Cortex-M4, DPv1): 5/5 PASS via v0.1.1-step5
-- **nRF5340 DK** (Cortex-M33, DPv2): 11/11 PASS via v0.1.7 — full RECOVER + flash write + UICR programming all work end-to-end
+- **nRF5340 DK** (Cortex-M33, DPv2): 11/11 PASS + 5/5 PASS on
+  info→read→erase→recover→write sequence via v0.1.8 — full RECOVER +
+  flash write + UICR programming all work end-to-end
 
 Older releases (`v0.1-step5` had `nrf53_dp_full_wake` bugs that wedged
 nRF52840 — fixed in v0.1.1; subsequent point releases add features but
 v0.1.1 still works fine for nRF52840). Don't flash anything older than
 v0.1.1 on the bridge's companion Pico.
 
-### Per-chip support — vendor commands shipped in v0.1.7 (complete)
+### Per-chip support — vendor commands shipped in v0.1.8 (complete; unchanged from v0.1.7)
 
 | Cmd | Op | nRF52840 | nRF5340 |
 |---|---|---|---|
@@ -3038,7 +3047,7 @@ These primitives are sufficient to compose:
   via DHCSR)
 - **Target peripheral configuration** (any AHB-AP-reachable register)
 
-### K.10 What pieces of nRF52840 support are still bridge-composed (v0.1.7)
+### K.10 What pieces of nRF52840 support are still bridge-composed (v0.1.8)
 
 Updated 2026-06-30. Most of K.10's original items have been
 subsumed by vendor cmds shipped in v0.1.2 through v0.1.7. What
@@ -3063,7 +3072,7 @@ future releases.
 
 ---
 
-## Appendix L — Per-cmd timing budgets + bridge progress strategy (v0.1.7)
+## Appendix L — Per-cmd timing budgets + bridge progress strategy (v0.1.8)
 
 This appendix closes out **Step 9 of the original 10-step plan** —
 the "progress packets / WAIT-ACK / USB timeout" item. After running
@@ -3254,8 +3263,9 @@ What actually ended up being needed:
    notifications) is the recommended approach. No firmware
    changes required; the bridge can implement at its own pace.
 
-**No probe firmware changes are required for Step 9.** The v0.1.7
-release is the final probe firmware for this phase of the plan.
+**No probe firmware changes are required for Step 9.** The v0.1.8
+release ships the same firmware binary as v0.1.7 — both are the
+final probe firmware for this phase of the plan.
 
 
 ---
@@ -3271,15 +3281,16 @@ bench.**
 ### M.1 What this proves
 
 When this acceptance passes against a production Ring, the
-v0.1.7 probe firmware is certified for production-Nordic-target
-debug + recover workflows. Everything tested on the bench
+v0.1.8 probe firmware (== v0.1.7 binary) is certified for
+production-Nordic-target debug + recover workflows. Everything tested on the bench
 nRF5340 DK (DK silicon, 11/11 PASS) is reproduced against a real
 sealed wearable. This is the bar for "release the probe firmware
 to production use."
 
 ### M.2 Hardware required
 
-- **Pico running edev_dapv2_zephyr v0.1.7** (commit `31e3082` or later)
+- **Pico running edev_dapv2_zephyr v0.1.8** (commit `c26fbfa` or later;
+  v0.1.7 firmware binary works identically)
 - **Ring Pro 351** with:
   - Charging puck connected (Ring's internal Li-ion alone is not
     enough — ERASEALL pulls more current than the cell delivers
@@ -3366,14 +3377,14 @@ success criterion either way.
 
 When this acceptance passes against a production Ring, update:
 
-1. `firmware/projects/edev_dapv2_zephyr/releases/v0.1.7/RELEASE.md`
+1. `firmware/projects/edev_dapv2_zephyr/releases/v0.1.8/RELEASE.md`
    — change the "Hardware acceptance" section from "11/11 PASS on
    bench nRF5340 DK" to "11/11 PASS on bench nRF5340 DK + Ring
    Pro 351 production silicon."
-2. `docs/ESP32_BRIDGE.md` — change v0.1.7 status callout from
+2. `docs/ESP32_BRIDGE.md` — change v0.1.8 status callout from
    "feature-complete (bench-validated)" to "released
    (production-validated)."
 3. Memory note `project_edev_dapv2_zephyr_v017_feature_complete_2026_06_30.md`
    — strike the "Step 10 pending" line.
-4. Tag the release as `v0.1.7-final` if not already tagged.
+4. Tag the release as `v0.1.8-final` if not already tagged.
 

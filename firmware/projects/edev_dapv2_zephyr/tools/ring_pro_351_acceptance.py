@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ring_pro_351_acceptance.py — end-to-end acceptance for v0.1.7 firmware
+ring_pro_351_acceptance.py — end-to-end acceptance for v0.1.8 firmware
 against a Ultrahuman Ring Pro 351 (nRF5340) production target.
 
 This is Step 10 of the original 10-step plan. Runs the bench-validated
@@ -14,7 +14,8 @@ empty image and need its production firmware re-flashed via the
 normal release tooling. Do NOT run against a Ring you can't re-flash.
 
 Hardware required:
-  - Pico running edev_dapv2_zephyr v0.1.7 (commit 31e3082 or later)
+  - Pico running edev_dapv2_zephyr v0.1.8 (commit c26fbfa or later;
+    v0.1.7 firmware binary works identically)
   - Ring Pro 351 on charger (need stable power for ERASEALL on both
     cores). The Ring's internal Li-ion alone is not enough — see
     [[reference_ring_battery_defeats_power_cycle]].
@@ -323,7 +324,7 @@ def main():
         print(GREEN("  Ring Pro 351 acceptance PASSED (9/9 phases)"))
         print(GREEN("═══════════════════════════════════════════════"))
         print()
-        print(f"  Firmware: edev_dapv2_zephyr v0.1.7 (commit 31e3082)")
+        print(f"  Firmware: edev_dapv2_zephyr v0.1.8 (commit 31e3082)")
         print(f"  Date: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     except AcceptanceFailure as e:

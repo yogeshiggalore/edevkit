@@ -192,7 +192,7 @@ def main():
         print(GREEN("  5/5 phases PASS — info, read, erase, recover, write"))
         print(GREEN("═══════════════════════════════════════════════════"))
         print(f"  Target: nRF5340 DK")
-        print(f"  Firmware: edev_dapv2_zephyr v0.1.7")
+        print(f"  Firmware: edev_dapv2_zephyr v0.1.8 (binary == v0.1.7)")
         print(f"  Date: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     finally:

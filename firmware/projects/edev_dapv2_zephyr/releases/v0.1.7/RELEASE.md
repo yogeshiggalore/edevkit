@@ -1,5 +1,12 @@
 # edev_dapv2_zephyr v0.1.7 — release notes
 
+> **⚠ Superseded by [v0.1.8](../v0.1.8/RELEASE.md)** — docs + tools
+> only; firmware binaries are byte-identical to this release. Adds
+> ESP32_BRIDGE.md Appendix L (timing budgets), Appendix M (Ring
+> acceptance procedure), the Net-flash @ 0x01000000 gotcha note, and
+> bench tools `ring_pro_351_acceptance.py` + `_flash_ops_sequence.py`.
+> **You do not need to re-flash a v0.1.7 probe to get v0.1.8.**
+
 **Build:** 2026-06-30 18:00
 **Branch:** `feat/edev_dapv2_zephyr`
 **Board:** `rpi_pico2/rp2350a/m33`
