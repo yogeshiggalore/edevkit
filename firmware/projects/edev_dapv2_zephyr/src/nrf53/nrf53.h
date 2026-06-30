@@ -487,6 +487,30 @@ nrf53_status_t nrf53_flash_write_net(uint32_t addr, uint32_t word_count,
 				     uint32_t *out_words_written);
 
 /**
+ * @brief Program N contiguous 32-bit words to App flash.
+ *
+ * Same NVMC programming dance as `nrf53_flash_write_net()` but on
+ * App AHB-AP (ap=0, csw=0x23000002). The chip's NVMC base address
+ * is a parameter to support multiple Nordic families:
+ *   - nRF52840 / nRF52833 / nRF52832: NVMC at 0x4001E000
+ *   - nRF5340 App:                    NVMC at 0x50039000
+ *
+ * Words equal to 0xFFFFFFFF are skipped (matches erased state).
+ *
+ * @param nvmc_base          NVMC peripheral base for the target's App
+ *                           core. App NVMC.READY  = nvmc_base + 0x400,
+ *                           NVMC.CONFIG = nvmc_base + 0x504.
+ * @param addr               App flash destination (4-byte aligned).
+ * @param word_count         Number of 32-bit words to write.
+ * @param data               Source buffer (word_count * 4 bytes, LE words).
+ * @param out_words_written  Out-param: words actually written before any
+ *                           failure (= word_count on full success).
+ */
+nrf53_status_t nrf53_flash_write_app(uint32_t nvmc_base, uint32_t addr,
+				     uint32_t word_count, const uint8_t *data,
+				     uint32_t *out_words_written);
+
+/**
  * @brief Full recover flow: ERASE both cores + program App + Net UICR.
  *
  * Composes the lower-level operations from steps 2-4 into a single

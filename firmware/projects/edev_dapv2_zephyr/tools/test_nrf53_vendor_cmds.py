@@ -44,6 +44,7 @@ VENDOR_IFACE_CLASS = 0xFF
 CMD_RECOVER            = 0x84
 CMD_ERASE              = 0x85
 CMD_FLASH_WRITE_NET    = 0x86
+CMD_FLASH_WRITE_APP    = 0x87
 CMD_READ_MEM           = 0x88
 CMD_UICR_APP           = 0x8A
 CMD_UICR_NET           = 0x8B
@@ -445,6 +446,69 @@ def test_flash_write_net(p, ctx):
     return True
 
 
+def test_flash_write_app(p, ctx):
+    """Vendor cmd 0x87 NRF53_FLASH_WRITE_APP — App flash batch write.
+    Family-aware NVMC base:
+      - nRF52 family: 0x4001E000
+      - nRF5340 App:  0x50039000
+    """
+    print("\n=== NRF53_FLASH_WRITE_APP (0x87) ===")
+    if ctx.get('family') == 'nrf52':
+        nvmc_base = 0x4001E000
+    elif ctx.get('family') == 'nrf5340':
+        nvmc_base = 0x50039000
+    else:
+        print(f"SKIP — unknown family {ctx.get('family')!r}, can't pick NVMC base")
+        return True
+
+    # Re-erase so flash is fresh
+    print("  (re-erasing first so flash is 0xFF)")
+    resp = p.transfer([CMD_ERASE], timeout_ms=15000)
+    if resp[1] != 0:
+        print(f"FAIL: pre-erase status={fmt_status(resp[1])}")
+        return False
+
+    test_addr = 0x00000800
+    pattern = [0xA1A1A1A1, 0xB2B2B2B2, 0xC3C3C3C3, 0xD4D4D4D4,
+               0xE5E5E5E5, 0xF6F6F6F6, 0x07070707, 0x18181818,
+               0x29292929, 0x3A3A3A3A, 0x4B4B4B4B, 0x5C5C5C5C,
+               0xDEADBEEF]
+    n = len(pattern)
+    payload = struct.pack(f'<{n}I', *pattern)
+    req = (bytes([CMD_FLASH_WRITE_APP])
+           + struct.pack('<II', nvmc_base, test_addr)
+           + struct.pack('<H', n)
+           + payload)
+    resp = p.transfer(req, timeout_ms=10000)
+    if not _validate_echo(resp, CMD_FLASH_WRITE_APP): return False
+    if len(resp) < 4:
+        print(f"FAIL: response too short ({len(resp)} bytes)")
+        return False
+    status = resp[1]
+    written = struct.unpack_from('<H', resp, 2)[0]
+    print(f"  WRITE NVMC=0x{nvmc_base:08x} status={fmt_status(status)}  words_written={written}/{n}")
+    if status != 0 or written != n:
+        return False
+
+    # Read back via 0x88
+    req = (bytes([CMD_READ_MEM, 0x00, 0x00])
+           + struct.pack('<II', 0x23000002, test_addr)
+           + struct.pack('<H', n))
+    resp = p.transfer(req, timeout_ms=10000)
+    if not _validate_echo(resp, CMD_READ_MEM): return False
+    if resp[1] != 0:
+        print(f"FAIL: readback status={fmt_status(resp[1])}")
+        return False
+    got = struct.unpack_from(f'<{n}I', resp, 2)
+    if got != tuple(pattern):
+        mm = [(i, hex(g), hex(e)) for i, (g, e) in enumerate(zip(got, pattern)) if g != e]
+        print(f"FAIL: {len(mm)} mismatches: {mm[:3]}")
+        return False
+    print(f"  READ  bit-perfect ({n} words match)")
+    print("PASS  App flash batch write + readback")
+    return True
+
+
 def test_recover(p, ctx):
     print("\n=== NRF53_RECOVER (0x84) — full unlock flow ===")
     if ctx.get('family') == 'nrf52':
@@ -483,6 +547,7 @@ TESTS = {
     "erase":             test_erase,
     "verify-erase":      test_verify_erase,
     "mem-roundtrip":     test_mem_roundtrip,
+    "flash-write-app":   test_flash_write_app,
     "uicr-app":          test_uicr_app,
     "uicr-net":          test_uicr_net,
     "flash-write-net":   test_flash_write_net,
@@ -516,12 +581,13 @@ def main():
             #   uicr-net    — same gating
             #   re-erase + recover — only on nRF5340
             results = [
-                ("ping",           test_ping(p, ctx)),
-                ("erase",          test_erase(p, ctx)),
-                ("verify-erase",   test_verify_erase(p, ctx)),
-                ("mem-roundtrip",  test_mem_roundtrip(p, ctx)),
-                ("uicr-app",       test_uicr_app(p, ctx)),
-                ("uicr-net",       test_uicr_net(p, ctx)),
+                ("ping",            test_ping(p, ctx)),
+                ("erase",           test_erase(p, ctx)),
+                ("verify-erase",    test_verify_erase(p, ctx)),
+                ("mem-roundtrip",   test_mem_roundtrip(p, ctx)),
+                ("flash-write-app", test_flash_write_app(p, ctx)),
+                ("uicr-app",        test_uicr_app(p, ctx)),
+                ("uicr-net",        test_uicr_net(p, ctx)),
             ]
             if ctx.get('family') == 'nrf5340':
                 results.append(("flash-write-net", test_flash_write_net(p, ctx)))

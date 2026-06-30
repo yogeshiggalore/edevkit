@@ -114,3 +114,83 @@ nrf53_status_t nrf53_flash_write_net(uint32_t addr, uint32_t word_count,
 	}
 	return st;
 }
+
+/* ------------------------------------------------------------------ */
+nrf53_status_t nrf53_flash_write_app(uint32_t nvmc_base, uint32_t addr,
+				     uint32_t word_count, const uint8_t *data,
+				     uint32_t *out_words_written)
+{
+	if (out_words_written) {
+		*out_words_written = 0;
+	}
+	if (data == NULL || word_count == 0 || (addr & 0x03U) != 0
+	    || (nvmc_base & 0x0FFFU) != 0) {
+		return NRF53_ARGS;
+	}
+
+	const uint32_t nvmc_ready = nvmc_base + 0x400U;
+	const uint32_t nvmc_config = nvmc_base + 0x504U;
+
+	(void)nrf53_dp_sticky_clear();
+	(void)nrf53_dp_power_up(50);
+
+	nrf53_status_t st = nrf53_nvmc_set_config(NRF53_AP_APP, NRF53_CSW_APP,
+						  nvmc_ready, nvmc_config,
+						  NRF53_NVMC_CONFIG_WEN,
+						  NVMC_CONFIG_TIMEOUT_MS);
+	if (st != NRF53_OK) {
+		LOG_ERR("App NVMC.CONFIG=Wen @ 0x%08x failed: %s",
+			nvmc_config, nrf53_status_str(st));
+		return st;
+	}
+
+	uint32_t i;
+	for (i = 0; i < word_count; i++) {
+		uint32_t word = (uint32_t)data[i * 4U + 0U]
+			     | ((uint32_t)data[i * 4U + 1U] << 8)
+			     | ((uint32_t)data[i * 4U + 2U] << 16)
+			     | ((uint32_t)data[i * 4U + 3U] << 24);
+
+		if (word == 0xFFFFFFFFU) {
+			continue;
+		}
+
+		uint32_t cur_addr = addr + (i * 4U);
+		st = nrf53_mem_write(NRF53_AP_APP, NRF53_CSW_APP, cur_addr, word);
+		if (st != NRF53_OK) {
+			LOG_ERR("App flash write[%u] @ 0x%08x = 0x%08x failed: %s",
+				(unsigned int)i, cur_addr, word, nrf53_status_str(st));
+			break;
+		}
+
+		st = nrf53_nvmc_wait_ready(NRF53_AP_APP, NRF53_CSW_APP,
+					   nvmc_ready, NVMC_TIMEOUT_MS);
+		if (st != NRF53_OK) {
+			LOG_ERR("App NVMC.READY after word @ 0x%08x failed: %s",
+				cur_addr, nrf53_status_str(st));
+			break;
+		}
+	}
+
+	nrf53_status_t st_ren = nrf53_nvmc_set_config(NRF53_AP_APP, NRF53_CSW_APP,
+						      nvmc_ready, nvmc_config,
+						      NRF53_NVMC_CONFIG_REN,
+						      NVMC_CONFIG_TIMEOUT_MS);
+	if (st_ren != NRF53_OK) {
+		LOG_WRN("App NVMC.CONFIG=Ren restore failed: %s",
+			nrf53_status_str(st_ren));
+		if (st == NRF53_OK) {
+			st = st_ren;
+		}
+	}
+
+	if (out_words_written) {
+		*out_words_written = i;
+	}
+
+	if (st == NRF53_OK) {
+		LOG_INF("App flash wrote %u words @ 0x%08x (NVMC=0x%08x)",
+			(unsigned int)i, addr, nvmc_base);
+	}
+	return st;
+}

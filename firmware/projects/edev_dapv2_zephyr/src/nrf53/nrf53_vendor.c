@@ -139,6 +139,58 @@ static uint16_t do_flash_write_net(const uint8_t *const request, uint8_t *const 
 	return 4U;
 }
 
+/* NRF53_FLASH_WRITE_APP (0x87) — batch App flash programming
+ *
+ *   Request (>= 11 bytes): [0x87, u32_le nvmc_base, u32_le addr,
+ *                           u16_le word_count, data[word_count*4]]
+ *   Response: [0x87, status, u16_le words_written]   (4 bytes)
+ *
+ * nvmc_base picks the family:
+ *   - nRF52840 / 833 / 832: 0x4001E000
+ *   - nRF5340 App:          0x50039000
+ *
+ * Hardcoded for App AHB-AP (ap=0, csw=0x23000002). Address must be
+ * 4-byte aligned + nvmc_base must be 4 KB aligned.
+ *
+ * Caller must cap word_count so 11 + word_count*4 ≤ DAP packet size
+ * (USB-FS = 64 → 13 words max per call).
+ */
+#define NRF53_VENDOR_FLASH_WRITE_APP_MAX_WORDS  13U
+
+static uint16_t do_flash_write_app(const uint8_t *const request, uint8_t *const response)
+{
+	uint32_t nvmc_base = (uint32_t)request[1]
+			  | ((uint32_t)request[2] << 8)
+			  | ((uint32_t)request[3] << 16)
+			  | ((uint32_t)request[4] << 24);
+	uint32_t addr = (uint32_t)request[5]
+		     | ((uint32_t)request[6] << 8)
+		     | ((uint32_t)request[7] << 16)
+		     | ((uint32_t)request[8] << 24);
+	uint16_t word_count = (uint16_t)request[9] | ((uint16_t)request[10] << 8);
+
+	if (word_count == 0 || word_count > NRF53_VENDOR_FLASH_WRITE_APP_MAX_WORDS) {
+		LOG_WRN("FLASH_WRITE_APP: word_count=%u out of range", word_count);
+		response[1] = (uint8_t)NRF53_ARGS;
+		response[2] = 0;
+		response[3] = 0;
+		return 4U;
+	}
+
+	uint32_t written = 0;
+	nrf53_status_t st = nrf53_flash_write_app(nvmc_base, addr, word_count,
+						  &request[11], &written);
+	response[1] = (uint8_t)st;
+	response[2] = (uint8_t)(written & 0xFFU);
+	response[3] = (uint8_t)((written >> 8) & 0xFFU);
+	if (st != NRF53_OK) {
+		LOG_INF("NRF53_FLASH_WRITE_APP NVMC=0x%08x addr=0x%08x n=%u → %s (wrote %u)",
+			nvmc_base, addr, word_count, nrf53_status_str(st),
+			(unsigned int)written);
+	}
+	return 4U;
+}
+
 /* NRF53_READ_MEM (0x88) — chip-agnostic AHB-AP burst read
  *
  *   Request (13 bytes): [0x88, u8 flags, u8 ap_index,
@@ -301,6 +353,10 @@ uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
 		response[0] = cmd;
 		return do_flash_write_net(request, response);
 
+	case NRF53_VENDOR_FLASH_WRITE_APP:
+		response[0] = cmd;
+		return do_flash_write_app(request, response);
+
 	case NRF53_VENDOR_READ_MEM:
 		response[0] = cmd;
 		return do_read_mem(request, response);
@@ -317,8 +373,8 @@ uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
 		response[0] = cmd;
 		return do_write_mem(request, response);
 
-	/* Handlers for 0x87 / 0x89 land in subsequent steps. They fall
-	 * through to ID_DAP_INVALID until then. */
+	/* Handlers for 0x89 land in subsequent steps. They fall through
+	 * to ID_DAP_INVALID until then. */
 
 	default:
 		response[0] = ID_DAP_INVALID;

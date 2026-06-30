@@ -1,5 +1,7 @@
 # edev_dapv2_zephyr v0.1.5-step6 — release notes
 
+> **⚠ Newer release available: [v0.1.6-step7](../v0.1.6-step7/RELEASE.md)** — superset; adds vendor cmd `0x87 NRF53_FLASH_WRITE_APP` (App flash batch programming for both nRF52 + nRF5340 App).
+
 **Build:** 2026-06-30 17:00
 **Branch:** `feat/edev_dapv2_zephyr`
 **Board:** `rpi_pico2/rp2350a/m33`
