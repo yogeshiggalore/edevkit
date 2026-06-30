@@ -21,21 +21,21 @@ edevkit's app-side feature set.
 ## Pico-side firmware status (read this first)
 
 The bridge talks to a Pico running the `edev_dapv2_zephyr` firmware. The
-currently-shipping release is **`v0.1.6-step7`** (`feat/edev_dapv2_zephyr`
-branch, tip `dcf721c`, 2026-06-30). Develop against this — the test
+currently-shipping release is **`v0.1.7`** (`feat/edev_dapv2_zephyr`
+branch, tip `31e3082`, 2026-06-30). Develop against this — the test
 harness (`firmware/projects/edev_dapv2_zephyr/tools/test_nrf53_vendor_cmds.py`)
-and the wire-format expectations below all assume v0.1.6-step7 semantics.
+and the wire-format expectations below all assume v0.1.7 semantics.
 
 Bench-validated:
 - **nRF52840** (Cortex-M4, DPv1): 5/5 PASS via v0.1.1-step5
-- **nRF5340 DK** (Cortex-M33, DPv2): 10/10 PASS via v0.1.6-step7 — full RECOVER works end-to-end
+- **nRF5340 DK** (Cortex-M33, DPv2): 11/11 PASS via v0.1.7 — full RECOVER + flash write + UICR programming all work end-to-end
 
 Older releases (`v0.1-step5` had `nrf53_dp_full_wake` bugs that wedged
 nRF52840 — fixed in v0.1.1; subsequent point releases add features but
 v0.1.1 still works fine for nRF52840). Don't flash anything older than
 v0.1.1 on the bridge's companion Pico.
 
-### Per-chip support — vendor commands shipped in v0.1.6-step7
+### Per-chip support — vendor commands shipped in v0.1.7 (complete)
 
 | Cmd | Op | nRF52840 | nRF5340 |
 |---|---|---|---|
@@ -44,10 +44,10 @@ v0.1.1 on the bridge's companion Pico.
 | `0x86` | `NRF53_FLASH_WRITE_NET` | n/a (no Net) | ✅ HW |
 | `0x87` | `NRF53_FLASH_WRITE_APP` (family-aware via NVMC base param) | algo | ✅ HW |
 | `0x88` | `NRF53_READ_MEM` (chip-agnostic AHB-AP read) | ✅ HW | ✅ HW |
+| `0x89` | `NRF53_TARGET_INFO` (single-call DPIDR+AP_IDR+CPUID) | algo | ✅ HW |
 | `0x8A` | `NRF53_UICR_PROGRAM_APP` | n/a (nRF52 UICR differs) | ✅ HW |
 | `0x8B` | `NRF53_UICR_PROGRAM_NET` (on-target stub) | n/a | ✅ HW |
 | `0x8C` | `NRF53_WRITE_MEM` (chip-agnostic AHB-AP write) | ✅ HW | ✅ HW |
-| `0x89` | `NRF53_TARGET_INFO` (chip identification convenience) | ⏳ pending | ⏳ pending |
 
 `HW` = bench-validated against real silicon. `algo` = code is the same
 path as the HW-validated case (only NVMC base differs).
@@ -2229,9 +2229,23 @@ to find the part number on each Nordic family:
 | Family | FICR base | INFO.PART offset | Notes |
 |---|---|---|---|
 | nRF52 (51840, 52833, …) | `0x10000000` | `+0x100` (= `0x10000100`) | Read 4 B; e.g. `0x0000_52840` |
-| nRF53 App | `0x00FF0000` | `+0x140` (= `0x00FF0140`) | Note the unusual base — different from nRF52 |
-| nRF53 Net | `0x01FF0000` | `+0x140` (= `0x01FF0140`) | Net core has its own FICR |
-| nRF91 | `0x00FF0000` | `+0x140` | Same layout as nRF53 |
+| nRF53 App | `0x00FF0000` | ⚠ unreliable — see note below | Different base from nRF52 |
+| nRF53 Net | `0x01FF0000` | ⚠ unreliable — see note below | Net core has its own FICR |
+| nRF91 | `0x00FF0000` | ⚠ unconfirmed | Layout assumed similar to nRF53 |
+
+> **⚠ nRF53 FICR caveat (verified 2026-06-30 against bench nRF5340 DK):**
+> Reading FICR.INFO.PART at the documented `+0x140` offset returns
+> `0xFFFFFFFF` via the App AHB-AP on this silicon — possibly engineering
+> sample with unprogrammed FICR, possibly wrong offset for this variant
+> (different Nordic docs cite `+0x314`). Until verified against a Ring
+> Pro 351 production target, treat nRF53 FICR readbacks as best-effort.
+> The bridge can identify the chip reliably via `0x89 NRF53_TARGET_INFO`
+> (DPIDR + AP_IDR + CPUID) without needing FICR.
+>
+> **Recommendation:** for chip subtype identification beyond family
+> (nRF52840 vs 52833 vs 52832, etc.), probe FICR.INFO.PART at multiple
+> candidate offsets via `0x88 NRF53_READ_MEM` and treat `0xFFFFFFFF` as
+> "subtype unknown, fall back to DPIDR + CPUID family detection".
 | nRF54L | `0x00FFD000` | `+0x300` | Different base again |
 | nRF54H | — | — | IronSide-locked; bridge cannot read without DK debug auth |
 
@@ -2841,6 +2855,35 @@ RPC_FLASH_WRITE_FULL_PROGRESS (every page)
 Every USB packet here is either a standard CMSIS-DAP command (DAP_*)
 or the single vendor command `0x85 NRF53_ERASE`. No other vendor
 command is needed for nRF52840 against v0.1.1-step5.
+
+### K.bonus.0 — `0x89 NRF53_TARGET_INFO` (v0.1.7)
+
+Single-call ARM target identification. Replaces three separate
+`DAP_Transfer` / `READ_MEM` round-trips on initial connect.
+
+```
+Request:  [0x89]                       (1 byte, no payload)
+Response: [0x89, status,
+           u32_le dpidr,                — DP.DPIDR
+           u32_le ap0_idr,              — AHB-AP[0].IDR
+           u32_le cpuid]                — Cortex-M CPUID at 0xE000ED00
+          = 14 bytes
+```
+
+**Family inference from response:**
+- `(DPIDR >> 12) & 0xF` → `1 = nRF52 family (DPv1)`, `2 = nRF5340 (DPv2)`
+- `(CPUID >> 4) & 0xFFF` → `0xC24 = Cortex-M4`, `0xD21 = Cortex-M33`
+- `(DPIDR >> 1) & 0x7FF` → `0x23B = ARM designer`, `0x144 = Nordic designer`
+
+**FICR fields are intentionally NOT in this response** — see the FICR
+caveat above. Bridge should compose chip-specific FICR reads via
+`0x88 NRF53_READ_MEM` after inferring family from this call.
+
+**When to call:**
+- Right after connecting: one packet establishes the target's identity
+  and reachability.
+- Before any vendor cmd that depends on chip family (e.g., picking the
+  right `nvmc_base` for `0x87 FLASH_WRITE_APP`).
 
 ### K.bonus.1 — `0x86 NRF53_FLASH_WRITE_NET` (v0.1.5) + `0x87 NRF53_FLASH_WRITE_APP` (v0.1.6)
 
