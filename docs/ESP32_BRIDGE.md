@@ -2924,6 +2924,25 @@ family-specific knob.
 - `NVMC.CONFIG = Ren` is restored even on mid-loop failure; flash is
   never left write-enabled.
 
+> **⚠ Net flash base-address gotcha (verified 2026-06-30 against
+> bench nRF5340 DK):** writes to the very first word of Net flash
+> (`0x01000000`) silently succeed at the NVMC level — the probe
+> reports `14/14 words_written, status=OK` — but the value does
+> NOT actually appear on readback. The data at `0x01000000` after
+> a `0x86 FLASH_WRITE_NET` call ends up looking like remnants of
+> the Net stub vector table (MSP, reset vector, …) regardless of
+> what was written. This is a hardware behavior, not a probe bug
+> (the canonical pico-sdk reference exhibits the same behavior).
+>
+> **Workaround:** When programming a Net image, start writes at
+> `0x01000800` or later, and write the first 2 KB last (or skip
+> them entirely if your image doesn't need them). The
+> `test_nrf53_vendor_cmds.py` Net flash-write test uses
+> `0x01000800` for exactly this reason. If your bridge needs to
+> place data at the start of Net flash, file an issue and we'll
+> investigate further — until then, treat the first ~2 KB of Net
+> flash as not-bridge-writable.
+
 **Bridge workflow for a full image (1 MB App, 256 KB Net):**
 
 ```python
