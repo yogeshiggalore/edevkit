@@ -1,5 +1,7 @@
 # edev_dapv2_zephyr v0.1.4-step8 — release notes
 
+> **⚠ Newer release available: [v0.1.5-step6](../v0.1.5-step6/RELEASE.md)** — superset; adds vendor cmd `0x86 NRF53_FLASH_WRITE_NET` (batched Net flash programming). v0.1.4 still works but lacks bulk Net flash write.
+
 **Build:** 2026-06-30 16:30
 **Branch:** `feat/edev_dapv2_zephyr`
 **Board:** `rpi_pico2/rp2350a/m33`

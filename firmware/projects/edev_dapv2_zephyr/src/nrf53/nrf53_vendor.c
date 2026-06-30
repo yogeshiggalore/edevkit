@@ -91,6 +91,54 @@ static uint16_t do_erase(uint8_t *const response)
 	return 3U;
 }
 
+/* NRF53_FLASH_WRITE_NET (0x86) — batch Net flash programming
+ *
+ *   Request (>= 7 bytes): [0x86, u32_le addr, u16_le word_count,
+ *                          data[word_count*4]]   (little-endian words)
+ *   Response: [0x86, status, u16_le words_written]   (4 bytes)
+ *
+ * `words_written` reports words written before any failure (= word_count
+ * on full success). Useful for the bridge to compute the next chunk's
+ * starting address on retry.
+ *
+ * Encoded for Net AHB-AP (ap=1, csw=0x03800042, NVMC base 0x41080000)
+ * — no need to specify these per call. Address must be in Net flash
+ * range (typically 0x01000000 - 0x0103FFFF, 256 KB).
+ *
+ * Caller must cap word_count so 7 + word_count*4 ≤ DAP packet size
+ * (USB-FS = 64 → 14 words max per call).
+ */
+#define NRF53_VENDOR_FLASH_WRITE_NET_MAX_WORDS  14U
+
+static uint16_t do_flash_write_net(const uint8_t *const request, uint8_t *const response)
+{
+	uint32_t addr = (uint32_t)request[1]
+		     | ((uint32_t)request[2] << 8)
+		     | ((uint32_t)request[3] << 16)
+		     | ((uint32_t)request[4] << 24);
+	uint16_t word_count = (uint16_t)request[5] | ((uint16_t)request[6] << 8);
+
+	if (word_count == 0 || word_count > NRF53_VENDOR_FLASH_WRITE_NET_MAX_WORDS) {
+		LOG_WRN("FLASH_WRITE_NET: word_count=%u out of range", word_count);
+		response[1] = (uint8_t)NRF53_ARGS;
+		response[2] = 0;
+		response[3] = 0;
+		return 4U;
+	}
+
+	uint32_t written = 0;
+	nrf53_status_t st = nrf53_flash_write_net(addr, word_count, &request[7],
+						  &written);
+	response[1] = (uint8_t)st;
+	response[2] = (uint8_t)(written & 0xFFU);
+	response[3] = (uint8_t)((written >> 8) & 0xFFU);
+	if (st != NRF53_OK) {
+		LOG_INF("NRF53_FLASH_WRITE_NET addr=0x%08x n=%u → %s (wrote %u)",
+			addr, word_count, nrf53_status_str(st), (unsigned int)written);
+	}
+	return 4U;
+}
+
 /* NRF53_READ_MEM (0x88) — chip-agnostic AHB-AP burst read
  *
  *   Request (13 bytes): [0x88, u8 flags, u8 ap_index,
@@ -249,6 +297,10 @@ uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
 		response[0] = cmd;
 		return do_erase(response);
 
+	case NRF53_VENDOR_FLASH_WRITE_NET:
+		response[0] = cmd;
+		return do_flash_write_net(request, response);
+
 	case NRF53_VENDOR_READ_MEM:
 		response[0] = cmd;
 		return do_read_mem(request, response);
@@ -265,8 +317,8 @@ uint16_t dap_process_vendor_cmd(struct dap_link_context *const ctx,
 		response[0] = cmd;
 		return do_write_mem(request, response);
 
-	/* Handlers for 0x86 / 0x87 / 0x89 land in subsequent steps. They
-	 * fall through to ID_DAP_INVALID until then. */
+	/* Handlers for 0x87 / 0x89 land in subsequent steps. They fall
+	 * through to ID_DAP_INVALID until then. */
 
 	default:
 		response[0] = ID_DAP_INVALID;

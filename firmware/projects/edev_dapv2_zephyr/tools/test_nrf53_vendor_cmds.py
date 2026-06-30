@@ -41,12 +41,13 @@ PID = 0x000C
 VENDOR_IFACE_CLASS = 0xFF
 
 # Vendor command bytes
-CMD_RECOVER   = 0x84
-CMD_ERASE     = 0x85
-CMD_READ_MEM  = 0x88
-CMD_UICR_APP  = 0x8A
-CMD_UICR_NET  = 0x8B
-CMD_WRITE_MEM = 0x8C
+CMD_RECOVER            = 0x84
+CMD_ERASE              = 0x85
+CMD_FLASH_WRITE_NET    = 0x86
+CMD_READ_MEM           = 0x88
+CMD_UICR_APP           = 0x8A
+CMD_UICR_NET           = 0x8B
+CMD_WRITE_MEM          = 0x8C
 
 # nrf53_status_t mirror
 STATUS = {
@@ -385,6 +386,65 @@ def test_mem_roundtrip(p, ctx):
     return True
 
 
+def test_flash_write_net(p, ctx):
+    """Vendor cmd 0x86 NRF53_FLASH_WRITE_NET — Net flash batch write.
+    nRF5340-only (no Net core on nRF52). Requires prior ERASE so flash
+    is in the 0xFF state (NVMC can't reprogram non-erased flash).
+    """
+    print("\n=== NRF53_FLASH_WRITE_NET (0x86) ===")
+    if ctx.get('family') != 'nrf5340':
+        print("SKIP — Net flash exists only on nRF5340 family.")
+        return True
+    # Require a fresh ERASE first so flash is 0xFF
+    print("  (re-erasing first so flash is in 0xFF state)")
+    resp = p.transfer([CMD_ERASE], timeout_ms=15000)
+    if resp[1] != 0:
+        print(f"FAIL: pre-erase status={fmt_status(resp[1])}")
+        return False
+
+    test_addr = 0x01000800   # well within Net flash (0x01000000..0x0103FFFF)
+    pattern = [0x11111111, 0x22222222, 0x33333333, 0x44444444,
+               0x55555555, 0x66666666, 0x77777777, 0x88888888,
+               0x99999999, 0xAAAAAAAA, 0xBBBBBBBB, 0xCCCCCCCC,
+               0xDEADBEEF, 0xCAFEBABE]
+    n = len(pattern)
+    payload = struct.pack(f'<{n}I', *pattern)
+    req = (bytes([CMD_FLASH_WRITE_NET])
+           + struct.pack('<I', test_addr)
+           + struct.pack('<H', n)
+           + payload)
+    resp = p.transfer(req, timeout_ms=10000)
+    if not _validate_echo(resp, CMD_FLASH_WRITE_NET): return False
+    if len(resp) < 4:
+        print(f"FAIL: response too short ({len(resp)} bytes)")
+        return False
+    status = resp[1]
+    written = struct.unpack_from('<H', resp, 2)[0]
+    print(f"  WRITE status={fmt_status(status)}  words_written={written}/{n}")
+    if status != 0 or written != n:
+        return False
+
+    # Read back via 0x88
+    req = (bytes([CMD_READ_MEM, 0x00, 0x01])
+           + struct.pack('<II', 0x03800042, test_addr)
+           + struct.pack('<H', n))
+    resp = p.transfer(req, timeout_ms=10000)
+    if not _validate_echo(resp, CMD_READ_MEM): return False
+    if resp[1] != 0:
+        print(f"FAIL: readback status={fmt_status(resp[1])}")
+        return False
+    got = struct.unpack_from(f'<{n}I', resp, 2)
+    mismatches = [(i, hex(g), hex(e)) for i, (g, e) in enumerate(zip(got, pattern)) if g != e]
+    if mismatches:
+        print(f"FAIL: {len(mismatches)} word mismatches")
+        for i, g, e in mismatches[:3]:
+            print(f"  word[{i}]: got {g}, expected {e}")
+        return False
+    print(f"  READ  bit-perfect ({n} words match)")
+    print("PASS  Net flash batch write + readback")
+    return True
+
+
 def test_recover(p, ctx):
     print("\n=== NRF53_RECOVER (0x84) — full unlock flow ===")
     if ctx.get('family') == 'nrf52':
@@ -419,13 +479,14 @@ def test_recover(p, ctx):
 
 
 TESTS = {
-    "ping":            test_ping,
-    "erase":           test_erase,
-    "verify-erase":    test_verify_erase,
-    "mem-roundtrip":   test_mem_roundtrip,
-    "uicr-app":        test_uicr_app,
-    "uicr-net":        test_uicr_net,
-    "recover":         test_recover,
+    "ping":              test_ping,
+    "erase":             test_erase,
+    "verify-erase":      test_verify_erase,
+    "mem-roundtrip":     test_mem_roundtrip,
+    "uicr-app":          test_uicr_app,
+    "uicr-net":          test_uicr_net,
+    "flash-write-net":   test_flash_write_net,
+    "recover":           test_recover,
 }
 
 
@@ -463,6 +524,7 @@ def main():
                 ("uicr-net",       test_uicr_net(p, ctx)),
             ]
             if ctx.get('family') == 'nrf5340':
+                results.append(("flash-write-net", test_flash_write_net(p, ctx)))
                 print("\n--- re-erase before RECOVER ---")
                 results.append(("erase-pre-recover", test_erase(p, ctx)))
                 results.append(("recover", test_recover(p, ctx)))

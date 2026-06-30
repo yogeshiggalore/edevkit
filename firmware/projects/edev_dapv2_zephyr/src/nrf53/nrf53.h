@@ -458,6 +458,34 @@ nrf53_status_t nrf53_write_mem(uint8_t ap_index, uint32_t csw,
 			       uint32_t addr, uint32_t word_count,
 			       uint32_t flags, const uint8_t *data);
 
+/* ------------------------------------------------------------------ */
+/* Flash write — Net core (direct AP#1 + Net NVMC)                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Program N contiguous 32-bit words to Net flash.
+ *
+ * Wraps the NVMC programming sequence (Wen → per-word write+READY →
+ * Ren) into a single probe-side operation. Caller provides the Net
+ * flash destination address + the data. Words equal to 0xFFFFFFFF are
+ * skipped (matches erased state, saves time).
+ *
+ * Preconditions:
+ *   - Target page(s) already erased (typically via CTRL-AP#3 ERASEALL
+ *     in NRF53_ERASE)
+ *   - Net AHB-AP is reachable (DP/AP layer initialized)
+ *
+ * @param addr               Net flash destination address (4-byte aligned;
+ *                           typically in range 0x01000000 - 0x0103FFFF).
+ * @param word_count         Number of 32-bit words to write.
+ * @param data               Source buffer (word_count * 4 bytes, LE words).
+ * @param out_words_written  Out-param: words actually written before any
+ *                           failure. On full success equals word_count.
+ */
+nrf53_status_t nrf53_flash_write_net(uint32_t addr, uint32_t word_count,
+				     const uint8_t *data,
+				     uint32_t *out_words_written);
+
 /**
  * @brief Full recover flow: ERASE both cores + program App + Net UICR.
  *
@@ -493,8 +521,8 @@ nrf53_status_t nrf53_recover(struct nrf53_recover_info *info);
  * docs/NRF5340_ALGORITHMS.md §9 implementation checklist) */
 #define NRF53_VENDOR_RECOVER             0x84U  /* step 5 — full unlock + UICR */
 #define NRF53_VENDOR_ERASE               0x85U  /* step 2 — CTRL-AP ERASEALL */
-#define NRF53_VENDOR_FLASH_WRITE_NET     0x86U  /* step 6 */
-#define NRF53_VENDOR_FLASH_WRITE_APP     0x87U  /* step 7 */
+#define NRF53_VENDOR_FLASH_WRITE_NET     0x86U  /* step 6 — Net flash write */
+#define NRF53_VENDOR_FLASH_WRITE_APP     0x87U  /* step 7 — App flash write */
 #define NRF53_VENDOR_READ_MEM            0x88U  /* step 8 */
 #define NRF53_VENDOR_TARGET_INFO         0x89U  /* later */
 #define NRF53_VENDOR_UICR_PROGRAM_APP    0x8AU  /* step 3 */
