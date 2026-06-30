@@ -54,3 +54,4 @@ fp-info-cache
 .env
 .env.*
 !.env.example
+log.log
