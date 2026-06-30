@@ -1,5 +1,7 @@
 # edev_dapv2_zephyr v0.1.1-step5 — release notes
 
+> **⚠ Newer release available: [v0.1.2-step8](../v0.1.2-step8/RELEASE.md)** — superset; adds vendor cmd `0x88 NRF53_READ_MEM` (chip-agnostic AHB-AP read) + a Net-stub DP-wake refresh after CTRL-AP RESET. v0.1.1-step5 is still functional but lacks `0x88`.
+
 **Build:** 2026-06-30 12:50  
 **Branch:** `feat/edev_dapv2_zephyr`  
 **Tip commit:** `c32eba8 test(edev_dapv2_zephyr): chip-aware harness — nRF52840 + nRF5340 paths`  
