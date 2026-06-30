@@ -1,5 +1,14 @@
 # edev_dapv2_zephyr v0.1-step5 — release notes
 
+> **⚠ SUPERSEDED by [v0.1.1-step5](../v0.1.1-step5/RELEASE.md)** — this
+> build had three bugs in `nrf53_dp_full_wake` that wedged nRF52840 with
+> PROTO / NO_ACK on the first DPIDR read. The v0.1.1-step5 release fixes
+> them: missing `swdp_port_on()`, malformed dormant-wake alert byte
+> packing, and missing post-line-reset idle cycles. Do not flash this
+> v0.1-step5 build onto hardware — use v0.1.1-step5 instead.
+
+
+
 **Build:** 2026-06-30
 **Branch:** `feat/edev_dapv2_zephyr`
 **Tip commit:** `652b9cc feat(edev_dapv2_zephyr): nRF5340 step 5 — NRF53_RECOVER (cmd 0x84)`

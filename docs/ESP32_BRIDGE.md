@@ -21,10 +21,42 @@ edevkit's app-side feature set.
 ## Pico-side firmware status (read this first)
 
 The bridge talks to a Pico running the `edev_dapv2_zephyr` firmware. The
-currently-shipping release is **`v0.1-step5`** (`feat/edev_dapv2_zephyr`
-branch, tip `183833b`). Develop against this — both the test harness
-(`firmware/projects/edev_dapv2_zephyr/tools/test_nrf53_vendor_cmds.py`)
-and the wire-format expectations below assume v0.1-step5 semantics.
+currently-shipping release is **`v0.1.1-step5`** (`feat/edev_dapv2_zephyr`
+branch, tip `c32eba8`, 2026-06-30). Develop against this — both the test
+harness (`firmware/projects/edev_dapv2_zephyr/tools/test_nrf53_vendor_cmds.py`)
+and the wire-format expectations below assume v0.1.1-step5 semantics.
+
+> **v0.1-step5 is superseded** — it had three `nrf53_dp_full_wake` bugs
+> (missing `swdp_port_on`, malformed dormant-wake alert, missing idle
+> cycles after line reset) that wedged nRF52840. v0.1.1-step5 fixes
+> them. Don't flash anything older than v0.1.1-step5 on the bridge's
+> companion Pico.
+
+### Per-chip support (validated against real hardware)
+
+| Op | Vendor cmd | **nRF52840** (Cortex-M4, DPv1) | nRF5340 (Cortex-M33, DPv2) |
+|---|---|---|---|
+| Probe info | std `DAP_Info` | ✅ | ✅ |
+| Target identify | std `DAP_Transfer` (DPIDR + AP_IDR) | ✅ DPIDR=0x2ba01477 confirmed | ✅ algorithm spec |
+| Flash read | std `DAP_Transfer` AHB-AP | ✅ confirmed | ✅ algorithm spec |
+| Chip wipe | `0x85 NRF53_ERASE` | ✅ confirmed (1 CTRL-AP) | ✅ algorithm spec (2 CTRL-APs) |
+| Verify erase | std `DAP_Transfer` read flash | ✅ flash[0]=0xFFFFFFFF confirmed | (TBD on hw) |
+| Recover (unlock) | `0x84 NRF53_RECOVER` | ✗ nRF5340-only | ✅ algorithm spec |
+| App UICR program | `0x8A NRF53_UICR_PROGRAM_APP` | ✗ nRF5340 addresses; compose via std `DAP_Transfer` | ✅ algorithm spec |
+| Net UICR program | `0x8B NRF53_UICR_PROGRAM_NET` | n/a (no Net core) | ✅ algorithm spec |
+| Flash write | std `DAP_Transfer` + RAM loader | ✅ (host-driven) | ✅ (host-driven; vendor `0x86`/`0x87` future) |
+
+**nRF52840 is fully validated** end-to-end. nRF5340 is algorithm-
+complete but hasn't been smoke-tested against real Ring Pro 351 / DK
+hardware this cycle.
+
+**For nRF52 UICR.APPROTECT specifically** (when the bridge needs to
+unlock-then-flash on nRF52): the address is `0x10001208` (single
+register, not two like nRF5340's APPROTECT + SECUREAPPROTECT). Write
+sequence: `NVMC.CONFIG=Wen` (0x4001E504 ← 1, then poll READY at
+0x4001E400) → write the UICR word → `NVMC.CONFIG=Ren`. The bridge
+composes this from standard `DAP_Transfer` calls today; a dedicated
+vendor command for nRF52 is future work.
 
 **What works today on v0.1-step5:**
 
@@ -61,7 +93,7 @@ and the wire-format expectations below assume v0.1-step5 semantics.
   on the ESP32 side but works against v0.1-step5.
 
 The full release notes live at
-`firmware/projects/edev_dapv2_zephyr/releases/v0.1-step5/RELEASE.md`.
+`firmware/projects/edev_dapv2_zephyr/releases/v0.1.1-step5/RELEASE.md`.
 
 ---
 
