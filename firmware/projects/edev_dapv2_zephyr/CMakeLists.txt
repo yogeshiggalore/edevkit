@@ -65,7 +65,16 @@ target_sources(app PRIVATE
     drivers/dp/swdp_pio_rpi_pico.c
 )
 
+# nRF5340 ops — recover/erase/write/read primitives. Off by default;
+# enable with CONFIG_EDEV_NRF53_OPS=y. Algorithm reference:
+# docs/NRF5340_ALGORITHMS.md.
+target_sources(app PRIVATE
+    $<$<BOOL:${CONFIG_EDEV_NRF53_OPS}>:src/nrf53/nrf53_dp.c>
+    $<$<BOOL:${CONFIG_EDEV_NRF53_OPS}>:src/nrf53/nrf53_ap.c>
+)
+
 target_include_directories(app PRIVATE
     src
+    src/nrf53
     ${PIO_INCLUDE_DIR}
 )

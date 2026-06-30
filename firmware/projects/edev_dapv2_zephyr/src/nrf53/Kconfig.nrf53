@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Kconfig for the nRF53 ops module — recover / erase / write / read
+# primitives ported from the canonical Python reference.
+
+menuconfig EDEV_NRF53_OPS
+	bool "edevkit nRF5340/nRF52 recover/erase/write/read ops"
+	help
+	  Enables the in-firmware Nordic chip recovery, erase, flash-write,
+	  and direct-memory-read primitives. Exposed via custom CMSIS-DAP
+	  vendor commands (0x84..0x8B) — see docs/NRF5340_ALGORITHMS.md §9.
+	  When n (default), the module isn't compiled — zero footprint.
+
+if EDEV_NRF53_OPS
+
+module = EDEV_NRF53_OPS
+module-str = nrf53_ops
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # EDEV_NRF53_OPS
